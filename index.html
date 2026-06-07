@@ -1,0 +1,728 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAP RPA 执行门户</title>
+  <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
+  <style>
+    * { box-sizing: border-box; }
+    :root {
+      --bg: #f4faed;
+      --panel: #ffffff;
+      --line: #dce9d2;
+      --line-strong: #b8d2aa;
+      --text: #253425;
+      --muted: #657865;
+      --soft: #e8f3e0;
+      --green: #5b8c5a;
+      --green-2: #7cb342;
+      --blue: #2b6fb6;
+      --amber: #b86f00;
+      --red: #b3261e;
+      --shadow: 0 10px 28px rgba(75, 109, 70, 0.10);
+    }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: var(--bg);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      line-height: 1.55;
+    }
+    button, input, select, textarea { font: inherit; }
+    .app-shell { min-height: 100vh; display: grid; grid-template-columns: 252px minmax(0, 1fr); }
+    .sidebar {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      background: #e8f3e0;
+      border-right: 1px solid #cfe1c3;
+      display: flex;
+      flex-direction: column;
+    }
+    .brand {
+      padding: 22px 20px;
+      background: linear-gradient(135deg, var(--green), var(--green-2));
+      color: #fff;
+    }
+    .brand-title { margin: 0; font-size: 20px; line-height: 1.25; letter-spacing: 0; }
+    .brand-subtitle { margin: 8px 0 0; color: rgba(255,255,255,.86); font-size: 12px; }
+    .nav { padding: 14px 10px; display: grid; gap: 6px; }
+    .nav button {
+      width: 100%;
+      height: 42px;
+      border: 0;
+      border-radius: 8px;
+      background: transparent;
+      color: #2f492f;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 0 12px;
+      cursor: pointer;
+      text-align: left;
+    }
+    .nav button:hover, .nav button.active { background: #d9ead0; color: #254a25; }
+    .nav i, .icon { width: 18px; height: 18px; flex: 0 0 auto; }
+    .sidebar-footer {
+      margin-top: auto;
+      padding: 14px 16px 18px;
+      border-top: 1px solid #cfe1c3;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .main { min-width: 0; padding: 22px 28px 36px; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+    .title-block h1 { margin: 0; font-size: 22px; letter-spacing: 0; line-height: 1.25; }
+    .title-block p { margin: 6px 0 0; color: var(--muted); font-size: 13px; }
+    .top-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .layout-grid { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(320px, .85fr); gap: 18px; align-items: start; }
+    .section { display: none; }
+    .section.active { display: block; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      margin-bottom: 18px;
+      overflow: hidden;
+    }
+    .panel-header {
+      min-height: 54px;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      background: linear-gradient(180deg, #fff, #fbfef8);
+    }
+    .panel-header h2 { margin: 0; font-size: 16px; letter-spacing: 0; display: flex; gap: 9px; align-items: center; }
+    .panel-body { padding: 18px; }
+    .split { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+    .three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .field { display: grid; gap: 7px; }
+    .field label { color: #445b44; font-size: 12px; font-weight: 650; }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid #c9dcc0;
+      border-radius: 8px;
+      background: #fff;
+      color: var(--text);
+      min-height: 38px;
+      padding: 8px 10px;
+      outline: none;
+    }
+    textarea { min-height: 78px; resize: vertical; }
+    input:focus, select:focus, textarea:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(91,140,90,.14); }
+    .btn {
+      border: 1px solid #c9dcc0;
+      border-radius: 8px;
+      background: #fff;
+      color: #274127;
+      height: 38px;
+      padding: 0 13px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      cursor: pointer;
+      text-decoration: none;
+      white-space: nowrap;
+    }
+    .btn:hover { border-color: var(--green); background: #f3faee; }
+    .btn.primary { background: var(--green); border-color: var(--green); color: #fff; }
+    .btn.primary:hover { background: #4d7e4c; }
+    .btn.danger { color: var(--red); border-color: #edb6b1; background: #fff8f7; }
+    .btn-row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 26px;
+      padding: 3px 10px;
+      border-radius: 999px;
+      border: 1px solid #cfe1c3;
+      background: #f6fbf1;
+      color: #3e5b3e;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .status-pill.ok { background: #e8f5e9; color: #2e7d32; border-color: #a5d6a7; }
+    .status-pill.warn { background: #fff8e1; color: #9b5e00; border-color: #ffe082; }
+    .status-pill.err { background: #ffebee; color: var(--red); border-color: #ef9a9a; }
+    .metric-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
+    .metric {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fbfef8;
+      padding: 13px;
+      min-height: 82px;
+    }
+    .metric .label { color: var(--muted); font-size: 12px; }
+    .metric .value { margin-top: 7px; font-size: 22px; font-weight: 750; color: #263c26; }
+    .workflow-list { display: grid; gap: 10px; }
+    .workflow {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 13px;
+      background: #fff;
+    }
+    .workflow:hover { border-color: var(--line-strong); background: #fbfef8; }
+    .workflow h3 { margin: 0; font-size: 15px; letter-spacing: 0; }
+    .workflow p { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+    .step-list { display: grid; gap: 8px; }
+    .step {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+    .step-num {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #e8f3e0;
+      color: #3a5d39;
+      font-size: 12px;
+      font-weight: 750;
+    }
+    .step-title { font-weight: 650; font-size: 13px; }
+    .step-meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .notice {
+      border-radius: 8px;
+      border: 1px solid #ffe082;
+      border-left: 4px solid #ff9f1c;
+      background: linear-gradient(135deg, #fff8e1, #fffdf4);
+      color: #5d4214;
+      padding: 13px 14px;
+      margin-bottom: 14px;
+      font-size: 13px;
+    }
+    .notice.green { border-color: #a5d6a7; border-left-color: var(--green); background: #f1f8e9; color: #2d4a2d; }
+    .log {
+      background: #1b2b1b;
+      color: #c8e6c9;
+      border-radius: 8px;
+      padding: 12px;
+      min-height: 220px;
+      max-height: 360px;
+      overflow: auto;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+    }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 720px; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; font-size: 13px; }
+    th { background: linear-gradient(135deg, var(--green), var(--green-2)); color: #fff; font-weight: 650; }
+    tr:hover td { background: #f7fcf3; }
+    .result-box {
+      border: 1px dashed #b8d2aa;
+      border-radius: 8px;
+      background: #fbfef8;
+      min-height: 160px;
+      padding: 14px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .doc-links { display: grid; gap: 10px; }
+    .doc-links a {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      color: #274127;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 13px;
+      text-decoration: none;
+      background: #fff;
+    }
+    .doc-links a:hover { border-color: var(--green); background: #f3faee; }
+    .mobile-toggle { display: none; }
+    @media (max-width: 1060px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar { position: fixed; left: 0; top: 0; bottom: 0; width: 252px; z-index: 20; transform: translateX(-100%); }
+      .sidebar.open { transform: translateX(0); }
+      .mobile-toggle { display: inline-flex; }
+      .main { padding: 16px; }
+      .layout-grid { grid-template-columns: 1fr; }
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+    @media (max-width: 640px) {
+      .topbar { align-items: stretch; flex-direction: column; }
+      .top-actions { justify-content: flex-start; }
+      .split, .three { grid-template-columns: 1fr; }
+      .metric-grid { grid-template-columns: 1fr; }
+      .workflow { grid-template-columns: 1fr; }
+      .step { grid-template-columns: 28px minmax(0, 1fr); }
+      .step .status-pill { grid-column: 2; width: max-content; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <h1 class="brand-title">SAP RPA 执行门户</h1>
+        <p class="brand-subtitle">Netlify 静态前端 + 本机执行</p>
+      </div>
+      <nav class="nav" aria-label="主导航">
+        <button class="active" data-page="dashboard"><i data-lucide="layout-dashboard"></i>工作台</button>
+        <button data-page="execute"><i data-lucide="play-circle"></i>执行任务</button>
+        <button data-page="bridge"><i data-lucide="plug"></i>本机 Bridge</button>
+        <button data-page="history"><i data-lucide="history"></i>历史记录</button>
+        <button data-page="settings"><i data-lucide="settings"></i>参数设置</button>
+        <button data-page="docs"><i data-lucide="file-text"></i>方案文档</button>
+      </nav>
+      <div class="sidebar-footer">
+        <div>当前路线：A0 已可触发，A1 预留状态闭环。</div>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="btn mobile-toggle" id="menuBtn"><i data-lucide="menu"></i>菜单</button>
+        <div class="title-block">
+          <h1 id="pageTitle">工作台</h1>
+          <p id="pageSubtitle">执行 ZFI019NL 与相关报表，优先通过本机 Bridge 获取状态。</p>
+        </div>
+        <div class="top-actions">
+          <span class="status-pill warn" id="bridgeBadge"><i data-lucide="circle-alert"></i>Bridge 未检测</span>
+          <button class="btn" id="checkBridgeTop"><i data-lucide="refresh-cw"></i>检测</button>
+          <button class="btn primary" id="quickStartTop"><i data-lucide="play"></i>启动</button>
+        </div>
+      </header>
+
+      <section class="section active" id="dashboard">
+        <div class="metric-grid">
+          <div class="metric"><div class="label">今日任务</div><div class="value" id="mToday">0</div></div>
+          <div class="metric"><div class="label">成功次数</div><div class="value" id="mSuccess">0</div></div>
+          <div class="metric"><div class="label">失败次数</div><div class="value" id="mFailed">0</div></div>
+          <div class="metric"><div class="label">当前模式</div><div class="value" style="font-size:18px" id="mMode">A0</div></div>
+        </div>
+
+        <div class="layout-grid" style="margin-top:18px">
+          <div>
+            <div class="panel">
+              <div class="panel-header">
+                <h2><i data-lucide="list-checks"></i>流程队列</h2>
+                <span class="status-pill ok">ZFI019NL</span>
+              </div>
+              <div class="panel-body">
+                <div class="workflow-list" id="workflowList"></div>
+              </div>
+            </div>
+            <div class="panel">
+              <div class="panel-header"><h2><i data-lucide="route"></i>ZFI019NL 阶段</h2></div>
+              <div class="panel-body"><div class="step-list" id="stepList"></div></div>
+            </div>
+          </div>
+          <div>
+            <div class="panel">
+              <div class="panel-header">
+                <h2><i data-lucide="terminal"></i>执行日志</h2>
+                <button class="btn" id="clearLog"><i data-lucide="eraser"></i>清空</button>
+              </div>
+              <div class="panel-body"><div class="log" id="logBox"></div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="execute">
+        <div class="layout-grid">
+          <div class="panel">
+            <div class="panel-header"><h2><i data-lucide="play-circle"></i>任务执行</h2></div>
+            <div class="panel-body">
+              <div class="notice green">A1 模式会调用本机 Bridge API；A0 模式只负责唤醒 SapWebLauncher，网页无法直接知道脚本结果。</div>
+              <div class="split">
+                <div class="field">
+                  <label for="workflow">流程</label>
+                  <select id="workflow"></select>
+                </div>
+                <div class="field">
+                  <label for="runMode">执行模式</label>
+                  <select id="runMode">
+                    <option value="bridge">A1：本机 Bridge API</option>
+                    <option value="protocol">A0：SapWebLauncher 协议唤醒</option>
+                  </select>
+                </div>
+              </div>
+              <div class="three" style="margin-top:14px">
+                <div class="field"><label for="period">期间</label><input id="period" placeholder="2026-06"></div>
+                <div class="field"><label for="company">公司代码</label><input id="company" placeholder="1000"></div>
+                <div class="field"><label for="plant">工厂</label><input id="plant" placeholder="可选"></div>
+              </div>
+              <div class="split" style="margin-top:14px">
+                <div class="field"><label for="operator">执行人</label><input id="operator" placeholder="当前 Windows 用户或 SAP 用户"></div>
+                <div class="field"><label for="taskNote">备注</label><input id="taskNote" placeholder="本次执行说明"></div>
+              </div>
+              <div class="btn-row" style="margin-top:16px">
+                <button class="btn primary" id="startTask"><i data-lucide="play"></i>执行</button>
+                <button class="btn" id="checkBridge"><i data-lucide="plug"></i>检测 Bridge</button>
+                <button class="btn" id="saveSettings"><i data-lucide="save"></i>保存参数</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel-header"><h2><i data-lucide="file-output"></i>结果状态</h2></div>
+            <div class="panel-body">
+              <div class="result-box" id="resultBox">尚未收到任务结果。</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="bridge">
+        <div class="panel">
+          <div class="panel-header"><h2><i data-lucide="plug"></i>本机 Bridge</h2></div>
+          <div class="panel-body">
+            <div class="notice">Netlify 页面访问本机 <strong>127.0.0.1</strong> 时，本机 Bridge 需要允许指定域名的 CORS，并按浏览器 Private Network Access 要求返回预检头。</div>
+            <div class="split">
+              <div class="field"><label for="bridgeBase">Bridge 地址</label><input id="bridgeBase" value="http://127.0.0.1:17890"></div>
+              <div class="field"><label for="protocolScheme">协议</label><input id="protocolScheme" value="sap-zck"></div>
+            </div>
+            <div class="btn-row" style="margin-top:16px">
+              <button class="btn primary" id="testHealth"><i data-lucide="activity"></i>Health</button>
+              <button class="btn" id="testProtocol"><i data-lucide="external-link"></i>协议测试</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-header"><h2><i data-lucide="server"></i>接口契约</h2></div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead><tr><th>接口</th><th>用途</th><th>前端行为</th></tr></thead>
+              <tbody>
+                <tr><td>GET /health</td><td>确认本机 Bridge 可用</td><td>顶部状态更新为在线</td></tr>
+                <tr><td>POST /api/tasks</td><td>提交 SAP RPA 任务</td><td>取得 taskId 后轮询</td></tr>
+                <tr><td>GET /api/tasks/{taskId}</td><td>查询 running/success/failed</td><td>刷新状态与进度</td></tr>
+                <tr><td>GET /api/tasks/{taskId}/logs</td><td>读取脚本日志</td><td>追加到日志窗口</td></tr>
+                <tr><td>GET /api/tasks/{taskId}/result</td><td>读取报表结果</td><td>渲染报表摘要或下载链接</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="history">
+        <div class="panel">
+          <div class="panel-header">
+            <h2><i data-lucide="history"></i>历史记录</h2>
+            <button class="btn danger" id="clearHistory"><i data-lucide="trash-2"></i>清空</button>
+          </div>
+          <div class="panel-body table-wrap">
+            <table>
+              <thead><tr><th>时间</th><th>流程</th><th>模式</th><th>状态</th><th>任务 ID</th></tr></thead>
+              <tbody id="historyRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="settings">
+        <div class="panel">
+          <div class="panel-header"><h2><i data-lucide="settings"></i>参数设置</h2></div>
+          <div class="panel-body">
+            <div class="notice">SAP 密码不保存到浏览器。A0 协议唤醒如必须传密码，只在本次点击时使用输入框内容。</div>
+            <div class="three">
+              <div class="field"><label for="sapSystem">SAP 系统名</label><input id="sapSystem" placeholder="Fiori"></div>
+              <div class="field"><label for="sapClient">Client</label><input id="sapClient" placeholder="400"></div>
+              <div class="field"><label for="sapSysnr">实例编号</label><input id="sapSysnr" placeholder="04"></div>
+            </div>
+            <div class="three" style="margin-top:14px">
+              <div class="field"><label for="sapUser">SAP 用户</label><input id="sapUser" placeholder="不建议写入 URL"></div>
+              <div class="field"><label for="sapLang">语言</label><input id="sapLang" placeholder="ZH"></div>
+              <div class="field"><label for="sapPassword">本次密码</label><input id="sapPassword" type="password" autocomplete="off" placeholder="不保存"></div>
+            </div>
+            <div class="btn-row" style="margin-top:16px">
+              <button class="btn primary" id="saveSettings2"><i data-lucide="save"></i>保存非密码参数</button>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section" id="docs">
+        <div class="panel">
+          <div class="panel-header"><h2><i data-lucide="file-text"></i>方案文档</h2></div>
+          <div class="panel-body">
+            <div class="doc-links">
+              <a href="./SAP%E8%87%AA%E5%8A%A8%E5%8C%96%E6%9C%AC%E5%9C%B0%E5%BC%80%E5%8F%91%E4%B8%8E%E9%83%A8%E7%BD%B2%E5%AE%9E%E6%96%BD%E6%96%B9%E6%A1%88.html" target="_blank" rel="noreferrer">SAP 自动化本地开发与部署实施方案 <i data-lucide="external-link"></i></a>
+              <a href="https://github.com/ckstock/sap_rpa" target="_blank" rel="noreferrer">GitHub 仓库 <i data-lucide="external-link"></i></a>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const workflows = [
+      { id: "ZFI019NL", name: "ZFI019NL 周损益自动化", desc: "按前置报表、并行阶段、最终生成编排执行" },
+      { id: "ZFI085", name: "ZFI085 差异报表", desc: "前置报表，优先使用结构化数据出口" },
+      { id: "ZFI014D", name: "ZFI014D 材料报表", desc: "前置报表，支持 Bridge 状态回传" },
+      { id: "ZCO019", name: "ZCO019 成本处理", desc: "GUI Script 保存类步骤，需要截图与日志" },
+      { id: "ZFI080", name: "ZFI080 实际材料", desc: "GUI Script 保存类步骤，需要失败识别" }
+    ];
+    const zfiSteps = [
+      ["并行启动", "ZFI085、ZFI014D、ZFI072A"],
+      ["材料阶段", "ZFI072、ZFI057"],
+      ["确认阶段", "人工或规则校验"],
+      ["核心并行", "ZCO019、ZFI080"],
+      ["最终生成", "ZFI019NL 目标表"]
+    ];
+    const storeKey = "sap-rpa-portal-settings";
+    const historyKey = "sap-rpa-portal-history";
+    let currentTaskId = "";
+    let pollTimer = null;
+
+    const el = (id) => document.getElementById(id);
+    const nowText = () => new Date().toLocaleString("zh-CN", { hour12: false });
+    const log = (text, level = "INFO") => {
+      const line = `[${nowText()}] ${level.padEnd(7)} ${text}`;
+      const box = el("logBox");
+      box.textContent = box.textContent ? `${box.textContent}\n${line}` : line;
+      box.scrollTop = box.scrollHeight;
+    };
+    const getSettings = () => ({
+      bridgeBase: el("bridgeBase").value.trim() || "http://127.0.0.1:17890",
+      protocolScheme: el("protocolScheme").value.trim() || "sap-zck",
+      sapSystem: el("sapSystem").value.trim(),
+      sapClient: el("sapClient").value.trim(),
+      sapSysnr: el("sapSysnr").value.trim(),
+      sapUser: el("sapUser").value.trim(),
+      sapLang: el("sapLang").value.trim() || "ZH",
+      period: el("period").value.trim(),
+      company: el("company").value.trim(),
+      plant: el("plant").value.trim(),
+      operator: el("operator").value.trim(),
+      taskNote: el("taskNote").value.trim()
+    });
+    const saveSettings = () => {
+      const settings = getSettings();
+      localStorage.setItem(storeKey, JSON.stringify(settings));
+      log("已保存非密码参数。");
+    };
+    const loadSettings = () => {
+      const defaults = {
+        bridgeBase: "http://127.0.0.1:17890",
+        protocolScheme: "sap-zck",
+        sapSystem: "",
+        sapClient: "",
+        sapSysnr: "",
+        sapUser: "",
+        sapLang: "ZH",
+        period: "",
+        company: "",
+        plant: "",
+        operator: "",
+        taskNote: ""
+      };
+      const saved = JSON.parse(localStorage.getItem(storeKey) || "{}");
+      const s = { ...defaults, ...saved };
+      Object.entries(s).forEach(([key, value]) => {
+        if (el(key)) el(key).value = value;
+      });
+    };
+    const setBridgeBadge = (state, text) => {
+      const badge = el("bridgeBadge");
+      badge.className = `status-pill ${state}`;
+      badge.innerHTML = `<i data-lucide="${state === "ok" ? "check-circle" : state === "err" ? "x-circle" : "circle-alert"}"></i>${text}`;
+      if (window.lucide) lucide.createIcons();
+    };
+    const loadHistory = () => JSON.parse(localStorage.getItem(historyKey) || "[]");
+    const saveHistory = (item) => {
+      const items = [item, ...loadHistory()].slice(0, 30);
+      localStorage.setItem(historyKey, JSON.stringify(items));
+      renderHistory();
+      updateMetrics();
+    };
+    const renderHistory = () => {
+      const rows = el("historyRows");
+      const items = loadHistory();
+      rows.innerHTML = items.length ? items.map(x => `<tr><td>${x.time}</td><td>${x.workflow}</td><td>${x.mode}</td><td>${x.status}</td><td>${x.taskId || ""}</td></tr>`).join("") : `<tr><td colspan="5">暂无记录</td></tr>`;
+    };
+    const updateMetrics = () => {
+      const items = loadHistory();
+      const today = new Date().toLocaleDateString("zh-CN");
+      el("mToday").textContent = items.filter(x => x.time.startsWith(today)).length;
+      el("mSuccess").textContent = items.filter(x => x.status === "success").length;
+      el("mFailed").textContent = items.filter(x => x.status === "failed").length;
+      el("mMode").textContent = el("runMode").value === "bridge" ? "A1" : "A0";
+    };
+    const buildProtocolUrl = () => {
+      const s = getSettings();
+      const params = new URLSearchParams();
+      params.set("action", "run");
+      if (s.sapSystem) params.set("system", s.sapSystem);
+      if (s.sapClient) params.set("client", s.sapClient);
+      if (s.sapUser) params.set("user", s.sapUser);
+      if (s.sapLang) params.set("lang", s.sapLang);
+      if (s.sapSysnr) params.set("sysnr", s.sapSysnr);
+      if (el("sapPassword").value) params.set("pw", el("sapPassword").value);
+      params.set("workflow", el("workflow").value);
+      params.set("period", s.period);
+      return `${s.protocolScheme}://?${params.toString()}`;
+    };
+    async function checkBridge() {
+      const base = getSettings().bridgeBase.replace(/\/$/, "");
+      setBridgeBadge("warn", "检测中");
+      log(`检测 Bridge: ${base}/health`);
+      try {
+        const res = await fetch(`${base}/health`, { method: "GET", cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const text = await res.text();
+        setBridgeBadge("ok", "Bridge 在线");
+        log(`Bridge 在线: ${text.slice(0, 120)}`, "OK");
+        return true;
+      } catch (err) {
+        setBridgeBadge("err", "Bridge 不可用");
+        log(`Bridge 检测失败: ${err.message}`, "ERROR");
+        return false;
+      }
+    }
+    async function startBridgeTask() {
+      const base = getSettings().bridgeBase.replace(/\/$/, "");
+      const payload = {
+        workflow: el("workflow").value,
+        params: getSettings(),
+        source: "netlify-static-portal",
+        createdAt: new Date().toISOString()
+      };
+      log(`提交任务到 Bridge: ${payload.workflow}`);
+      const res = await fetch(`${base}/api/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json().catch(() => ({}));
+      currentTaskId = data.taskId || data.id || data.task_id || "";
+      el("resultBox").textContent = currentTaskId ? `任务已提交：${currentTaskId}` : "任务已提交，Bridge 未返回 taskId。";
+      saveHistory({ time: nowText(), workflow: payload.workflow, mode: "A1", status: "running", taskId: currentTaskId });
+      if (currentTaskId) startPolling(currentTaskId);
+    }
+    function startProtocolTask() {
+      const url = buildProtocolUrl();
+      const workflow = el("workflow").value;
+      log(`协议唤醒 SapWebLauncher: ${workflow}`);
+      log("A0 模式没有浏览器回传，状态需要本机 Bridge 或本地日志补齐。", "WARN");
+      saveHistory({ time: nowText(), workflow, mode: "A0", status: "launched", taskId: "" });
+      window.location.href = url;
+    }
+    async function startTask() {
+      saveSettings();
+      updateMetrics();
+      if (el("runMode").value === "protocol") {
+        startProtocolTask();
+        return;
+      }
+      try {
+        await startBridgeTask();
+      } catch (err) {
+        log(`任务提交失败: ${err.message}`, "ERROR");
+        el("resultBox").textContent = `任务提交失败：${err.message}`;
+        saveHistory({ time: nowText(), workflow: el("workflow").value, mode: "A1", status: "failed", taskId: currentTaskId });
+      }
+    }
+    function startPolling(taskId) {
+      if (pollTimer) clearInterval(pollTimer);
+      const base = getSettings().bridgeBase.replace(/\/$/, "");
+      pollTimer = setInterval(async () => {
+        try {
+          const res = await fetch(`${base}/api/tasks/${encodeURIComponent(taskId)}`, { cache: "no-store" });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const data = await res.json();
+          const status = data.status || data.state || "running";
+          el("resultBox").textContent = JSON.stringify(data, null, 2);
+          log(`任务 ${taskId} 状态: ${status}`);
+          if (["success", "failed", "error", "done"].includes(status)) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+            saveHistory({ time: nowText(), workflow: el("workflow").value, mode: "A1", status: status === "done" ? "success" : status, taskId });
+          }
+        } catch (err) {
+          log(`轮询失败: ${err.message}`, "WARN");
+        }
+      }, 3000);
+    }
+    function renderStatic() {
+      el("workflow").innerHTML = workflows.map(w => `<option value="${w.id}">${w.name}</option>`).join("");
+      el("workflowList").innerHTML = workflows.map(w => `
+        <div class="workflow">
+          <div><h3>${w.name}</h3><p>${w.desc}</p></div>
+          <button class="btn" data-run="${w.id}"><i data-lucide="play"></i>执行</button>
+        </div>`).join("");
+      el("stepList").innerHTML = zfiSteps.map((s, i) => `
+        <div class="step">
+          <div class="step-num">${i + 1}</div>
+          <div><div class="step-title">${s[0]}</div><div class="step-meta">${s[1]}</div></div>
+          <span class="status-pill warn">等待</span>
+        </div>`).join("");
+      document.querySelectorAll("[data-run]").forEach(btn => {
+        btn.addEventListener("click", () => {
+          el("workflow").value = btn.dataset.run;
+          showPage("execute");
+        });
+      });
+    }
+    function showPage(id) {
+      document.querySelectorAll(".section").forEach(x => x.classList.toggle("active", x.id === id));
+      document.querySelectorAll(".nav button").forEach(x => x.classList.toggle("active", x.dataset.page === id));
+      const titles = {
+        dashboard: ["工作台", "执行 ZFI019NL 与相关报表，优先通过本机 Bridge 获取状态。"],
+        execute: ["执行任务", "提交 Bridge 任务或使用 SapWebLauncher 协议唤醒。"],
+        bridge: ["本机 Bridge", "检查 127.0.0.1 API、协议唤醒与状态回传契约。"],
+        history: ["历史记录", "浏览器本地保存的最近执行记录。"],
+        settings: ["参数设置", "保存非密码参数，避免把 SAP 密码写入浏览器。"],
+        docs: ["方案文档", "实施方案与 GitHub 仓库入口。"]
+      };
+      el("pageTitle").textContent = titles[id][0];
+      el("pageSubtitle").textContent = titles[id][1];
+      el("sidebar").classList.remove("open");
+      updateMetrics();
+    }
+    document.addEventListener("DOMContentLoaded", () => {
+      renderStatic();
+      loadSettings();
+      renderHistory();
+      updateMetrics();
+      log("门户已加载。");
+      document.querySelectorAll(".nav button").forEach(btn => btn.addEventListener("click", () => showPage(btn.dataset.page)));
+      el("menuBtn").addEventListener("click", () => el("sidebar").classList.toggle("open"));
+      ["checkBridgeTop", "checkBridge", "testHealth"].forEach(id => el(id).addEventListener("click", checkBridge));
+      ["quickStartTop", "startTask"].forEach(id => el(id).addEventListener("click", startTask));
+      ["saveSettings", "saveSettings2"].forEach(id => el(id).addEventListener("click", saveSettings));
+      el("testProtocol").addEventListener("click", startProtocolTask);
+      el("clearLog").addEventListener("click", () => el("logBox").textContent = "");
+      el("clearHistory").addEventListener("click", () => {
+        localStorage.removeItem(historyKey);
+        renderHistory();
+        updateMetrics();
+      });
+      el("runMode").addEventListener("change", updateMetrics);
+      if (window.lucide) lucide.createIcons();
+    });
+  </script>
+</body>
+</html>
