@@ -1,11 +1,12 @@
 ' Generic SAP transaction template - parameters injected by SapWebLauncher
-' Placeholders: {OK_CODE} {SCRIPT_MODE} {FIELD1_NAME} {FIELD1_VALUE} {FIELD2_NAME} {FIELD2_VALUE} {CARET_POS} {BUTTON_ID}
+' Placeholders: {OK_CODE} {SCRIPT_MODE} {FIELD1_NAME} {FIELD1_VALUE} {FIELD2_NAME} {FIELD2_VALUE} {PLANTS} {BUSINESS_AREAS} {FACTORY_GROUP} {RUN_STRATEGY} {PERIOD} {WEEK_END} {CARET_POS} {BUTTON_ID}
 
 On Error Resume Next
 
 Dim SapGuiAuto, application, connection, session
 Dim retries, maxRetries, sleepMs
 Dim tcode, scriptMode, field1Name, field1Value, field2Name, field2Value, buttonId
+Dim plantsCsv, businessAreasCsv, factoryGroup, runStrategy, periodValue, weekEndValue
 
 tcode = "{OK_CODE}"
 scriptMode = LCase("{SCRIPT_MODE}")
@@ -13,6 +14,12 @@ field1Name = "{FIELD1_NAME}"
 field1Value = "{FIELD1_VALUE}"
 field2Name = "{FIELD2_NAME}"
 field2Value = "{FIELD2_VALUE}"
+plantsCsv = "{PLANTS}"
+businessAreasCsv = "{BUSINESS_AREAS}"
+factoryGroup = "{FACTORY_GROUP}"
+runStrategy = "{RUN_STRATEGY}"
+periodValue = "{PERIOD}"
+weekEndValue = "{WEEK_END}"
 buttonId = "{BUTTON_ID}"
 maxRetries = 100
 
@@ -56,6 +63,13 @@ If Not IsObject(session) Then
    WScript.Echo "ERROR: SAP GUI session not ready after adaptive wait"
    WScript.Quit 2
 End If
+
+If plantsCsv <> "" Then WScript.Echo "INFO: plants=" & plantsCsv
+If businessAreasCsv <> "" Then WScript.Echo "INFO: businessAreas=" & businessAreasCsv
+If factoryGroup <> "" Then WScript.Echo "INFO: factoryGroup=" & factoryGroup
+If runStrategy <> "" Then WScript.Echo "INFO: runStrategy=" & runStrategy
+If periodValue <> "" Then WScript.Echo "INFO: period=" & periodValue
+If weekEndValue <> "" Then WScript.Echo "INFO: weekEnd=" & weekEndValue
 
 Err.Clear
 WScript.Echo "INFO: ensuring transaction " & tcode

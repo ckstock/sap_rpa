@@ -6,7 +6,7 @@
 
 ## 当前版本重点
 
-- 先打通 `ZFI019NL` 最新版本事务码登录。
+- 先打通 `ZFI019NL` 最新版本事务码登录，并支持从网页传入多工厂、多业务范围参数。
 - 所有事务码统一通过 `tcode` 参数进入 SAP。
 - 后续每个事务码只需要新增或配置对应 VBS 脚本模板。
 - 协议唤醒模式只能启动本机程序，不能从浏览器直接拿执行结果；实时状态回传需要 Bridge 常驻服务。
@@ -60,7 +60,7 @@ D:\工作\网页启动登录\register_sap_rpa.reg
 打开 ZFI019NL：
 
 ```text
-sap-rpa://run?action=run&tcode=ZFI019NL&script=openOnly&system=Fiori&client=400&user=UI5035&pw=fiori666&sysnr=04&lang=ZH&plant=1024&businessArea=2900
+sap-rpa://run?action=run&tcode=ZFI019NL&script=openOnly&system=Fiori&client=400&user=UI5035&pw=fiori666&sysnr=04&lang=ZH&plant=1022&plants=1022,1024,1032,6041&businessArea=2900&businessAreas=2900,9200,2800,3960&factoryGroup=PINGHU_30&runStrategy=byPlant
 ```
 
 旧 ZCK 验证入口仍兼容：
@@ -82,8 +82,12 @@ sap-zck://action=run&system=Fiori&client=400&user=UI5035&pw=fiori666&sysnr=04
 | `pw` | SAP 密码 | `fiori666` |
 | `lang` | SAP 语言 | `ZH` |
 | `sysnr` | SAP 实例编号 | `04` |
-| `plant` | 工厂，后续脚本可读取 | 空 |
-| `businessArea` | 业务范围，后续脚本可读取 | 空 |
+| `plant` | 兼容旧脚本的首个工厂 | 空 |
+| `plants` | 多工厂 CSV，例如 `1022,1024,1032,6041` | 空 |
+| `businessArea` | 兼容旧脚本的首个业务范围 | 空 |
+| `businessAreas` | 多业务范围 CSV，例如 `2900,9200,2800,3960` | 空 |
+| `factoryGroup` | 厂区组，例如 `PINGHU_30` | 空 |
+| `runStrategy` | 执行策略，`byPlant` 或 `merged` | 空 |
 | `period` | 核算周期/周别，后续脚本可读取 | 空 |
 | `weekEnd` | 周结日期，后续脚本可读取 | 空 |
 

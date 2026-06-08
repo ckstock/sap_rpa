@@ -173,14 +173,7 @@ static class Program
             foreach (var prop in doc.RootElement.EnumerateObject())
             {
                 string key = prop.Name.ToLowerInvariant();
-                string value = prop.Value.ValueKind switch
-                {
-                    JsonValueKind.String => prop.Value.GetString() ?? "",
-                    JsonValueKind.Number => prop.Value.GetRawText(),
-                    JsonValueKind.True => "true",
-                    JsonValueKind.False => "false",
-                    _ => prop.Value.GetRawText()
-                };
+                string value = JsonValueToString(prop.Value);
 
                 if (query[key] == null)
                     query[key] = value;
@@ -190,6 +183,19 @@ static class Program
         {
             Log($"payload 解析失败: {ex.Message}");
         }
+    }
+
+    static string JsonValueToString(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.String => value.GetString() ?? "",
+            JsonValueKind.Number => value.GetRawText(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            JsonValueKind.Array => string.Join(",", value.EnumerateArray().Select(JsonValueToString).Where(v => !string.IsNullOrWhiteSpace(v))),
+            _ => value.GetRawText()
+        };
     }
 
     static void RunFromUri(NameValueCollection query, string protocolName)
@@ -223,9 +229,13 @@ static class Program
             TCode = SanitizeTCode(tcode),
             Script = script,
             Plant = First(query, "plant", "werks") ?? "",
+            Plants = First(query, "plants", "werkslist", "plantlist") ?? "",
             Period = First(query, "period", "week") ?? "",
             BusinessArea = First(query, "businessarea", "gsber") ?? "",
+            BusinessAreas = First(query, "businessareas", "gsberlist", "businessarealist") ?? "",
             WeekEnd = First(query, "weekend", "date") ?? "",
+            FactoryGroup = First(query, "factorygroup", "plantgroup") ?? "",
+            RunStrategy = First(query, "runstrategy", "strategy") ?? "",
             Field1Name = First(query, "field1", "field1name") ?? "",
             Field1Value = First(query, "value1", "field1value") ?? "",
             Field2Name = First(query, "field2", "field2name") ?? "",
@@ -234,7 +244,33 @@ static class Program
         };
 
         ApplyScriptDefaults(p);
+        NormalizeBatchParams(p);
         return p;
+    }
+
+    static void NormalizeBatchParams(SapRunParams p)
+    {
+        p.Plants = NormalizeCsv(FirstNonEmpty(p.Plants, p.Plant));
+        p.BusinessAreas = NormalizeCsv(FirstNonEmpty(p.BusinessAreas, p.BusinessArea));
+        p.Plant = FirstCsvValue(p.Plants);
+        p.BusinessArea = FirstCsvValue(p.BusinessAreas);
+    }
+
+    static string NormalizeCsv(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "";
+
+        return string.Join(",",
+            value.Split(new[] { ',', ';', '|', '，', '；', '、', '\r', '\n', '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(v => v.Trim())
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
+    static string FirstCsvValue(string value)
+    {
+        return NormalizeCsv(value).Split(',', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
     }
 
     static string? First(NameValueCollection query, params string[] keys)
@@ -371,6 +407,12 @@ static class Program
             .Replace("{FIELD1_VALUE}", VbsEscape(p.Field1Value))
             .Replace("{FIELD2_NAME}", VbsEscape(p.Field2Name))
             .Replace("{FIELD2_VALUE}", VbsEscape(p.Field2Value))
+            .Replace("{PLANTS}", VbsEscape(p.Plants))
+            .Replace("{BUSINESS_AREAS}", VbsEscape(p.BusinessAreas))
+            .Replace("{FACTORY_GROUP}", VbsEscape(p.FactoryGroup))
+            .Replace("{RUN_STRATEGY}", VbsEscape(p.RunStrategy))
+            .Replace("{PERIOD}", VbsEscape(p.Period))
+            .Replace("{WEEK_END}", VbsEscape(p.WeekEnd))
             .Replace("{CARET_POS}", string.IsNullOrWhiteSpace(p.CaretPos) ? "0" : p.CaretPos)
             .Replace("{BUTTON_ID}", VbsEscape(p.ButtonId));
 
@@ -476,10 +518,11 @@ static class Program
         }
 
         {
-            string uri = "sap-rpa://run?payload=%7B%22tCode%22%3A%22ZFI019NL%22%2C%22plant%22%3A%221024%22%7D";
+            string uri = "sap-rpa://run?payload=%7B%22tCode%22%3A%22ZFI019NL%22%2C%22plants%22%3A%5B%221022%22%2C%221024%22%5D%2C%22businessAreas%22%3A%5B%222900%22%2C%223960%22%5D%7D";
             var q = ParseUri(uri);
             MergePayload(q);
-            Check("payload兼容", q["tcode"] == "ZFI019NL" && q["plant"] == "1024", $"tcode={q["tcode"]}, plant={q["plant"]}");
+            var p = BuildParams(q, PrimaryProtocolName);
+            Check("payload兼容", p.TCode == "ZFI019NL" && p.Plants == "1022,1024" && p.BusinessAreas == "2900,3960", $"tcode={p.TCode}, plants={p.Plants}, businessAreas={p.BusinessAreas}");
         }
 
         {
@@ -498,9 +541,15 @@ static class Program
                 .Replace("{FIELD1_VALUE}", "")
                 .Replace("{FIELD2_NAME}", "")
                 .Replace("{FIELD2_VALUE}", "")
+                .Replace("{PLANTS}", "1022,1024")
+                .Replace("{BUSINESS_AREAS}", "2900,3960")
+                .Replace("{FACTORY_GROUP}", "PINGHU_30")
+                .Replace("{RUN_STRATEGY}", "byPlant")
+                .Replace("{PERIOD}", "2026-W23")
+                .Replace("{WEEK_END}", "2026-06-07")
                 .Replace("{CARET_POS}", "0")
                 .Replace("{BUTTON_ID}", "");
-            bool ok = result.Contains("ZFI019NL") && !result.Contains("{OK_CODE}") && result.Contains("transaction script executed");
+            bool ok = result.Contains("ZFI019NL") && !result.Contains("{OK_CODE}") && !result.Contains("{PLANTS}") && result.Contains("transaction script executed");
             Check("VBS替换", ok, $"模板 {template.Length} 字节 -> {result.Length} 字节");
         }
 
@@ -529,7 +578,7 @@ static class Program
 
     static string DescribeParams(SapRunParams p)
     {
-        return $"tcode={p.TCode}, script={p.Script}, system={p.System}, client={p.Client}, user={p.User}, pw={MaskValue("pw", p.Password)}, lang={p.Language}, sysnr={p.SysNr}, plant={p.Plant}, period={p.Period}, businessArea={p.BusinessArea}, weekEnd={p.WeekEnd}";
+        return $"tcode={p.TCode}, script={p.Script}, system={p.System}, client={p.Client}, user={p.User}, pw={MaskValue("pw", p.Password)}, lang={p.Language}, sysnr={p.SysNr}, plant={p.Plant}, plants={p.Plants}, period={p.Period}, businessArea={p.BusinessArea}, businessAreas={p.BusinessAreas}, weekEnd={p.WeekEnd}, factoryGroup={p.FactoryGroup}, runStrategy={p.RunStrategy}";
     }
 
     static string MaskRawArg(string? arg)
@@ -572,9 +621,13 @@ class SapRunParams
     public string TCode { get; set; } = "ZFI019NL";
     public string Script { get; set; } = "openOnly";
     public string Plant { get; set; } = "";
+    public string Plants { get; set; } = "";
     public string Period { get; set; } = "";
     public string BusinessArea { get; set; } = "";
+    public string BusinessAreas { get; set; } = "";
     public string WeekEnd { get; set; } = "";
+    public string FactoryGroup { get; set; } = "";
+    public string RunStrategy { get; set; } = "";
     public string Field1Name { get; set; } = "";
     public string Field1Value { get; set; } = "";
     public string Field2Name { get; set; } = "";

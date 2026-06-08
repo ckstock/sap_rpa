@@ -39,8 +39,12 @@
       <label>客户端 <input type="text" id="cli" value="400" size="5"></label>
       <label>用户 <input type="text" id="usr" value="UI5035" size="10"></label>
       <label>密码 <input type="password" id="pw" value="fiori666" size="10"></label>
-      <label>工厂 <input type="text" id="plant" value="1024" size="8"></label>
-      <label>业务范围 <input type="text" id="businessArea" value="2900" size="8"></label>
+      <label>首个工厂 <input type="text" id="plant" value="1022" size="8"></label>
+      <label>多工厂 <input type="text" id="plants" value="1022,1024,1032,6041" size="24"></label>
+      <label>首个业务范围 <input type="text" id="businessArea" value="2900" size="8"></label>
+      <label>多业务范围 <input type="text" id="businessAreas" value="2900,9200,2800,3960" size="24"></label>
+      <label>厂区组 <input type="text" id="factoryGroup" value="PINGHU_30" size="12"></label>
+      <label>执行策略 <input type="text" id="runStrategy" value="byPlant" size="10"></label>
       <button type="submit" class="btn">保存参数</button>
       <button type="button" class="btn" style="background-color:#64748b;" onclick="resetDefaults()">恢复默认</button>
       <span id="save-msg" style="color:#16a34a; margin-left:10px; display:none;">已保存并更新链接</span>
@@ -56,8 +60,12 @@
       cli: "400",
       usr: "UI5035",
       pw: "fiori666",
-      plant: "1024",
-      businessArea: "2900"
+      plant: "1022",
+      plants: "1022,1024,1032,6041",
+      businessArea: "2900",
+      businessAreas: "2900,9200,2800,3960",
+      factoryGroup: "PINGHU_30",
+      runStrategy: "byPlant"
     };
 
     function getCurrentParams() {
@@ -83,7 +91,11 @@
         sysnr: p.sysnr,
         lang: "ZH",
         plant: p.plant,
-        businessArea: p.businessArea
+        plants: p.plants,
+        businessArea: p.businessArea,
+        businessAreas: p.businessAreas,
+        factoryGroup: p.factoryGroup,
+        runStrategy: p.runStrategy
       });
       return `sap-rpa://run?${query.toString()}`;
     }
