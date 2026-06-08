@@ -36,7 +36,7 @@ dotnet build "D:\工作\网页启动登录\SapWebLauncher\SapWebLauncher.csproj"
 Release 输出路径：
 
 ```text
-D:\工作\网页启动登录\SapWebLauncher\bin\x64\Release\net8.0-windows\SapWebLauncher.exe
+D:\工作\网页启动登录\SapWebLauncher\bin\Release\net8.0-windows\SapWebLauncher.exe
 ```
 
 ## 注册协议
@@ -53,7 +53,7 @@ powershell -ExecutionPolicy Bypass -File "D:\工作\网页启动登录\register.
 D:\工作\网页启动登录\register_sap_rpa.reg
 ```
 
-`.reg` 文件写死到 Release exe 路径，导入前要先完成 Release 编译。
+`.reg` 文件写死到 Release exe 路径，导入前要先完成 Release 编译。路径包含中文目录时，优先使用仓库中的 Unicode 版 `.reg` 文件或直接执行 `register.ps1`。
 
 ## URL 示例
 
