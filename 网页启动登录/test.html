@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>SAP 事务码一键启动测试</title>
+  <style>
+    body { font-family: "Segoe UI", "Microsoft YaHei", sans-serif; max-width: 720px; margin: 40px auto; padding: 20px; color: #1f2937; }
+    .card { border: 1px solid #e5e7eb; border-radius: 8px; padding: 20px; margin: 14px 0; background: #f9fafb; }
+    .btn { display: inline-flex; align-items: center; min-height: 40px; padding: 0 18px; background: #1890ff; color: white; text-decoration: none; border-radius: 6px; font-size: 15px; border: 0; cursor: pointer; }
+    .btn:hover { background: #096dd9; }
+    label { display: inline-grid; gap: 4px; margin: 0 10px 10px 0; font-size: 13px; }
+    input, select { min-height: 32px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 4px 8px; }
+    code, .link { background: #e6f7ff; color: #0958d9; padding: 2px 6px; border-radius: 4px; overflow-wrap: anywhere; }
+    .link { display: block; margin-top: 12px; padding: 10px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <h2>SAP 事务码一键启动测试</h2>
+  <p>点击下方按钮通过 <code>sap-rpa://</code> 协议唤醒本地 SapWebLauncher，自动登录 SAP 并打开指定事务码。</p>
+
+  <div class="card">
+    <h3>Fiori 环境</h3>
+    <a id="main-btn" class="btn" href="#">执行 ZFI019NL</a>
+    <span id="current-link" class="link"></span>
+  </div>
+
+  <div class="card">
+    <h3>自定义参数</h3>
+    <form onsubmit="event.preventDefault(); saveCustom();">
+      <label>事务码 <input type="text" id="tcode" value="ZFI019NL" size="10"></label>
+      <label>脚本模板
+        <select id="script">
+          <option value="openOnly">openOnly</option>
+          <option value="zck">zck</option>
+        </select>
+      </label>
+      <label>系统 <input type="text" id="sys" value="Fiori" size="10"></label>
+      <label>实例编号 <input type="text" id="sysnr" value="04" size="5"></label>
+      <label>客户端 <input type="text" id="cli" value="400" size="5"></label>
+      <label>用户 <input type="text" id="usr" value="UI5035" size="10"></label>
+      <label>密码 <input type="password" id="pw" value="fiori666" size="10"></label>
+      <label>工厂 <input type="text" id="plant" value="1024" size="8"></label>
+      <label>业务范围 <input type="text" id="businessArea" value="2900" size="8"></label>
+      <button type="submit" class="btn">保存参数</button>
+      <button type="button" class="btn" style="background-color:#64748b;" onclick="resetDefaults()">恢复默认</button>
+      <span id="save-msg" style="color:#16a34a; margin-left:10px; display:none;">已保存并更新链接</span>
+    </form>
+  </div>
+
+  <script>
+    const defaultParams = {
+      tcode: "ZFI019NL",
+      script: "openOnly",
+      sys: "Fiori",
+      sysnr: "04",
+      cli: "400",
+      usr: "UI5035",
+      pw: "fiori666",
+      plant: "1024",
+      businessArea: "2900"
+    };
+
+    function getCurrentParams() {
+      return Object.fromEntries(Object.keys(defaultParams).map(key => [key, document.getElementById(key).value]));
+    }
+
+    function applyParams(params) {
+      Object.entries(defaultParams).forEach(([key, fallback]) => {
+        document.getElementById(key).value = params[key] ?? fallback;
+      });
+    }
+
+    function buildLink() {
+      const p = getCurrentParams();
+      const query = new URLSearchParams({
+        action: "run",
+        tcode: p.tcode,
+        script: p.script,
+        system: p.sys,
+        client: p.cli,
+        user: p.usr,
+        pw: p.pw,
+        sysnr: p.sysnr,
+        lang: "ZH",
+        plant: p.plant,
+        businessArea: p.businessArea
+      });
+      return `sap-rpa://run?${query.toString()}`;
+    }
+
+    function updateMainLink() {
+      const link = buildLink();
+      document.getElementById("main-btn").href = link;
+      document.getElementById("main-btn").textContent = "执行 " + document.getElementById("tcode").value;
+      document.getElementById("current-link").textContent = link;
+    }
+
+    function saveCustom() {
+      const params = getCurrentParams();
+      localStorage.setItem("sapRpaParams", JSON.stringify(params));
+      updateMainLink();
+
+      const msg = document.getElementById("save-msg");
+      msg.style.display = "inline";
+      setTimeout(() => msg.style.display = "none", 2000);
+    }
+
+    function resetDefaults() {
+      localStorage.removeItem("sapRpaParams");
+      applyParams(defaultParams);
+      updateMainLink();
+    }
+
+    function loadCustom() {
+      const saved = localStorage.getItem("sapRpaParams");
+      if (saved) {
+        try {
+          applyParams({ ...defaultParams, ...JSON.parse(saved) });
+        } catch(e) {
+          applyParams(defaultParams);
+        }
+      } else {
+        applyParams(defaultParams);
+      }
+      updateMainLink();
+    }
+
+    window.onload = loadCustom;
+  </script>
+</body>
+</html>

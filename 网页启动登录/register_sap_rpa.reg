@@ -1,0 +1,23 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\Classes\sap-rpa]
+@="URL:sap-rpa Protocol"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\sap-rpa\shell]
+
+[HKEY_CURRENT_USER\Software\Classes\sap-rpa\shell\open]
+
+[HKEY_CURRENT_USER\Software\Classes\sap-rpa\shell\open\command]
+@="\"D:\\工作\\网页启动登录\\SapWebLauncher\\bin\\Release\\net8.0-windows\\SapWebLauncher.exe\" \"%1\""
+
+[HKEY_CURRENT_USER\Software\Classes\sap-zck]
+@="URL:sap-zck Protocol"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\sap-zck\shell]
+
+[HKEY_CURRENT_USER\Software\Classes\sap-zck\shell\open]
+
+[HKEY_CURRENT_USER\Software\Classes\sap-zck\shell\open\command]
+@="\"D:\\工作\\网页启动登录\\SapWebLauncher\\bin\\Release\\net8.0-windows\\SapWebLauncher.exe\" \"%1\""

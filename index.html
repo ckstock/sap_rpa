@@ -3,85 +3,65 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>领益 SAP 自动化执行门户</title>
+  <title>SAP 自动化执行门户</title>
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
   <style>
     * { box-sizing: border-box; }
     :root {
-      --bg: #f5f7fb;
+      --bg: #f5f7fa;
       --panel: #ffffff;
-      --panel-2: #f8fafc;
+      --panel-soft: #fafcff;
       --line: #e5e7eb;
       --line-strong: #cbd5e1;
-      --text: #172033;
+      --text: #1f2937;
       --muted: #667085;
-      --nav: #0f172a;
-      --nav-soft: #1e293b;
-      --blue: #1677ff;
-      --blue-dark: #0958d9;
+      --nav: #001529;
+      --nav-soft: #002140;
+      --blue: #1890ff;
+      --blue-dark: #096dd9;
       --green: #16a34a;
       --amber: #d97706;
       --red: #dc2626;
       --cyan: #0891b2;
-      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
       --radius: 8px;
     }
     html, body { margin: 0; min-height: 100%; }
     body {
-      color: var(--text);
       background: var(--bg);
+      color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", Arial, sans-serif;
       letter-spacing: 0;
     }
     button, input, select, textarea { font: inherit; }
     button { cursor: pointer; }
+    .icon { width: 17px; height: 17px; flex: 0 0 auto; }
     .hidden { display: none !important; }
+
     .login-page {
       min-height: 100vh;
       display: grid;
-      grid-template-columns: minmax(380px, 460px) minmax(0, 1fr);
+      grid-template-columns: minmax(360px, 440px) minmax(0, 1fr);
       background:
-        linear-gradient(135deg, rgba(15, 23, 42, 0.92), rgba(22, 119, 255, 0.72)),
-        url("https://images.unsplash.com/photo-1581092921461-39b9d08a9b21?auto=format&fit=crop&w=1600&q=80") center/cover;
+        linear-gradient(135deg, rgba(24, 144, 255, .88), rgba(54, 207, 201, .72)),
+        url("https://images.unsplash.com/photo-1517048676732-d65bc937f952?auto=format&fit=crop&w=1600&q=80") center/cover;
     }
     .login-panel {
       background: rgba(255,255,255,.98);
-      padding: 48px 42px;
+      padding: 46px 40px;
       display: flex;
       flex-direction: column;
       justify-content: center;
-      border-right: 1px solid rgba(255,255,255,.3);
+      border-right: 1px solid rgba(255,255,255,.36);
     }
-    .login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 34px; }
+    .login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 32px; }
     .brand-mark {
-      width: 44px; height: 44px; border-radius: 8px;
-      background: #0f172a; color: #fff; display: grid; place-items: center;
+      width: 42px; height: 42px; border-radius: 8px;
+      background: var(--blue); color: #fff; display: grid; place-items: center;
     }
     .login-brand h1 { margin: 0; font-size: 24px; line-height: 1.25; }
     .login-brand p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
     .login-form { display: grid; gap: 14px; }
-    .field { display: grid; gap: 7px; }
-    label { color: #344054; font-size: 13px; font-weight: 600; }
-    input, select, textarea {
-      width: 100%;
-      border: 1px solid var(--line-strong);
-      border-radius: var(--radius);
-      background: #fff;
-      color: var(--text);
-      min-height: 38px;
-      padding: 9px 11px;
-      outline: none;
-    }
-    input:focus, select:focus, textarea:focus {
-      border-color: var(--blue);
-      box-shadow: 0 0 0 3px rgba(22, 119, 255, 0.12);
-    }
-    .login-actions { display: grid; gap: 10px; margin-top: 8px; }
-    .divider {
-      display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px;
-      color: var(--muted); font-size: 12px; margin: 4px 0;
-    }
-    .divider::before, .divider::after { content: ""; height: 1px; background: var(--line); }
     .login-side {
       color: #fff;
       padding: 64px;
@@ -90,9 +70,15 @@
       justify-content: flex-end;
       min-height: 520px;
     }
-    .login-side h2 { margin: 0 0 14px; font-size: 42px; letter-spacing: 0; line-height: 1.12; }
-    .login-side p { margin: 0; max-width: 620px; color: rgba(255,255,255,.86); line-height: 1.8; }
-    .app-shell { min-height: 100vh; display: grid; grid-template-columns: 232px minmax(0, 1fr); }
+    .login-side h2 { margin: 0 0 14px; font-size: 40px; line-height: 1.16; }
+    .login-side p { margin: 0; max-width: 650px; color: rgba(255,255,255,.88); line-height: 1.8; }
+    .divider {
+      display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px;
+      color: var(--muted); font-size: 12px; margin: 4px 0;
+    }
+    .divider::before, .divider::after { content: ""; height: 1px; background: var(--line); }
+
+    .app-shell { min-height: 100vh; display: grid; grid-template-columns: 220px minmax(0, 1fr); }
     .sidebar {
       position: sticky; top: 0; height: 100vh;
       background: var(--nav);
@@ -101,32 +87,30 @@
       flex-direction: column;
     }
     .logo {
-      height: 64px;
+      height: 62px;
       padding: 0 18px;
       display: flex;
       align-items: center;
-      gap: 11px;
-      border-bottom: 1px solid rgba(255,255,255,.08);
+      gap: 10px;
+      border-bottom: 1px solid rgba(255,255,255,.1);
       font-weight: 700;
     }
-    .logo .brand-mark { width: 34px; height: 34px; background: var(--blue); }
+    .logo .brand-mark { width: 34px; height: 34px; }
     .nav { padding: 12px; display: grid; gap: 5px; }
     .nav button {
-      height: 42px;
-      width: 100%;
-      border: 0;
-      border-radius: var(--radius);
-      background: transparent;
-      color: #cbd5e1;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      padding: 0 12px;
-      text-align: left;
+      height: 42px; width: 100%;
+      border: 0; border-radius: var(--radius);
+      background: transparent; color: #cbd5e1;
+      display: flex; align-items: center; gap: 10px;
+      padding: 0 12px; text-align: left;
     }
     .nav button:hover, .nav button.active { background: var(--nav-soft); color: #fff; }
     .nav button.active { box-shadow: inset 3px 0 0 var(--blue); }
-    .sidebar-footer { margin-top: auto; padding: 16px; border-top: 1px solid rgba(255,255,255,.08); color: #94a3b8; font-size: 12px; line-height: 1.6; }
+    .sidebar-footer {
+      margin-top: auto; padding: 16px;
+      border-top: 1px solid rgba(255,255,255,.1);
+      color: #94a3b8; font-size: 12px; line-height: 1.7;
+    }
     .main { min-width: 0; padding: 18px 22px 32px; }
     .topbar {
       min-height: 58px;
@@ -146,11 +130,11 @@
     .top-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
     .avatar {
       width: 32px; height: 32px; border-radius: 50%;
-      background: #e0f2fe; color: #0369a1;
+      background: #e6f7ff; color: #0958d9;
       display: grid; place-items: center;
-      font-weight: 700;
-      font-size: 13px;
+      font-weight: 700; font-size: 13px;
     }
+
     .btn {
       min-height: 36px;
       border: 1px solid var(--line-strong);
@@ -163,16 +147,47 @@
       justify-content: center;
       gap: 7px;
       white-space: nowrap;
+      text-decoration: none;
     }
     .btn:hover { border-color: var(--blue); color: var(--blue); }
     .btn.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
     .btn.primary:hover { background: var(--blue-dark); border-color: var(--blue-dark); color: #fff; }
     .btn.green { background: var(--green); border-color: var(--green); color: #fff; }
     .btn.red { background: var(--red); border-color: var(--red); color: #fff; }
-    .btn.ghost { background: transparent; }
     .btn.small { min-height: 30px; padding: 0 9px; font-size: 12px; }
     .btn:disabled { opacity: .58; cursor: not-allowed; }
-    .icon { width: 17px; height: 17px; flex: 0 0 auto; }
+    input, select, textarea {
+      width: 100%;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      background: #fff;
+      color: var(--text);
+      min-height: 38px;
+      padding: 9px 11px;
+      outline: none;
+    }
+    input:focus, select:focus, textarea:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(24, 144, 255, .12);
+    }
+    label { color: #344054; font-size: 13px; font-weight: 600; }
+    .field { display: grid; gap: 7px; }
+    .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+    .form-grid .span-2 { grid-column: span 2; }
+    .radio-row, .check-row { display: flex; gap: 12px; flex-wrap: wrap; }
+    .radio-chip {
+      min-height: 38px;
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line-strong);
+      border-radius: var(--radius);
+      padding: 0 10px;
+      background: #fff;
+      font-weight: 500;
+    }
+    .radio-chip input { width: auto; min-height: 0; }
+
     .panel {
       background: var(--panel);
       border: 1px solid var(--line);
@@ -192,7 +207,7 @@
       background: #fff;
     }
     .panel-title { display: flex; align-items: center; gap: 9px; font-weight: 700; }
-    .panel-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .panel-sub { color: var(--muted); font-size: 12px; margin-top: 2px; line-height: 1.5; }
     .panel-body { padding: 16px; }
     .grid { display: grid; gap: 16px; }
     .grid.cols-2 { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
@@ -207,8 +222,8 @@
       gap: 7px;
     }
     .metric .label { color: var(--muted); font-size: 12px; }
-    .metric .value { font-size: 24px; font-weight: 800; }
-    .metric .hint { color: var(--muted); font-size: 12px; }
+    .metric .value { font-size: 23px; font-weight: 800; }
+    .metric .hint { color: var(--muted); font-size: 12px; line-height: 1.45; }
     .quick-actions { display: grid; grid-template-columns: repeat(4, minmax(150px, 1fr)); gap: 12px; }
     .action-card {
       border: 1px solid var(--line);
@@ -219,10 +234,52 @@
       gap: 10px;
       transition: border-color .16s, box-shadow .16s, transform .16s;
     }
-    .action-card:hover { border-color: #93c5fd; box-shadow: var(--shadow); transform: translateY(-1px); }
+    .action-card:hover { border-color: #91d5ff; box-shadow: var(--shadow); transform: translateY(-1px); }
     .action-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; }
     .action-name { font-weight: 800; font-size: 16px; }
-    .action-desc { color: var(--muted); font-size: 12px; margin-top: 4px; }
+    .action-desc { color: var(--muted); font-size: 12px; margin-top: 4px; line-height: 1.5; }
+    .workflow-chain {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+    .workflow-step {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 12px;
+      min-height: 92px;
+      display: grid;
+      align-content: start;
+      gap: 7px;
+    }
+    .workflow-step .step-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .workflow-step .step-code { font-weight: 800; color: #102a43; }
+    .workflow-step .step-desc { color: var(--muted); font-size: 12px; line-height: 1.55; }
+    .executor-stack { display: grid; gap: 10px; }
+    .executor-row {
+      min-height: 40px;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 13px;
+    }
+    .launch-link {
+      border: 1px solid #91d5ff;
+      background: #e6f7ff;
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      color: #0958d9;
+      font-family: Consolas, "Microsoft YaHei UI", monospace;
+      font-size: 12px;
+      overflow-wrap: anywhere;
+      line-height: 1.55;
+    }
     .badge, .tag {
       display: inline-flex;
       align-items: center;
@@ -234,42 +291,40 @@
       border: 1px solid transparent;
       white-space: nowrap;
     }
-    .badge.viewer { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
-    .badge.executor { background: #ecfdf5; color: #047857; border-color: #bbf7d0; }
-    .tag.ok { background: #ecfdf5; color: #047857; border-color: #bbf7d0; }
-    .tag.info { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
-    .tag.warn { background: #fffbeb; color: #b45309; border-color: #fde68a; }
-    .tag.err { background: #fef2f2; color: #b91c1c; border-color: #fecaca; }
-    .table-wrap { overflow-x: auto; }
-    table { width: 100%; border-collapse: collapse; min-width: 760px; }
-    th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; vertical-align: middle; }
-    th { background: #f8fafc; color: #475467; font-weight: 700; }
-    tbody tr:hover { background: #f9fbff; }
-    .form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
-    .form-grid .span-2 { grid-column: span 2; }
-    .radio-row, .check-row { display: flex; gap: 14px; flex-wrap: wrap; }
-    .radio-chip {
-      min-height: 38px;
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      border: 1px solid var(--line-strong);
-      border-radius: var(--radius);
-      padding: 0 10px;
-      background: #fff;
-    }
-    .radio-chip input { width: auto; min-height: 0; }
+    .badge.viewer { background: #e6f7ff; color: #0958d9; border-color: #91d5ff; }
+    .badge.executor { background: #f6ffed; color: #389e0d; border-color: #b7eb8f; }
+    .tag.ok { background: #f6ffed; color: #389e0d; border-color: #b7eb8f; }
+    .tag.info { background: #e6f7ff; color: #0958d9; border-color: #91d5ff; }
+    .tag.warn { background: #fffbe6; color: #ad6800; border-color: #ffe58f; }
+    .tag.err { background: #fff1f0; color: #cf1322; border-color: #ffa39e; }
     .notice {
-      border: 1px solid #bfdbfe;
-      background: #eff6ff;
-      color: #1e3a8a;
+      border: 1px solid #91d5ff;
+      background: #e6f7ff;
+      color: #0958d9;
       border-radius: var(--radius);
       padding: 12px 14px;
       line-height: 1.65;
       font-size: 13px;
     }
-    .notice.warn { border-color: #fde68a; background: #fffbeb; color: #78350f; }
-    .notice.ok { border-color: #bbf7d0; background: #ecfdf5; color: #064e3b; }
+    .notice.warn { border-color: #ffe58f; background: #fffbe6; color: #ad6800; }
+    .notice.ok { border-color: #b7eb8f; background: #f6ffed; color: #237804; }
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    th, td { padding: 11px 12px; border-bottom: 1px solid var(--line); text-align: left; font-size: 13px; vertical-align: middle; }
+    th { background: #fafafa; color: #475467; font-weight: 700; }
+    tbody tr:hover { background: #f5f8ff; }
+    .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+    .tab {
+      border: 1px solid var(--line-strong);
+      background: #fff;
+      border-radius: var(--radius);
+      min-height: 34px;
+      padding: 0 11px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .tab.active { color: var(--blue); border-color: #91d5ff; background: #e6f7ff; }
     .steps { display: grid; gap: 10px; }
     .step {
       display: grid;
@@ -289,13 +344,13 @@
     .step.fail .step-icon { background: #fee2e2; color: var(--red); }
     .step-text { font-size: 13px; }
     .step-time { font-size: 12px; color: var(--muted); }
-    @keyframes pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.92); opacity: .68; } }
+    @keyframes pulse { 0%,100% { transform: scale(1); opacity: 1; } 50% { transform: scale(.92); opacity: .7; } }
     .log {
       background: #101828;
       color: #d0d5dd;
       border-radius: var(--radius);
       padding: 12px;
-      height: 238px;
+      height: 248px;
       overflow: auto;
       font-family: Consolas, "Microsoft YaHei UI", monospace;
       font-size: 12px;
@@ -307,18 +362,6 @@
     .log .OK { color: #86efac; }
     .log .WARN { color: #fcd34d; }
     .log .ERR { color: #fca5a5; }
-    .tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
-    .tab {
-      border: 1px solid var(--line-strong);
-      background: #fff;
-      border-radius: var(--radius);
-      min-height: 34px;
-      padding: 0 11px;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .tab.active { color: var(--blue); border-color: #93c5fd; background: #eff6ff; }
     .modal-backdrop {
       position: fixed; inset: 0; z-index: 20;
       background: rgba(15, 23, 42, .48);
@@ -368,8 +411,8 @@
     .toast.ok { border-left-color: var(--green); }
     .toast.warn { border-left-color: var(--amber); }
     .toast.err { border-left-color: var(--red); }
-    @media (max-width: 1040px) {
-      .quick-actions, .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    @media (max-width: 1120px) {
+      .quick-actions, .workflow-chain, .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .grid.cols-3, .grid.cols-2 { grid-template-columns: 1fr; }
       .form-grid { grid-template-columns: 1fr; }
       .form-grid .span-2 { grid-column: auto; }
@@ -384,7 +427,7 @@
       .sidebar-footer { display: none; }
       .main { padding: 12px; }
       .topbar { align-items: flex-start; flex-direction: column; padding: 12px; }
-      .quick-actions, .grid.cols-4 { grid-template-columns: 1fr; }
+      .quick-actions, .workflow-chain, .grid.cols-4 { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -399,7 +442,7 @@
       role: localStorage.getItem("portalRole") || "executor",
       user: { name: localStorage.getItem("portalUser") || "张三", dept: "财务共享中心" },
       bridgeBase: localStorage.getItem("bridgeBase") || "http://127.0.0.1:17890",
-      scheme: localStorage.getItem("scheme") || "sap-zck",
+      scheme: localStorage.getItem("scheme") || "sap-rpa",
       activeConfigTab: "plant",
       selectedTCode: "ZFI019NL",
       executing: false,
@@ -411,28 +454,27 @@
         password: "",
         tCode: "ZFI019NL",
         plant: "1024",
-        period: "2026-06",
-        businessArea: "L001",
-        mode: "bridge",
-        priority: "high",
+        period: "2026-W23",
+        businessArea: "2900",
+        weekEnd: "2026-06-07",
+        mode: "protocol",
         notify: true,
         remark: ""
       },
       steps: [
         { text: "创建执行任务", status: "pending", time: "" },
         { text: "唤醒本机执行器", status: "pending", time: "" },
-        { text: "SAP 登录与参数注入", status: "pending", time: "" },
-        { text: "执行报表并采集状态", status: "pending", time: "" },
-        { text: "生成结果并推送通知", status: "pending", time: "" }
+        { text: "SAP 登录与事务码跳转", status: "pending", time: "" },
+        { text: "执行脚本并保存/导出", status: "pending", time: "" },
+        { text: "记录日志并推送通知", status: "pending", time: "" }
       ],
       logs: [],
       scheduleForm: {
-        name: "每周一 ZFI019NL 自动执行",
+        name: "周一 ZFI019NL 周损益链路",
         tCode: "ZFI019NL",
         plant: "1024",
         execTime: "08:00",
         frequency: "weekly",
-        priority: "high",
         notifyStart: true,
         notifySuccess: true,
         notifyFail: true
@@ -440,38 +482,50 @@
     };
 
     const tCodes = [
-      { code: "ZFI019NL", name: "周损益报表", module: "FI", timeout: 300, retry: 3, enabled: true },
-      { code: "ZFI072", name: "采购价维护", module: "MM", timeout: 180, retry: 2, enabled: true },
-      { code: "ZFI057", name: "产值拆分", module: "CO", timeout: 600, retry: 3, enabled: true },
-      { code: "ZCO019", name: "标准成本", module: "CO", timeout: 240, retry: 2, enabled: true },
-      { code: "ZFI080", name: "实际材料保存", module: "FI", timeout: 180, retry: 2, enabled: true }
+      { code: "ZFI019NL", name: "周损益保存导出", module: "FI", timeout: 300, retry: 3, enabled: true, script: "zfi019nl" },
+      { code: "ZFI072", name: "维护采购价", module: "FI", timeout: 180, retry: 2, enabled: true, script: "openOnly" },
+      { code: "ZFI057", name: "产值拆分", module: "CO", timeout: 600, retry: 3, enabled: true, script: "openOnly" },
+      { code: "ZCO020", name: "拆分验证", module: "CO", timeout: 240, retry: 2, enabled: true, script: "openOnly" },
+      { code: "ZFI080", name: "实际材料保存", module: "FI", timeout: 180, retry: 2, enabled: true, script: "openOnly" },
+      { code: "ZCO019", name: "标准材料成本", module: "CO", timeout: 240, retry: 2, enabled: true, script: "openOnly" }
+    ];
+    const workflow = [
+      { code: "ZFI072", title: "采购价维护", desc: "先跑集采工厂和平湖厂区，跨月周期按月份拆分。" },
+      { code: "ZFI085", title: "特殊价格维护", desc: "每周维护 ZZ 仓领退料价格，需在 ZFI080/ZCO019 前完成。" },
+      { code: "ZFI057", title: "产值拆分", desc: "按业务范围或入库料号拆分，并用 ZCO020 验证遗漏。" },
+      { code: "ZFI080", title: "实际材料保存", desc: "按上周结单日期和业务范围全选保存，导出留底。" },
+      { code: "ZCO019", title: "标准材料成本", desc: "先明细保存，再汇总保存，失败需重跑。" },
+      { code: "ZFI019NL", title: "周损益保存", desc: "按入库日期和业务范围保存导出，供大数据平台同步。" },
+      { code: "同步", title: "大数据平台", desc: "保存后点击周损益底稿同步数据，抽取最新结果。" },
+      { code: "通知", title: "结果推送", desc: "Bridge 模式可回传状态、日志、截图和钉钉通知。" }
     ];
     const plants = [
-      { code: "1024", name: "平湖三厂", area: "L001", bg: "精密制造", enabled: true },
-      { code: "1032", name: "平湖三十厂", area: "L001", bg: "精密制造", enabled: true },
-      { code: "6041", name: "平湖三厂", area: "L004", bg: "结构件", enabled: true },
-      { code: "5021", name: "集采工厂", area: "P001", bg: "供应链", enabled: false }
+      { code: "1024", name: "平湖三十厂", area: "2900", group: "平湖三厂组", enabled: true },
+      { code: "1032", name: "平湖三十厂", area: "9200", group: "平湖三厂组", enabled: true },
+      { code: "6041", name: "平湖三十厂", area: "2800", group: "平湖三厂组", enabled: true },
+      { code: "1022", name: "平湖三十厂", area: "2800", group: "平湖三厂组", enabled: true },
+      { code: "103C", name: "平湖七厂", area: "2910", group: "平湖七厂", enabled: true },
+      { code: "1031", name: "平湖一九厂", area: "3400", group: "平湖一九厂", enabled: true },
+      { code: "1033", name: "平湖一九厂", area: "2920", group: "平湖一九厂", enabled: true },
+      { code: "1035", name: "平湖二五厂", area: "5100", group: "平湖二五厂", enabled: true },
+      { code: "1036", name: "平湖二五厂", area: "2790", group: "平湖二五厂", enabled: true }
     ];
     const robots = [
-      { id: "rbt-001", name: "财务部通知群", group: "SAP 自动执行通知群", events: "执行完成、执行失败", enabled: true, lastPush: "2026/06/07 08:05" },
-      { id: "rbt-002", name: "IT 运维告警群", group: "SAP 运维告警", events: "系统异常、执行失败", enabled: true, lastPush: "2026/06/07 14:30" }
+      { id: "rbt-001", name: "财务通知群", group: "SAP 自动化执行通知", events: "执行完成、执行失败", enabled: true, lastPush: "2026/06/07 08:05" },
+      { id: "rbt-002", name: "IT 运维告警群", group: "SAP 运维告警", events: "系统异常、脚本失败", enabled: true, lastPush: "2026/06/07 14:30" }
     ];
     const scheduleTasks = [
-      { id: "SCH-001", name: "周一 ZFI019NL 自动执行", tCode: "ZFI019NL", plant: "1024,1032", time: "08:00", frequency: "每周一", priority: "高", next: "2026/06/15 08:00", status: "启用" },
-      { id: "SCH-002", name: "月末 ZFI080 保存", tCode: "ZFI080", plant: "1022,1024", time: "18:00", frequency: "每月末", priority: "中", next: "2026/06/30 18:00", status: "启用" }
+      { id: "SCH-001", name: "周一 ZFI019NL 周损益链路", tCode: "ZFI019NL", plant: "1024,1032,6041", time: "08:00", frequency: "每周一", status: "启用", next: "2026/06/15 08:00" }
     ];
     const history = [
-      { id: "RUN-20260608-001", time: "2026/06/08 08:00", task: "周一 ZFI019NL 自动执行", tCode: "ZFI019NL", plant: "1024", duration: "45 秒", status: "成功", notify: "已推送", result: "生成周损益结果 18 行" },
-      { id: "RUN-20260607-004", time: "2026/06/07 18:30", task: "采购价维护", tCode: "ZFI072", plant: "5021", duration: "32 秒", status: "成功", notify: "已推送", result: "更新 23 条价格记录" },
-      { id: "RUN-20260607-002", time: "2026/06/07 08:00", task: "周一 ZFI019NL 自动执行", tCode: "ZFI019NL", plant: "1032", duration: "1 分 23 秒", status: "失败", notify: "告警已推送", result: "SAP 连接超时" }
+      { id: "RUN-20260608-001", time: "2026/06/08 08:00", task: "周一 ZFI019NL 周损益链路", tCode: "ZFI019NL", plant: "1024", duration: "45 秒", status: "成功", notify: "已推送", result: "保存并导出周损益结果 18 行" },
+      { id: "RUN-20260607-002", time: "2026/06/07 08:00", task: "ZFI057 产值拆分", tCode: "ZFI057", plant: "1032", duration: "1 分 23 秒", status: "失败", notify: "告警已推送", result: "SAP 连接超时" }
     ];
-
     const pages = {
       dashboard: "工作台",
       execute: "执行任务",
       schedule: "定时任务",
       config: "基础配置",
-      report: "统计报表",
       history: "执行历史",
       settings: "系统设置"
     };
@@ -493,7 +547,7 @@
             <div class="login-brand">
               <div class="brand-mark">${icon("workflow")}</div>
               <div>
-                <h1>领益 SAP 自动化执行门户</h1>
+                <h1>SAP 自动化执行门户</h1>
                 <p>SAP Automation Portal</p>
               </div>
             </div>
@@ -508,14 +562,12 @@
                 <label for="loginPassword">密码</label>
                 <input id="loginPassword" type="password" value="${esc(state.form.password)}" placeholder="请输入密码">
               </div>
-              <div class="login-actions">
-                <button class="btn primary" data-action="login">${icon("log-in")}登录</button>
-              </div>
+              <button class="btn primary" data-action="login">${icon("log-in")}登录</button>
             </div>
           </div>
           <div class="login-side">
-            <h2>本机执行 SAP，页面集中调度和看结果</h2>
-            <p>前端可以部署到 Netlify、IIS 或企业门户；每台执行电脑安装本机 Bridge 或 SapWebLauncher。Bridge 模式负责把脚本执行状态、报表结果和日志回传到页面。</p>
+            <h2>本机执行 SAP，页面负责调度和看结果</h2>
+            <p>前端可以部署到 Netlify 或企业门户；每台执行电脑安装 SapWebLauncher 或 Bridge。当前版本优先打通事务码登录和脚本执行，后续再扩展完整状态回传。</p>
           </div>
         </section>
       `;
@@ -525,19 +577,18 @@
       return `
         <div class="app-shell">
           <aside class="sidebar">
-            <div class="logo"><span class="brand-mark">${icon("workflow")}</span><span>领益 SAP 门户</span></div>
+            <div class="logo"><span class="brand-mark">${icon("workflow")}</span><span>SAP 门户</span></div>
             <nav class="nav">
               ${navButton("dashboard", "layout-dashboard", "工作台")}
               ${navButton("execute", "play-circle", "执行任务")}
               ${navButton("schedule", "calendar-clock", "定时任务")}
               ${navButton("config", "sliders-horizontal", "基础配置")}
-              ${navButton("report", "bar-chart-3", "统计报表")}
               ${navButton("history", "history", "执行历史")}
               ${navButton("settings", "settings", "系统设置")}
             </nav>
             <div class="sidebar-footer">
-              <div>当前执行方案：静态前端 + 本机执行器</div>
-              <div>状态回传优先使用 Bridge API</div>
+              <div>当前重点：事务码登录 + SAP GUI Script 执行</div>
+              <div>Bridge 回传属于下一阶段增强</div>
             </div>
           </aside>
           <main class="main">
@@ -567,13 +618,12 @@
 
     function renderPageSubTitle() {
       const subtitles = {
-        dashboard: "查看今日运行、快速发起 ZFI019NL 和本机执行器状态。",
+        dashboard: "快速发起 ZFI019NL 周损益链路，并检查本机执行器状态。",
         execute: "选择事务码和执行参数，提交给本机 Bridge 或 SapWebLauncher。",
-        schedule: "维护固定频率任务，后续可交给后台或本机服务定时触发。",
-        config: "维护工厂、事务码、通知机器人和本机 Bridge 地址。",
-        report: "按事务码、工厂和成功率统计执行质量。",
-        history: "查看最近执行日志和状态回传结果。",
-        settings: "设置执行模式、通知策略和本地连接参数。"
+        schedule: "只保留核心周损益任务，后续由 Bridge 常驻服务或后台调度承接。",
+        config: "维护工厂、事务码、通知机器人和本机协议/Bridge 地址。",
+        history: "查看 Bridge 回传或本地模拟记录，当前以日志闭环为主。",
+        settings: "配置默认执行方式和本地连接参数。"
       };
       return subtitles[state.page] || "";
     }
@@ -584,7 +634,6 @@
         execute: renderExecute,
         schedule: renderSchedule,
         config: renderConfig,
-        report: renderReport,
         history: renderHistory,
         settings: renderSettings
       };
@@ -594,42 +643,41 @@
     function renderDashboard() {
       return `
         <section class="grid cols-4">
-          ${metric("今日执行", "18", "成功 17 / 失败 1")}
-          ${metric("ZFI019NL", "97.3%", "最近 7 天成功率")}
-          ${metric("平均耗时", "46s", "Bridge 回传统计")}
-          ${metric("本机状态", state.bridgeStatus, "执行电脑 127.0.0.1")}
+          ${metric("核心事务码", "ZFI019NL", "周损益保存、导出和同步前置数据")}
+          ${metric("本机执行器", state.bridgeStatus, "SapWebLauncher / Bridge")}
+          ${metric("默认协议", state.scheme + "://", "当前前端唤醒协议")}
+          ${metric("执行方式", state.form.mode === "protocol" ? "协议唤醒" : "Bridge 回传", "先跑通事务码登录")}
         </section>
         <section class="panel">
           <div class="panel-header">
-            <div><div class="panel-title">${icon("zap")}快速操作</div><div class="panel-sub">从常用事务码直接进入执行页</div></div>
+            <div><div class="panel-title">${icon("zap")}快速执行</div><div class="panel-sub">先打通周损益主链路，其他事务码沿用同一登录入口和脚本模板。</div></div>
             <button class="btn small" data-action="check-bridge">${icon("activity")}检测 Bridge</button>
           </div>
           <div class="panel-body">
             <div class="quick-actions">
-              ${quickAction("ZFI019NL", "周损益报表", "FI", "bar-chart-3")}
-              ${quickAction("ZFI072", "采购价维护", "MM", "circle-dollar-sign")}
+              ${quickAction("ZFI019NL", "周损益保存导出", "FI", "bar-chart-3")}
+              ${quickAction("ZFI072", "维护采购价", "FI", "circle-dollar-sign")}
               ${quickAction("ZFI057", "产值拆分", "CO", "trending-up")}
-              ${quickAction("ZCO019", "标准成本", "CO", "tag")}
+              ${quickAction("ZCO019", "标准材料成本", "CO", "tag")}
             </div>
           </div>
         </section>
         <section class="grid cols-2">
           <div class="panel">
-            <div class="panel-header"><div class="panel-title">${icon("activity")}执行器状态</div></div>
-            <div class="panel-body">
-              <div class="notice ${state.bridgeStatus === "在线" ? "ok" : "warn"}">
-                Bridge 模式可以回传脚本执行状态、报表结果和日志；只用 SapWebLauncher 协议唤醒时，浏览器无法直接拿到执行后的结果状态。
-              </div>
-              <div style="height:12px"></div>
-              <div class="grid cols-2">
-                ${metric("Bridge 地址", state.bridgeBase, "本机 API")}
-                ${metric("协议唤醒", state.scheme + "://", "备用模式")}
-              </div>
-            </div>
+            <div class="panel-header"><div class="panel-title">${icon("route")}ZFI019NL 周损益链路</div></div>
+            <div class="panel-body"><div class="workflow-chain">${workflow.map(renderWorkflowStep).join("")}</div></div>
           </div>
           <div class="panel">
-            <div class="panel-header"><div class="panel-title">${icon("list-checks")}最近运行</div></div>
-            <div class="panel-body table-wrap">${historyTable(history.slice(0, 4))}</div>
+            <div class="panel-header"><div class="panel-title">${icon("activity")}执行器状态</div></div>
+            <div class="panel-body">
+              <div class="executor-stack">
+                <div class="executor-row"><span>Bridge API</span><span class="tag ${state.bridgeStatus === "在线" ? "ok" : "warn"}">${state.bridgeStatus}</span></div>
+                <div class="executor-row"><span>协议唤醒</span><span class="tag ok">${state.scheme}://</span></div>
+                <div class="executor-row"><span>注册表</span><button class="btn small" data-action="open-register-help">${icon("file-cog")}查看注册方式</button></div>
+              </div>
+              <div style="height:12px"></div>
+              <div class="notice warn">协议唤醒只能启动本机程序，浏览器拿不到执行结果；要实时状态、截图、失败原因，需要后续 Bridge 常驻服务。</div>
+            </div>
           </div>
         </section>
       `;
@@ -654,12 +702,22 @@
       `;
     }
 
+    function renderWorkflowStep(item, index) {
+      return `
+        <div class="workflow-step">
+          <div class="step-head"><span class="step-code">${esc(item.code)}</span><span class="tag ${index < 2 ? "warn" : index === 5 ? "ok" : "info"}">${index + 1}</span></div>
+          <div><strong>${esc(item.title)}</strong></div>
+          <div class="step-desc">${esc(item.desc)}</div>
+        </div>
+      `;
+    }
+
     function renderExecute() {
       return `
         <section class="grid cols-2">
           <div class="panel">
             <div class="panel-header">
-              <div><div class="panel-title">${icon("play-circle")}${esc(state.form.tCode)} 执行任务</div><div class="panel-sub">提交给本机执行器，由本机完成 SAP 登录和脚本动作</div></div>
+              <div><div class="panel-title">${icon("play-circle")}${esc(state.form.tCode)} 执行任务</div><div class="panel-sub">本页生成统一事务码 URL，本机程序负责登录 SAP 并执行脚本。</div></div>
               <span class="tag ${state.role === "executor" ? "ok" : "warn"}">${state.role === "executor" ? "可执行" : "只读"}</span>
             </div>
             <div class="panel-body">
@@ -674,26 +732,22 @@
                   <select id="plant" data-bind="plant">${plants.map(x => `<option value="${x.code}" ${state.form.plant === x.code ? "selected" : ""}>${x.code} - ${x.name}</option>`).join("")}</select>
                 </div>
                 <div class="field">
-                  <label for="period">期间</label>
-                  <input id="period" data-bind="period" value="${esc(state.form.period)}" placeholder="YYYY-MM">
-                </div>
-                <div class="field">
                   <label for="businessArea">业务范围</label>
                   <input id="businessArea" data-bind="businessArea" value="${esc(state.form.businessArea)}">
                 </div>
                 <div class="field">
-                  <label for="priority">优先级</label>
-                  <select id="priority" data-bind="priority">
-                    <option value="high" ${state.form.priority === "high" ? "selected" : ""}>高 - 优先执行</option>
-                    <option value="medium" ${state.form.priority === "medium" ? "selected" : ""}>中 - 正常执行</option>
-                    <option value="low" ${state.form.priority === "low" ? "selected" : ""}>低 - 空闲执行</option>
-                  </select>
+                  <label for="period">核算周别</label>
+                  <input id="period" data-bind="period" value="${esc(state.form.period)}" placeholder="例如 2026-W23">
+                </div>
+                <div class="field">
+                  <label for="weekEnd">周结日期</label>
+                  <input id="weekEnd" data-bind="weekEnd" value="${esc(state.form.weekEnd)}" placeholder="YYYY-MM-DD">
                 </div>
                 <div class="field">
                   <label>执行方式</label>
                   <div class="radio-row">
-                    <label class="radio-chip"><input type="radio" name="mode" value="bridge" ${state.form.mode === "bridge" ? "checked" : ""}>Bridge 回传</label>
                     <label class="radio-chip"><input type="radio" name="mode" value="protocol" ${state.form.mode === "protocol" ? "checked" : ""}>协议唤醒</label>
+                    <label class="radio-chip"><input type="radio" name="mode" value="bridge" ${state.form.mode === "bridge" ? "checked" : ""}>Bridge 回传</label>
                   </div>
                 </div>
                 <div class="field span-2">
@@ -705,16 +759,18 @@
                   <label class="radio-chip"><input type="checkbox" id="notify" ${state.form.notify ? "checked" : ""}>完成后推送钉钉</label>
                 </div>
               </div>
+              <div style="height:14px"></div>
+              <div class="launch-link">${esc(buildProtocolUrl())}</div>
               <div style="height:16px"></div>
               <div class="top-actions" style="justify-content:flex-start">
                 <button class="btn primary" data-action="start-run" ${state.role !== "executor" || state.executing ? "disabled" : ""}>${icon("play")}开始执行</button>
-                <button class="btn" data-action="check-bridge">${icon("activity")}检测 Bridge</button>
                 <button class="btn" data-action="wake-protocol">${icon("radio")}只唤醒 SapWebLauncher</button>
+                <button class="btn" data-action="check-bridge">${icon("activity")}检测 Bridge</button>
               </div>
             </div>
           </div>
           <div class="panel">
-            <div class="panel-header"><div><div class="panel-title">${icon("route")}执行进度</div><div class="panel-sub">${state.currentRun ? esc(state.currentRun.id) : "尚未提交任务"}</div></div></div>
+            <div class="panel-header"><div><div class="panel-title">${icon("list-checks")}执行进度与日志</div><div class="panel-sub">${state.currentRun ? esc(state.currentRun.id) : "尚未提交任务"}</div></div></div>
             <div class="panel-body">
               <div class="steps">${state.steps.map((step, i) => renderStep(step, i)).join("")}</div>
               <div style="height:14px"></div>
@@ -739,18 +795,18 @@
       return `
         <section class="panel">
           <div class="panel-header">
-            <div><div class="panel-title">${icon("calendar-clock")}定时自动执行配置</div><div class="panel-sub">当前静态站点不直接定时，后续由 Bridge 服务或服务器后台承接调度</div></div>
+            <div><div class="panel-title">${icon("calendar-clock")}定时自动执行配置</div><div class="panel-sub">当前只保留核心周损益任务，避免页面功能先于执行能力膨胀。</div></div>
             <button class="btn primary" data-action="open-schedule-modal">${icon("plus")}新建定时任务</button>
           </div>
           <div class="panel-body">
-            <div class="notice">定时任务可先在页面维护配置，真正执行时需要本机 Bridge 常驻或服务器后台调度。执行完成后由 Bridge/API 回传状态并推送钉钉。</div>
+            <div class="notice">定时任务真正落地时，需要 Bridge 常驻服务或服务器后台调度。静态网页本身不能在无人值守时自动执行 SAP。</div>
             <div style="height:14px"></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>任务 ID</th><th>任务名称</th><th>事务码</th><th>工厂</th><th>优先级</th><th>时间</th><th>频率</th><th>状态</th><th>下次执行</th><th>操作</th></tr></thead>
+                <thead><tr><th>任务 ID</th><th>任务名称</th><th>事务码</th><th>工厂</th><th>时间</th><th>频率</th><th>状态</th><th>下次执行</th><th>操作</th></tr></thead>
                 <tbody>${scheduleTasks.map(task => `
                   <tr>
-                    <td>${task.id}</td><td>${task.name}</td><td>${task.tCode}</td><td>${task.plant}</td><td>${task.priority}</td>
+                    <td>${task.id}</td><td>${task.name}</td><td>${task.tCode}</td><td>${task.plant}</td>
                     <td>${task.time}</td><td>${task.frequency}</td><td><span class="tag ok">${task.status}</span></td><td>${task.next}</td>
                     <td><button class="btn small" data-action="open-schedule-modal">${icon("pencil")}编辑</button></td>
                   </tr>`).join("")}</tbody>
@@ -765,14 +821,14 @@
       return `
         <section class="panel">
           <div class="panel-header">
-            <div><div class="panel-title">${icon("sliders-horizontal")}基础配置</div><div class="panel-sub">维护执行参数来源，后续可接入后端保存</div></div>
+            <div><div class="panel-title">${icon("sliders-horizontal")}基础配置</div><div class="panel-sub">维护执行参数来源，后续接入后台保存。</div></div>
           </div>
           <div class="panel-body">
             <div class="tabs">
               ${tabButton("plant", "factory", "工厂配置")}
               ${tabButton("tcode", "terminal", "事务码配置")}
               ${tabButton("robot", "message-circle", "通知机器人")}
-              ${tabButton("bridge", "plug", "本机 Bridge")}
+              ${tabButton("bridge", "plug", "本机执行器")}
             </div>
             ${renderConfigTab()}
           </div>
@@ -786,10 +842,10 @@
 
     function renderConfigTab() {
       if (state.activeConfigTab === "plant") {
-        return `<div class="table-wrap"><table><thead><tr><th>工厂代码</th><th>工厂名称</th><th>业务范围</th><th>所属 BG</th><th>状态</th><th>操作</th></tr></thead><tbody>${plants.map(p => `<tr><td><strong>${p.code}</strong></td><td>${p.name}</td><td>${p.area}</td><td>${p.bg}</td><td><span class="tag ${p.enabled ? "ok" : "warn"}">${p.enabled ? "启用" : "停用"}</span></td><td><button class="btn small" data-action="toast-edit">${icon("pencil")}编辑</button></td></tr>`).join("")}</tbody></table></div>`;
+        return `<div class="table-wrap"><table><thead><tr><th>工厂代码</th><th>工厂名称</th><th>业务范围</th><th>分组</th><th>状态</th><th>操作</th></tr></thead><tbody>${plants.map(p => `<tr><td><strong>${p.code}</strong></td><td>${p.name}</td><td>${p.area}</td><td>${p.group}</td><td><span class="tag ${p.enabled ? "ok" : "warn"}">${p.enabled ? "启用" : "停用"}</span></td><td><button class="btn small" data-action="toast-edit">${icon("pencil")}编辑</button></td></tr>`).join("")}</tbody></table></div>`;
       }
       if (state.activeConfigTab === "tcode") {
-        return `<div class="table-wrap"><table><thead><tr><th>事务码</th><th>名称</th><th>模块</th><th>超时秒数</th><th>重试</th><th>状态</th><th>操作</th></tr></thead><tbody>${tCodes.map(t => `<tr><td><strong>${t.code}</strong></td><td>${t.name}</td><td>${t.module}</td><td>${t.timeout}</td><td>${t.retry}</td><td><span class="tag ok">启用</span></td><td><button class="btn small" data-action="toast-edit">${icon("pencil")}编辑</button></td></tr>`).join("")}</tbody></table></div>`;
+        return `<div class="table-wrap"><table><thead><tr><th>事务码</th><th>名称</th><th>模块</th><th>脚本模板</th><th>超时秒数</th><th>重试</th><th>状态</th><th>操作</th></tr></thead><tbody>${tCodes.map(t => `<tr><td><strong>${t.code}</strong></td><td>${t.name}</td><td>${t.module}</td><td>${t.script}</td><td>${t.timeout}</td><td>${t.retry}</td><td><span class="tag ok">启用</span></td><td><button class="btn small" data-action="toast-edit">${icon("pencil")}编辑</button></td></tr>`).join("")}</tbody></table></div>`;
       }
       if (state.activeConfigTab === "robot") {
         return `<div class="table-wrap"><table><thead><tr><th>机器人</th><th>钉钉群</th><th>事件</th><th>状态</th><th>最近推送</th><th>操作</th></tr></thead><tbody>${robots.map(r => `<tr><td>${r.name}</td><td>${r.group}</td><td>${r.events}</td><td><span class="tag ok">启用</span></td><td>${r.lastPush}</td><td><button class="btn small" data-action="test-robot">${icon("send")}测试推送</button></td></tr>`).join("")}</tbody></table></div>`;
@@ -806,48 +862,13 @@
           </div>
         </div>
         <div style="height:12px"></div>
-        <div class="notice warn">Netlify 页面访问 127.0.0.1 时，Bridge 需要允许当前站点域名的 CORS，并处理浏览器 Private Network Access 预检。只使用自定义协议时，页面只能唤醒程序，不能直接拿到脚本执行结果。</div>
+        <div class="notice warn">Netlify 页面访问 127.0.0.1 时，Bridge 需要允许当前站点域名的 CORS，并处理浏览器 Private Network Access 预检。协议唤醒不受 CORS 限制，但无法直接回传结果。</div>
         <div style="height:12px"></div>
         <div class="top-actions" style="justify-content:flex-start">
           <button class="btn primary" data-action="save-bridge">${icon("save")}保存</button>
           <button class="btn" data-action="check-bridge">${icon("activity")}检测连接</button>
+          <button class="btn" data-action="open-register-help">${icon("file-cog")}注册表说明</button>
         </div>
-      `;
-    }
-
-    function renderReport() {
-      const total = history.length;
-      const ok = history.filter(x => x.status === "成功").length;
-      const rate = Math.round(ok / total * 1000) / 10;
-      return `
-        <section class="grid cols-4">
-          ${metric("执行总次数", "995", "近 30 天")}
-          ${metric("成功率", rate + "%", "本页样例数据")}
-          ${metric("失败告警", "13", "已推送钉钉")}
-          ${metric("平均耗时", "52s", "按事务码汇总")}
-        </section>
-        <section class="grid cols-2">
-          <div class="panel">
-            <div class="panel-header"><div class="panel-title">${icon("bar-chart-3")}事务码执行排行</div></div>
-            <div class="panel-body table-wrap">
-              <table><thead><tr><th>排名</th><th>事务码</th><th>执行次数</th><th>成功</th><th>失败</th><th>成功率</th><th>平均耗时</th></tr></thead><tbody>
-                <tr><td>1</td><td>ZFI019NL</td><td>485</td><td>472</td><td>13</td><td>97.3%</td><td>45s</td></tr>
-                <tr><td>2</td><td>ZFI057</td><td>312</td><td>298</td><td>14</td><td>95.5%</td><td>128s</td></tr>
-                <tr><td>3</td><td>ZFI080</td><td>198</td><td>195</td><td>3</td><td>98.5%</td><td>32s</td></tr>
-              </tbody></table>
-            </div>
-          </div>
-          <div class="panel">
-            <div class="panel-header"><div class="panel-title">${icon("factory")}工厂执行统计</div></div>
-            <div class="panel-body table-wrap">
-              <table><thead><tr><th>工厂</th><th>名称</th><th>执行次数</th><th>成功</th><th>失败</th><th>成功率</th><th>最新执行</th></tr></thead><tbody>
-                <tr><td>1024</td><td>平湖三厂</td><td>356</td><td>349</td><td>7</td><td>98.0%</td><td>2026/06/08 08:00</td></tr>
-                <tr><td>1032</td><td>平湖三十厂</td><td>288</td><td>276</td><td>12</td><td>95.8%</td><td>2026/06/07 08:00</td></tr>
-                <tr><td>6041</td><td>平湖三厂</td><td>192</td><td>188</td><td>4</td><td>97.9%</td><td>2026/06/06 18:30</td></tr>
-              </tbody></table>
-            </div>
-          </div>
-        </section>
       `;
     }
 
@@ -855,7 +876,7 @@
       return `
         <section class="panel">
           <div class="panel-header">
-            <div><div class="panel-title">${icon("history")}执行历史</div><div class="panel-sub">状态来自 Bridge 回传或本地模拟记录</div></div>
+            <div><div class="panel-title">${icon("history")}执行历史</div><div class="panel-sub">状态来自 Bridge 回传或本地模拟记录。</div></div>
             <button class="btn" data-action="export-history">${icon("download")}导出</button>
           </div>
           <div class="panel-body table-wrap">${historyTable(history)}</div>
@@ -879,7 +900,7 @@
     function renderSettings() {
       return `
         <section class="panel">
-          <div class="panel-header"><div><div class="panel-title">${icon("settings")}系统设置</div><div class="panel-sub">静态部署阶段保存在浏览器本地</div></div></div>
+          <div class="panel-header"><div><div class="panel-title">${icon("settings")}系统设置</div><div class="panel-sub">静态部署阶段保存在浏览器本地。</div></div></div>
           <div class="panel-body">
             <div class="grid cols-2">
               <div class="field">
@@ -893,8 +914,8 @@
               <div class="field">
                 <label for="settingsMode">默认执行方式</label>
                 <select id="settingsMode">
-                  <option value="bridge" ${state.form.mode === "bridge" ? "selected" : ""}>Bridge API，支持状态回传</option>
                   <option value="protocol" ${state.form.mode === "protocol" ? "selected" : ""}>SapWebLauncher 协议唤醒</option>
+                  <option value="bridge" ${state.form.mode === "bridge" ? "selected" : ""}>Bridge API，支持状态回传</option>
                 </select>
               </div>
               <div class="field">
@@ -910,6 +931,21 @@
     }
 
     function renderModal() {
+      if (state.modal === "register") {
+        return `
+          <div class="modal-backdrop">
+            <div class="modal">
+              <div class="modal-header"><strong>本机协议注册</strong><button class="btn small" data-action="close-modal">${icon("x")}关闭</button></div>
+              <div class="modal-body">
+                <div class="notice">当前推荐注册 <strong>sap-rpa://</strong>，并保留兼容旧版 <strong>sap-zck://</strong>。本地目录已生成 PowerShell 和 .reg 文件。</div>
+                <div style="height:12px"></div>
+                <div class="launch-link">D:\\工作\\网页启动登录\\register.ps1<br>D:\\工作\\网页启动登录\\register_sap_rpa.reg</div>
+              </div>
+              <div class="modal-footer"><button class="btn primary" data-action="close-modal">关闭</button></div>
+            </div>
+          </div>
+        `;
+      }
       if (state.modal === "schedule") {
         return `
           <div class="modal-backdrop">
@@ -944,9 +980,9 @@
                 </div>
                 <div style="height:14px"></div>
                 <div class="log">
-                  <div class="log-line"><span class="log-time">[08:00:00]</span><span class="INFO">任务触发：${row.task}</span></div>
+                  <div class="log-line"><span class="log-time">[08:00:00]</span><span class="INFO">任务触发：${esc(row.task)}</span></div>
                   <div class="log-line"><span class="log-time">[08:00:03]</span><span class="INFO">提交本机 Bridge / SapWebLauncher</span></div>
-                  <div class="log-line"><span class="log-time">[08:00:45]</span><span class="${row.status === "成功" ? "OK" : "ERR"}">${row.result}</span></div>
+                  <div class="log-line"><span class="log-time">[08:00:45]</span><span class="${row.status === "成功" ? "OK" : "ERR"}">${esc(row.result)}</span></div>
                 </div>
               </div>
               <div class="modal-footer"><button class="btn primary" data-action="close-modal">关闭</button></div>
@@ -961,7 +997,7 @@
       document.querySelectorAll("[data-page]").forEach(btn => btn.addEventListener("click", () => { state.page = btn.dataset.page; render(); }));
       document.querySelectorAll("[data-config-tab]").forEach(btn => btn.addEventListener("click", () => { state.activeConfigTab = btn.dataset.configTab; render(); }));
       document.querySelectorAll("[data-bind]").forEach(input => input.addEventListener("input", () => { state.form[input.dataset.bind] = input.value; }));
-      document.querySelectorAll("input[name='mode']").forEach(input => input.addEventListener("change", () => { state.form.mode = input.value; }));
+      document.querySelectorAll("input[name='mode']").forEach(input => input.addEventListener("change", () => { state.form.mode = input.value; render(); }));
       const notify = document.getElementById("notify");
       if (notify) notify.addEventListener("change", () => { state.form.notify = notify.checked; });
       document.querySelectorAll("[data-action]").forEach(el => el.addEventListener("click", () => handleAction(el)));
@@ -978,6 +1014,7 @@
       if (action === "start-run") return startRun();
       if (action === "save-bridge") return saveBridge();
       if (action === "save-settings") return saveSettings();
+      if (action === "open-register-help") { state.modal = "register"; return render(); }
       if (action === "open-schedule-modal") { state.modal = "schedule"; return render(); }
       if (action === "close-modal") { state.modal = null; return render(); }
       if (action === "save-schedule") { state.modal = null; toast("定时任务已保存到本地示例配置", "ok"); return render(); }
@@ -1054,16 +1091,15 @@
         toast("Bridge 在线，可以回传执行状态", "ok");
       } catch (error) {
         state.bridgeStatus = "离线";
-        toast("未检测到 Bridge。若只用 SapWebLauncher，可唤醒但无法直接回传结果。", "warn");
+        toast("未检测到 Bridge。协议唤醒仍可启动本机程序，但无法直接回传结果。", "warn");
       }
       render();
     }
 
     function wakeProtocol() {
-      const payload = buildRunPayload();
-      const url = `${state.scheme}://run?payload=${encodeURIComponent(JSON.stringify(payload))}`;
-      addLog("INFO", "协议唤醒 SapWebLauncher：" + payload.tCode);
-      addLog("WARN", "协议唤醒模式没有浏览器回传，结果状态需要 Bridge 或本地日志补齐。");
+      const url = buildProtocolUrl();
+      addLog("INFO", "协议唤醒 SapWebLauncher：" + state.form.tCode);
+      addLog("WARN", "协议唤醒模式没有浏览器回传，结果需要查看本地日志或 Bridge。");
       location.href = url;
       toast("已发起协议唤醒", "info");
     }
@@ -1086,7 +1122,7 @@
           setStep(1, "done");
           setStep(2, "run");
           addLog("WARN", "等待本机脚本执行。协议模式无法从浏览器确认结果。");
-          finishLocalSimulation("协议唤醒已完成，结果需查看本地日志", "WARN");
+          finishLocalSimulation("协议唤醒已完成，结果请查看本地日志", "WARN");
         }, 850);
         return;
       }
@@ -1159,18 +1195,41 @@
     }
 
     function buildRunPayload() {
+      const t = tCodes.find(x => x.code === state.form.tCode) || tCodes[0];
       return {
         source: "netlify-static-portal",
-        tCode: state.form.tCode,
+        action: "run",
+        tcode: state.form.tCode,
+        script: t.script,
         plant: state.form.plant,
         period: state.form.period,
         businessArea: state.form.businessArea,
-        priority: state.form.priority,
+        weekEnd: state.form.weekEnd,
         notify: state.form.notify,
         remark: state.form.remark,
         createdBy: state.user.name,
         createdAt: new Date().toISOString()
       };
+    }
+
+    function buildProtocolUrl() {
+      const p = buildRunPayload();
+      const params = new URLSearchParams({
+        action: "run",
+        tcode: p.tcode,
+        script: p.script,
+        system: "Fiori",
+        client: "400",
+        user: "UI5035",
+        pw: "fiori666",
+        lang: "ZH",
+        sysnr: "04",
+        plant: p.plant,
+        period: p.period,
+        businessArea: p.businessArea,
+        weekEnd: p.weekEnd
+      });
+      return `${state.scheme}://run?${params.toString()}`;
     }
 
     function resetRun() {
