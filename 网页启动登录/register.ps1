@@ -1,7 +1,7 @@
 # Register SapWebLauncher browser protocols for the current Windows user.
 # Usage:
 #   powershell -ExecutionPolicy Bypass -File .\register.ps1
-# It registers both sap-rpa:// and the legacy sap-zck:// scheme.
+# It registers sap-rpa:// for the current user.
 
 $ErrorActionPreference = "Stop"
 
@@ -33,9 +33,8 @@ function Register-Protocol {
 }
 
 Register-Protocol -Protocol "sap-rpa" -ExePath $appPath
-Register-Protocol -Protocol "sap-zck" -ExePath $appPath
 
-Write-Host "OK: sap-rpa:// and sap-zck:// have been registered." -ForegroundColor Green
+Write-Host "OK: sap-rpa:// has been registered." -ForegroundColor Green
 Write-Host "Executable: $appPath" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Test link:" -ForegroundColor Cyan

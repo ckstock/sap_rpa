@@ -6,7 +6,7 @@
 
 - `ZFI019NL` 周损益执行链路展示。
 - 通过 `sap-rpa://` 唤醒本机 `SapWebLauncher`。
-- 兼容旧版 `sap-zck://`。
+- 正式协议只保留 `sap-rpa://`。
 - Bridge API 预留状态回传能力。
 
 本机启动器源码在本地目录：

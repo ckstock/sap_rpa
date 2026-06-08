@@ -50,7 +50,7 @@ if (Test-Path $installExe) {
     Write-Host "[FAIL] Launcher is not installed: $installExe" -ForegroundColor Red
 }
 
-foreach ($protocol in @("sap-rpa", "sap-zck")) {
+foreach ($protocol in @("sap-rpa")) {
     $command = Get-ProtocolCommand -Protocol $protocol
     if ($command) {
         Write-Host "[OK] $protocol protocol: $command" -ForegroundColor Green

@@ -2,7 +2,7 @@
 
 本项目用于从网页唤醒本机程序，自动登录 SAP GUI，打开指定事务码，并按事务码脚本模板执行 SAP GUI Scripting。
 
-当前推荐协议是 `sap-rpa://`，同时保留旧版 `sap-zck://` 兼容入口。
+当前正式协议是 `sap-rpa://`。旧的 `sap-zck://` 仅用于早期临时测试，正式安装包不再注册。
 
 ## 当前版本重点
 
@@ -63,10 +63,10 @@ D:\工作\网页启动登录\register_sap_rpa.reg
 sap-rpa://run?action=run&tcode=ZFI019NL&script=openOnly&system=Fiori&client=400&user=UI5035&pw=fiori666&sysnr=04&lang=ZH&plant=1022&plants=1022,1024,1032,6041&businessArea=2900&businessAreas=2900,9200,2800,3960&factoryGroup=PINGHU_30&runStrategy=byPlant
 ```
 
-旧 ZCK 验证入口仍兼容：
+如需测试 ZCK 脚本模式，仍通过正式协议传参：
 
 ```text
-sap-zck://action=run&system=Fiori&client=400&user=UI5035&pw=fiori666&sysnr=04
+sap-rpa://run?action=run&tcode=zck&script=zck&system=Fiori&client=400&user=UI5035&pw=fiori666&sysnr=04
 ```
 
 ## 参数说明

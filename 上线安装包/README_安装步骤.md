@@ -6,7 +6,7 @@
 
 | 文件 | 用途 |
 |---|---|
-| `01_安装到本机.bat` | 复制 `SapWebLauncher` 到当前用户目录，并注册 `sap-rpa://`、`sap-zck://` |
+| `01_安装到本机.bat` | 复制 `SapWebLauncher` 到当前用户目录，并注册正式协议 `sap-rpa://` |
 | `02_检测环境.bat` | 检测协议注册、执行器自测、SAP GUI 是否存在 |
 | `03_卸载协议和程序.bat` | 删除协议注册和本机安装目录 |
 | `SapWebLauncher\` | 发布后的本机执行器程序，生成安装包后会自动放入 |
@@ -32,10 +32,11 @@
 
 ```text
 HKEY_CURRENT_USER\Software\Classes\sap-rpa
-HKEY_CURRENT_USER\Software\Classes\sap-zck
 ```
 
 使用 HKCU 注册，不需要管理员权限。
+
+旧的 `sap-zck://` 是临时测试协议，正式安装包不再注册。`03_卸载协议和程序.bat` 会顺手清理旧电脑上可能残留的 `sap-zck://`。
 
 ## 重新生成安装包
 

@@ -15,7 +15,6 @@ namespace SapWebLauncher;
 static class Program
 {
     private const string PrimaryProtocolName = "sap-rpa";
-    private const string LegacyProtocolName = "sap-zck";
     private const string MutexId = "SapWebLauncher-SingleInstance-Mutex";
     private static readonly string LogDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -59,7 +58,7 @@ static class Program
             raw.Equals("/register", StringComparison.OrdinalIgnoreCase))
         {
             RegisterProtocols();
-            Console.WriteLine($"{PrimaryProtocolName}:// 和 {LegacyProtocolName}:// 协议已注册");
+            Console.WriteLine($"{PrimaryProtocolName}:// 协议已注册");
             return;
         }
 
@@ -69,8 +68,7 @@ static class Program
 
     static bool IsSupportedUri(string raw)
     {
-        return raw.StartsWith(PrimaryProtocolName + "://", StringComparison.OrdinalIgnoreCase) ||
-               raw.StartsWith(LegacyProtocolName + "://", StringComparison.OrdinalIgnoreCase);
+        return raw.StartsWith(PrimaryProtocolName + "://", StringComparison.OrdinalIgnoreCase);
     }
 
     static string GetProtocolName(string raw)
@@ -83,7 +81,6 @@ static class Program
     {
         string exePath = Process.GetCurrentProcess().MainModule!.FileName;
         RegisterProtocol(PrimaryProtocolName, exePath);
-        RegisterProtocol(LegacyProtocolName, exePath);
     }
 
     static void RegisterProtocol(string protocolName, string exePath)
@@ -214,8 +211,7 @@ static class Program
 
     static SapRunParams BuildParams(NameValueCollection query, string protocolName)
     {
-        string fallbackTCode = protocolName.Equals(LegacyProtocolName, StringComparison.OrdinalIgnoreCase) ? "zck" : "ZFI019NL";
-        string tcode = First(query, "tcode", "t-code", "transaction", "transactioncode") ?? fallbackTCode;
+        string tcode = First(query, "tcode", "t-code", "transaction", "transactioncode") ?? "ZFI019NL";
         string script = First(query, "script", "scriptmode", "mode") ?? (tcode.Equals("zck", StringComparison.OrdinalIgnoreCase) ? "zck" : "openOnly");
 
         var p = new SapRunParams
@@ -508,13 +504,6 @@ static class Program
             string uri = "sap-rpa://run?action=run&tcode=ZFI019NL&system=Y4Q&client=630&user=MYUSER&pw=MYPASS&lang=ZH&sysnr=00";
             var q = ParseUri(uri);
             Check("新协议URI", q["action"] == "run" && q["tcode"] == "ZFI019NL" && q["system"] == "Y4Q" && q["client"] == "630", uri);
-        }
-
-        {
-            string uri = "sap-zck://action=run&system=Fiori&client=400&user=UI5035&pw=fiori666";
-            var q = ParseUri(uri);
-            var p = BuildParams(q, LegacyProtocolName);
-            Check("旧协议兼容", p.TCode.Equals("zck", StringComparison.OrdinalIgnoreCase) && p.Script == "zck", $"{p.TCode}/{p.Script}");
         }
 
         {

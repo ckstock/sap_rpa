@@ -47,17 +47,6 @@ Windows Registry Editor Version 5.00
 
 [HKEY_CURRENT_USER\Software\Classes\sap-rpa\shell\open\command]
 @="\"$escaped\" \"%1\""
-
-[HKEY_CURRENT_USER\Software\Classes\sap-zck]
-@="URL:sap-zck Protocol"
-"URL Protocol"=""
-
-[HKEY_CURRENT_USER\Software\Classes\sap-zck\shell]
-
-[HKEY_CURRENT_USER\Software\Classes\sap-zck\shell\open]
-
-[HKEY_CURRENT_USER\Software\Classes\sap-zck\shell\open\command]
-@="\"$escaped\" \"%1\""
 "@
 
     Set-Content -Path (Join-Path $packageRoot "register_sap_rpa_current_user.reg") -Value $regText -Encoding Unicode
@@ -75,7 +64,6 @@ Copy-Item -Path (Join-Path $sourceDir "*") -Destination $installDir -Recurse -Fo
 
 Write-Step "Register browser protocols for current user"
 Register-Protocol -Protocol "sap-rpa" -ExePath $installExe
-Register-Protocol -Protocol "sap-zck" -ExePath $installExe
 Save-RegFile -ExePath $installExe
 
 Write-Step "Run launcher self-test"

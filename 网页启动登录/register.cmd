@@ -9,5 +9,5 @@ if not exist "%APP%" (
 )
 "%APP%" --register
 echo.
-echo Registered sap-rpa:// and sap-zck://
+echo Registered sap-rpa://
 pause
