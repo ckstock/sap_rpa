@@ -310,6 +310,40 @@
     .action-name { font-weight: 800; font-size: 18px; color: #102a43; }
     .action-desc { color: var(--muted); font-size: 14px; line-height: 1.5; }
     .action-card .btn { width: min(190px, 100%); }
+    .transaction-groups { display: grid; gap: 16px; }
+    .transaction-group { display: grid; gap: 10px; }
+    .transaction-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #102a43; font-weight: 800; }
+    .transaction-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .transaction-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      min-height: 154px;
+    }
+    .transaction-card:hover { border-color: #91d5ff; box-shadow: var(--shadow); }
+    .transaction-card-head { display: flex; align-items: flex-start; gap: 10px; }
+    .transaction-card .action-icon { width: 38px; height: 38px; }
+    .transaction-card .action-icon .icon { width: 21px; height: 21px; }
+    .transaction-meta { display: grid; gap: 4px; min-width: 0; }
+    .transaction-code { font-size: 16px; font-weight: 800; color: #102a43; }
+    .transaction-name { color: var(--muted); font-size: 13px; line-height: 1.45; }
+    .transaction-card .btn { width: 100%; }
+    .param-preview { display: grid; gap: 10px; }
+    .param-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .param-item {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      background: #fff;
+      min-height: 58px;
+      display: grid;
+      gap: 4px;
+    }
+    .param-label { color: var(--muted); font-size: 12px; }
+    .param-value { color: #102a43; font-weight: 700; overflow-wrap: anywhere; }
     .workflow-map {
       display: grid;
       grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -504,6 +538,7 @@
     .toast.err { border-left-color: var(--red); }
     @media (max-width: 1120px) {
       .quick-actions, .workflow-map, .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .param-grid { grid-template-columns: 1fr; }
       .grid.cols-3, .grid.cols-2 { grid-template-columns: 1fr; }
       .form-grid { grid-template-columns: 1fr; }
       .form-grid .span-2 { grid-column: auto; }
@@ -546,9 +581,6 @@
         tCode: "ZFI019NL",
         factoryGroup: "PINGHU_30",
         plants: ["1022", "1024", "1032", "6041"],
-        period: "2026-W23",
-        businessAreas: ["2900", "9200", "2800"],
-        weekEnd: "2026-06-07",
         notify: true,
         remark: ""
       },
@@ -574,13 +606,24 @@
     };
 
     const tCodes = [
-      { code: "ZFI019NL", name: "周损益保存导出", module: "FI", timeout: 300, retry: 3, enabled: true, script: "zfi019nl" },
-      { code: "ZFI072", name: "维护采购价", module: "FI", timeout: 180, retry: 2, enabled: true, script: "openOnly" },
-      { code: "ZFI057", name: "产值拆分", module: "CO", timeout: 600, retry: 3, enabled: true, script: "openOnly" },
-      { code: "ZCO020", name: "拆分验证", module: "CO", timeout: 240, retry: 2, enabled: true, script: "openOnly" },
-      { code: "ZFI080", name: "实际材料保存", module: "FI", timeout: 180, retry: 2, enabled: true, script: "openOnly" },
-      { code: "ZCO019", name: "标准材料成本", module: "CO", timeout: 240, retry: 2, enabled: true, script: "openOnly" }
+      { code: "ZFI072A", name: "采购价月表", module: "FI", stage: "并行启动", script: "ZFI072A.vbs", icon: "circle-dollar-sign", params: ["year", "week", "plants"], factoryRule: "先四个集采工厂，再其他工厂", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 300, retry: 2, enabled: true },
+      { code: "ZFI085", name: "维护特殊价格", module: "FI", stage: "并行启动", script: "ZFI085.vbs", icon: "badge-dollar-sign", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
+      { code: "ZFI014D", name: "维护仓领退料", module: "FI", stage: "并行启动", script: "ZFI014D.vbs", icon: "package-check", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
+      { code: "ZFI072N", name: "维护采购价", module: "FI", stage: "顺序执行", script: "ZFI072N.vbs", icon: "receipt-text", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
+      { code: "ZFI057", name: "产值拆分", module: "CO", stage: "顺序执行", script: "ZFI057.vbs", icon: "trending-up", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 600, retry: 3, enabled: true },
+      { code: "ZCO020", name: "拆分验证", module: "CO", stage: "顺序执行", script: "ZCO020.vbs", icon: "list-checks", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
+      { code: "ZPP063", name: "验证备注", module: "PP", stage: "顺序执行", script: "ZPP063.vbs", icon: "clipboard-check", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
+      { code: "ZPP063X", name: "回检验证", module: "PP", stage: "顺序执行", script: "ZPP063X.vbs", icon: "rotate-ccw", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
+      { code: "ZFI019NC", name: "验证修正", module: "FI", stage: "顺序执行", script: "ZFI019NC.vbs", icon: "file-pen-line", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
+      { code: "ZFI080", name: "实际材料保存", module: "FI", stage: "核心并行", script: "ZFI080.vbs", icon: "boxes", params: ["year", "week", "plants", "businessAreas", "weekEnd"], factoryRule: "按业务范围和周结日期保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
+      { code: "ZFI019NI", name: "实际材料结果保存", module: "FI", stage: "核心并行", script: "ZFI019NI.vbs", icon: "save", params: ["year", "week", "plants", "businessAreas"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
+      { code: "ZCO019", name: "标准材料成本", module: "CO", stage: "核心并行", script: "ZCO019.vbs", icon: "tag", params: ["year", "week", "plants"], factoryRule: "明细保存与汇总保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
+      { code: "ZFI019NA", name: "周损益生成", module: "FI", stage: "最终生成", script: "ZFI019NA.vbs", icon: "file-spreadsheet", params: ["year", "week", "plants", "businessAreas"], factoryRule: "东台、黄江等范围保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 300, retry: 2, enabled: true },
+      { code: "ZFI019NL", name: "周损益保存导出", module: "FI", stage: "最终生成", script: "ZFI019NL.vbs", icon: "bar-chart-3", params: ["year", "week", "plants", "businessAreas"], factoryRule: "按选中厂区工厂和业务范围导出", defaultPlantGroup: "PINGHU_30", automation: "script", timeout: 300, retry: 3, enabled: true },
+      { code: "ZFI080B", name: "工费率保存", module: "FI", stage: "周结推送", script: "ZFI080B.vbs", icon: "calculator", params: ["year", "week", "plants"], factoryRule: "东台、黄江保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
+      { code: "ZFI148", name: "推送大数据平台", module: "FI", stage: "周结推送", script: "ZFI148.vbs", icon: "send", params: ["year", "week", "plants"], factoryRule: "保存后推送", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true }
     ];
+    const stageOrder = ["并行启动", "顺序执行", "核心并行", "最终生成", "周结推送"];
     const workflow = [
       {
         title: "并行启动阶段",
@@ -785,12 +828,7 @@
             <button class="btn small" data-action="go-execute" data-tcode="ZFI019NL">${icon("play")}进入执行</button>
           </div>
           <div class="panel-body">
-            <div class="quick-actions">
-              ${quickAction("ZFI019NL", "周损益保存导出", "FI", "bar-chart-3")}
-              ${quickAction("ZFI072", "维护采购价", "FI", "circle-dollar-sign")}
-              ${quickAction("ZFI057", "产值拆分", "CO", "trending-up")}
-              ${quickAction("ZCO019", "标准材料成本", "CO", "tag")}
-            </div>
+            ${renderTransactionGroups()}
             <div style="height:16px"></div>
             <div class="grid cols-3">
               ${metric("本机执行器", "sap-rpa://", "点击执行时由浏览器唤醒 SapWebLauncher")}
@@ -808,6 +846,38 @@
 
     function metric(label, value, hint) {
       return `<div class="metric"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div><div class="hint">${esc(hint)}</div></div>`;
+    }
+
+    function renderTransactionGroups() {
+      return `<div class="transaction-groups">${stageOrder.map(stage => {
+        const items = tCodes.filter(t => t.stage === stage);
+        if (!items.length) return "";
+        return `
+          <div class="transaction-group">
+            <div class="transaction-group-head"><span>${esc(stage)}</span><span class="tag info">${items.length} 个事务码</span></div>
+            <div class="transaction-grid">${items.map(renderTransactionCard).join("")}</div>
+          </div>
+        `;
+      }).join("")}</div>`;
+    }
+
+    function renderTransactionCard(item) {
+      return `
+        <div class="transaction-card">
+          <div class="transaction-card-head">
+            <div class="action-icon">${icon(item.icon || "terminal")}</div>
+            <div class="transaction-meta">
+              <div class="transaction-code">${esc(item.code)}</div>
+              <div class="transaction-name">${esc(item.name)}</div>
+            </div>
+          </div>
+          <div class="area-chips">
+            <span class="area-chip">${esc(item.script)}</span>
+            <span class="area-chip">${item.automation === "script" ? "已接脚本" : "先打开事务码"}</span>
+          </div>
+          <button class="btn primary" data-action="go-execute" data-tcode="${esc(item.code)}">${icon("play")}执行</button>
+        </div>
+      `;
     }
 
     function quickAction(code, desc, moduleName, iconName) {
@@ -860,14 +930,6 @@
                   <label for="factoryGroup">厂区组</label>
                   <select id="factoryGroup" data-bind="factoryGroup">${factoryGroups.map(x => `<option value="${x.id}" ${state.form.factoryGroup === x.id ? "selected" : ""}>${x.name}</option>`).join("")}</select>
                 </div>
-                <div class="field">
-                  <label for="period">核算周别</label>
-                  <input id="period" data-bind="period" value="${esc(state.form.period)}" placeholder="例如 2026-W23">
-                </div>
-                <div class="field">
-                  <label for="weekEnd">周结日期</label>
-                  <input id="weekEnd" data-bind="weekEnd" value="${esc(state.form.weekEnd)}" placeholder="YYYY-MM-DD">
-                </div>
                 <div class="field span-3">
                   <label>工厂参数</label>
                   ${renderPlantSelector()}
@@ -881,6 +943,8 @@
                   <label class="radio-chip"><input type="checkbox" id="notify" ${state.form.notify ? "checked" : ""}>完成后推送钉钉</label>
                 </div>
               </div>
+              <div style="height:14px"></div>
+              ${renderScriptPreview()}
               <div style="height:14px"></div>
               ${renderRunSummary()}
               <div style="height:16px"></div>
@@ -944,13 +1008,45 @@
         <div class="run-summary">
           <div class="summary-row"><span>厂区组</span><strong>${esc(payload.factoryGroupName)}</strong></div>
           <div class="summary-row"><span>工厂</span><div class="area-chips">${payload.plants.map(x => `<span class="area-chip">${esc(x)}</span>`).join("") || `<span class="area-chip">未选择</span>`}</div></div>
-          <div class="summary-row"><span>业务范围</span><div class="area-chips">${payload.businessAreas.map(x => `<span class="area-chip">${esc(x)}</span>`).join("") || `<span class="area-chip">无</span>`}</div></div>
+        </div>
+      `;
+    }
+
+    function renderScriptPreview() {
+      const payload = buildRunPayload();
+      const t = getTCode(payload.tcode);
+      const paramLabels = {
+        year: "脚本内年度",
+        week: "脚本内周别",
+        plants: "工厂",
+        businessAreas: "脚本内业务范围",
+        weekEnd: "脚本内日期"
+      };
+      const previewItems = [
+        ["事务码", payload.tcode + " - " + t.name],
+        ["脚本文件", t.script],
+        ["脚本状态", t.automation === "script" ? "已接独立 VBS" : "未录制完整脚本，先打开事务码"],
+        ["页面传参", "只传事务码、脚本文件、厂区组和工厂"],
+        ["其他条件", "年度、周别、日期等查询条件由对应 VBS 内部处理"],
+        ["工厂规则", t.factoryRule],
+        ["脚本说明", (t.params || []).map(p => paramLabels[p] || p).join("、") || "无"]
+      ];
+      return `
+        <div class="param-preview">
+          <div class="notice ok">公共页面只维护工厂参数；各事务码不同的查询条件放在 VBS 顶部参数区或录制脚本内部。</div>
+          <div class="param-grid">
+            ${previewItems.map(([label, value]) => `<div class="param-item"><div class="param-label">${esc(label)}</div><div class="param-value">${esc(value)}</div></div>`).join("")}
+          </div>
         </div>
       `;
     }
 
     function unique(list) {
       return [...new Set((list || []).filter(Boolean))];
+    }
+
+    function getTCode(code) {
+      return tCodes.find(x => x.code === code) || tCodes.find(x => x.code === "ZFI019NL") || tCodes[0];
     }
 
     function getFactoryGroup(id) {
@@ -963,7 +1059,7 @@
 
     function getDefaultPlantsForTCode(tCode, groupId = state.form.factoryGroup) {
       const group = getFactoryGroup(groupId);
-      if (tCode === "ZFI072") return unique([...procurementPlants, ...group.zfi072Plants]);
+      if (tCode === "ZFI072A" || tCode === "ZFI072" || tCode === "ZFI072N") return unique([...procurementPlants, ...group.zfi072Plants]);
       if (tCode === "ZCO019") return unique(group.zco019Plants);
       return unique(group.plants);
     }
@@ -980,13 +1076,16 @@
     }
 
     function syncExecutionDefaults(forcePlants = false) {
+      const t = getTCode(state.form.tCode);
+      if (forcePlants && t.defaultPlantGroup) {
+        state.form.factoryGroup = t.defaultPlantGroup;
+      }
       if (!Array.isArray(state.form.plants)) state.form.plants = getDefaultPlantsForTCode(state.form.tCode);
       if (!state.form.factoryGroup) state.form.factoryGroup = "PINGHU_30";
       if (forcePlants) {
         state.form.plants = getDefaultPlantsForTCode(state.form.tCode);
       }
       state.form.plants = unique(state.form.plants);
-      state.form.businessAreas = getBusinessAreasForSelection(state.form.tCode, state.form.plants);
     }
 
     function renderStep(step, i) {
@@ -1056,7 +1155,7 @@
         `;
       }
       if (state.activeConfigTab === "tcode") {
-        return `<div class="table-wrap"><table><thead><tr><th>事务码</th><th>名称</th><th>模块</th><th>脚本模板</th><th>超时秒数</th><th>重试</th><th>状态</th><th>操作</th></tr></thead><tbody>${tCodes.map(t => `<tr><td><strong>${t.code}</strong></td><td>${t.name}</td><td>${t.module}</td><td>${t.script}</td><td>${t.timeout}</td><td>${t.retry}</td><td><span class="tag ok">启用</span></td><td><button class="btn small" data-action="toast-edit">${icon("pencil")}编辑</button></td></tr>`).join("")}</tbody></table></div>`;
+        return `<div class="table-wrap"><table><thead><tr><th>阶段</th><th>事务码</th><th>名称</th><th>脚本文件</th><th>参数</th><th>工厂规则</th><th>状态</th></tr></thead><tbody>${tCodes.map(t => `<tr><td>${t.stage}</td><td><strong>${t.code}</strong></td><td>${t.name}</td><td>${t.script}</td><td>${(t.params || []).join(",")}</td><td>${t.factoryRule}</td><td><span class="tag ${t.automation === "script" ? "ok" : "warn"}">${t.automation === "script" ? "已接脚本" : "待录制"}</span></td></tr>`).join("")}</tbody></table></div>`;
       }
       if (state.activeConfigTab === "robot") {
         return `<div class="table-wrap"><table><thead><tr><th>机器人</th><th>钉钉群</th><th>事件</th><th>状态</th><th>操作</th></tr></thead><tbody>${robots.map(r => `<tr><td>${r.name}</td><td>${r.group}</td><td>${r.events}</td><td><span class="tag ok">启用</span></td><td><button class="btn small" data-action="test-robot">${icon("send")}测试推送</button></td></tr>`).join("")}</tbody></table></div>`;
@@ -1234,7 +1333,7 @@
       state.currentRun = { id: "RUN-" + new Date().toISOString().replace(/\D/g, "").slice(0, 14), payload };
       setStep(0, "done");
       addLog("INFO", "创建任务：" + state.currentRun.id);
-      addLog("INFO", "执行范围：" + payload.factoryGroupName + " / 工厂 " + payload.plantsCsv + " / 业务范围 " + payload.businessAreasCsv);
+      addLog("INFO", "执行范围：" + payload.factoryGroupName + " / 工厂 " + payload.plantsCsv);
       render();
 
       setStep(1, "run");
@@ -1253,7 +1352,7 @@
       const flow = [
         () => { setStep(1, "done"); setStep(2, "run"); addLog("INFO", "启动 SAP GUI 并注入登录/事务码参数"); },
         () => { setStep(2, "done"); setStep(3, "run"); addLog("INFO", "执行 " + payload.tcode + "，工厂参数：" + payload.plantsCsv); },
-        () => { setStep(3, "done"); setStep(4, "run"); addLog("OK", "业务范围参数：" + payload.businessAreasCsv); },
+        () => { setStep(3, "done"); setStep(4, "run"); addLog("OK", "工厂参数：" + payload.plantsCsv); },
         () => finishLocalSimulation("执行完成，已模拟推送钉钉通知", "OK")
       ];
       flow.forEach((fn, i) => setTimeout(() => { fn(); render(); }, 650 * (i + 1)));
@@ -1271,10 +1370,9 @@
 
     function buildRunPayload() {
       syncExecutionDefaults(false);
-      const t = tCodes.find(x => x.code === state.form.tCode) || tCodes[0];
+      const t = getTCode(state.form.tCode);
       const group = getFactoryGroup(state.form.factoryGroup);
       const selectedPlants = unique(state.form.plants);
-      const selectedAreas = getBusinessAreasForSelection(state.form.tCode, selectedPlants, state.form.factoryGroup);
       return {
         source: "netlify-static-portal",
         action: "run",
@@ -1285,11 +1383,6 @@
         plants: selectedPlants,
         plant: selectedPlants[0] || "",
         plantsCsv: selectedPlants.join(","),
-        period: state.form.period,
-        businessAreas: selectedAreas,
-        businessArea: selectedAreas[0] || "",
-        businessAreasCsv: selectedAreas.join(","),
-        weekEnd: state.form.weekEnd,
         notify: state.form.notify,
         remark: state.form.remark,
         createdBy: state.user.name,
@@ -1305,11 +1398,7 @@
         script: p.script,
         plant: p.plant,
         plants: p.plantsCsv,
-        period: p.period,
-        businessArea: p.businessArea,
-        businessAreas: p.businessAreasCsv,
-        factoryGroup: p.factoryGroup,
-        weekEnd: p.weekEnd
+        factoryGroup: p.factoryGroup
       });
       return `sap-rpa://run?${params.toString()}`;
     }

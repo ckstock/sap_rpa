@@ -1,5 +1,5 @@
 ' Generic SAP transaction template - parameters injected by SapWebLauncher
-' Placeholders: {OK_CODE} {SCRIPT_MODE} {FIELD1_NAME} {FIELD1_VALUE} {FIELD2_NAME} {FIELD2_VALUE} {PLANTS} {BUSINESS_AREAS} {FACTORY_GROUP} {RUN_STRATEGY} {PERIOD} {WEEK_END} {CARET_POS} {BUTTON_ID}
+' Placeholders: {OK_CODE} {SCRIPT_MODE} {FIELD1_NAME} {FIELD1_VALUE} {FIELD2_NAME} {FIELD2_VALUE} {PLANTS} {BUSINESS_AREAS} {FACTORY_GROUP} {RUN_STRATEGY} {YEAR} {WEEK} {PERIOD} {WEEK_END} {CARET_POS} {BUTTON_ID}
 
 On Error Resume Next
 
@@ -7,6 +7,7 @@ Dim SapGuiAuto, application, connection, session
 Dim retries, maxRetries, sleepMs
 Dim tcode, scriptMode, field1Name, field1Value, field2Name, field2Value, buttonId
 Dim plantsCsv, businessAreasCsv, factoryGroup, runStrategy, periodValue, weekEndValue
+Dim yearValue, weekValue
 Dim isLoginScreen, okCodeReady, windowTitle, statusType, statusText, sessionUser
 
 tcode = "{OK_CODE}"
@@ -20,6 +21,8 @@ businessAreasCsv = "{BUSINESS_AREAS}"
 factoryGroup = "{FACTORY_GROUP}"
 runStrategy = "{RUN_STRATEGY}"
 periodValue = "{PERIOD}"
+yearValue = "{YEAR}"
+weekValue = "{WEEK}"
 weekEndValue = "{WEEK_END}"
 buttonId = "{BUTTON_ID}"
 maxRetries = 100
@@ -118,6 +121,8 @@ If plantsCsv <> "" Then WScript.Echo "INFO: plants=" & plantsCsv
 If businessAreasCsv <> "" Then WScript.Echo "INFO: businessAreas=" & businessAreasCsv
 If factoryGroup <> "" Then WScript.Echo "INFO: factoryGroup=" & factoryGroup
 If runStrategy <> "" Then WScript.Echo "INFO: runStrategy=" & runStrategy
+If yearValue <> "" Then WScript.Echo "INFO: year=" & yearValue
+If weekValue <> "" Then WScript.Echo "INFO: week=" & weekValue
 If periodValue <> "" Then WScript.Echo "INFO: period=" & periodValue
 If weekEndValue <> "" Then WScript.Echo "INFO: weekEnd=" & weekEndValue
 

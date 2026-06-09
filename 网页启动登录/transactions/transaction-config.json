@@ -1,0 +1,182 @@
+{
+  "version": 1,
+  "weekRule": "LAST_WEEK_ISO",
+  "transactions": [
+    {
+      "code": "ZFI072A",
+      "name": "采购价月表",
+      "stage": "并行启动",
+      "script": "ZFI072A.vbs",
+      "icon": "circle-dollar-sign",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "先四个集采工厂，再其他工厂",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "script"
+    },
+    {
+      "code": "ZFI085",
+      "name": "维护特殊价格",
+      "stage": "并行启动",
+      "script": "ZFI085.vbs",
+      "icon": "badge-dollar-sign",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "按选中厂区工厂执行",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZFI014D",
+      "name": "维护仓领退料",
+      "stage": "并行启动",
+      "script": "ZFI014D.vbs",
+      "icon": "package-check",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "按选中厂区工厂执行",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZFI072N",
+      "name": "维护采购价",
+      "stage": "顺序执行",
+      "script": "ZFI072N.vbs",
+      "icon": "receipt-text",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "按选中厂区工厂执行",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZFI057",
+      "name": "产值拆分",
+      "stage": "顺序执行",
+      "script": "ZFI057.vbs",
+      "icon": "trending-up",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "按选中厂区工厂执行",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZCO020",
+      "name": "拆分验证",
+      "stage": "顺序执行",
+      "script": "ZCO020.vbs",
+      "icon": "list-checks",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "按选中厂区工厂执行",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZPP063",
+      "name": "验证备注",
+      "stage": "顺序执行",
+      "script": "ZPP063.vbs",
+      "icon": "clipboard-check",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "按选中厂区工厂执行",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZPP063X",
+      "name": "回检验证",
+      "stage": "顺序执行",
+      "script": "ZPP063X.vbs",
+      "icon": "rotate-ccw",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "按选中厂区工厂执行",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZFI019NC",
+      "name": "验证修正",
+      "stage": "顺序执行",
+      "script": "ZFI019NC.vbs",
+      "icon": "file-pen-line",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "按选中厂区工厂执行",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZFI080",
+      "name": "实际材料保存",
+      "stage": "核心并行",
+      "script": "ZFI080.vbs",
+      "icon": "boxes",
+      "params": ["year", "week", "plants", "businessAreas", "weekEnd"],
+      "factoryRule": "按业务范围和周结日期保存",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZFI019NI",
+      "name": "实际材料结果保存",
+      "stage": "核心并行",
+      "script": "ZFI019NI.vbs",
+      "icon": "save",
+      "params": ["year", "week", "plants", "businessAreas"],
+      "factoryRule": "按选中厂区工厂执行",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZCO019",
+      "name": "标准材料成本",
+      "stage": "核心并行",
+      "script": "ZCO019.vbs",
+      "icon": "tag",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "明细保存与汇总保存",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZFI019NA",
+      "name": "周损益生成",
+      "stage": "最终生成",
+      "script": "ZFI019NA.vbs",
+      "icon": "file-spreadsheet",
+      "params": ["year", "week", "plants", "businessAreas"],
+      "factoryRule": "东台、黄江等范围保存",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZFI019NL",
+      "name": "周损益保存导出",
+      "stage": "最终生成",
+      "script": "ZFI019NL.vbs",
+      "icon": "bar-chart-3",
+      "params": ["year", "week", "plants", "businessAreas"],
+      "factoryRule": "按选中厂区工厂和业务范围导出",
+      "defaultPlantGroup": "PINGHU_30",
+      "automation": "script"
+    },
+    {
+      "code": "ZFI080B",
+      "name": "工费率保存",
+      "stage": "周结推送",
+      "script": "ZFI080B.vbs",
+      "icon": "calculator",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "东台、黄江保存",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    },
+    {
+      "code": "ZFI148",
+      "name": "推送大数据平台",
+      "stage": "周结推送",
+      "script": "ZFI148.vbs",
+      "icon": "send",
+      "params": ["year", "week", "plants"],
+      "factoryRule": "保存后推送",
+      "defaultPlantGroup": "PINGHU_ALL",
+      "automation": "openOnly"
+    }
+  ]
+}

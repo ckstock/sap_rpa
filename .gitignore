@@ -3,3 +3,16 @@
 *.user
 *.suo
 *.log
+.env
+.env.*
+.netlify/
+.netlify_ticket.json
+.netlify_auth_url.txt
+*.token
+*.secret
+netlify-token*.txt
+config.local.json
+SapWebLauncher/config.json
+launcher.log
+github-ai-handoff/private-notes/
+github-ai-handoff/*.secret.md

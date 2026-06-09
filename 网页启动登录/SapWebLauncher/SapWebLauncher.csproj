@@ -16,6 +16,26 @@
     <EmbeddedResource Include="transaction_template.vbs" />
   </ItemGroup>
 
+  <Target Name="CopyTransactionScripts" AfterTargets="Build">
+    <ItemGroup>
+      <TransactionFiles Include="$(MSBuildProjectDirectory)\..\transactions\**\*" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(TransactionFiles)"
+      DestinationFiles="@(TransactionFiles->'$(OutDir)transactions\%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyTransactionScriptsToPublish" AfterTargets="Publish" Condition="'$(PublishDir)' != ''">
+    <ItemGroup>
+      <TransactionFiles Include="$(MSBuildProjectDirectory)\..\transactions\**\*" />
+    </ItemGroup>
+    <Copy
+      SourceFiles="@(TransactionFiles)"
+      DestinationFiles="@(TransactionFiles->'$(PublishDir)transactions\%(RecursiveDir)%(Filename)%(Extension)')"
+      SkipUnchangedFiles="true" />
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>

@@ -22,6 +22,7 @@ static class Program
         "SapWebLauncher");
     private static readonly string LogFilePath = Path.Combine(LogDirectory, "launcher.log");
     private static readonly string ConfigFilePath = Path.Combine(LogDirectory, "config.json");
+    private static readonly string ExeDirectory = AppContext.BaseDirectory;
 
     static void Main(string[] args)
     {
@@ -287,7 +288,7 @@ static class Program
     static SapRunParams BuildParams(NameValueCollection query, string protocolName, SapLocalConfig local)
     {
         string tcode = First(query, "tcode", "t-code", "transaction", "transactioncode") ?? "ZFI019NL";
-        string script = First(query, "script", "scriptmode", "mode") ?? (tcode.Equals("zck", StringComparison.OrdinalIgnoreCase) ? "zck" : "openOnly");
+        string script = First(query, "script", "scriptmode", "mode") ?? DefaultScriptForTCode(tcode);
 
         var p = new SapRunParams
         {
@@ -301,7 +302,9 @@ static class Program
             Script = script,
             Plant = First(query, "plant", "werks") ?? "",
             Plants = First(query, "plants", "werkslist", "plantlist") ?? "",
-            Period = First(query, "period", "week") ?? "",
+            Year = First(query, "year", "gjahr") ?? "",
+            Week = First(query, "week", "weekno", "wk") ?? "",
+            Period = First(query, "period", "periodtext") ?? "",
             BusinessArea = First(query, "businessarea", "gsber") ?? "",
             BusinessAreas = First(query, "businessareas", "gsberlist", "businessarealist") ?? "",
             WeekEnd = First(query, "weekend", "date") ?? "",
@@ -379,6 +382,14 @@ static class Program
         }
 
         p.CaretPos = FirstNonEmpty(p.CaretPos, "0");
+    }
+
+    static string DefaultScriptForTCode(string tcode)
+    {
+        if (tcode.Equals("zck", StringComparison.OrdinalIgnoreCase))
+            return "zck";
+
+        return $"{SanitizeTCode(tcode).ToUpperInvariant()}.vbs";
     }
 
     static string FirstNonEmpty(params string[] values)
@@ -483,7 +494,7 @@ static class Program
 
     static void ExecuteViaGuiScripting(SapRunParams p)
     {
-        string template = ReadEmbeddedTemplate("transaction_template.vbs");
+        string template = ReadTransactionScript(p);
         string vbsScript = template
             .Replace("{OK_CODE}", VbsEscape(p.TCode))
             .Replace("{SCRIPT_MODE}", VbsEscape(p.Script))
@@ -496,6 +507,8 @@ static class Program
             .Replace("{FACTORY_GROUP}", VbsEscape(p.FactoryGroup))
             .Replace("{RUN_STRATEGY}", VbsEscape(p.RunStrategy))
             .Replace("{PERIOD}", VbsEscape(p.Period))
+            .Replace("{YEAR}", VbsEscape(p.Year))
+            .Replace("{WEEK}", VbsEscape(p.Week))
             .Replace("{WEEK_END}", VbsEscape(p.WeekEnd))
             .Replace("{CARET_POS}", string.IsNullOrWhiteSpace(p.CaretPos) ? "0" : p.CaretPos)
             .Replace("{BUTTON_ID}", VbsEscape(p.ButtonId));
@@ -568,6 +581,65 @@ static class Program
             }
             catch { }
         }
+    }
+
+    static string ReadTransactionScript(SapRunParams p)
+    {
+        string? externalScript = FindExternalScript(p.Script, p.TCode);
+        if (!string.IsNullOrWhiteSpace(externalScript))
+        {
+            Log($"加载外部事务码脚本: {externalScript}");
+            return File.ReadAllText(externalScript, Encoding.UTF8);
+        }
+
+        if (!p.Script.Equals("openOnly", StringComparison.OrdinalIgnoreCase) &&
+            !p.Script.Equals("zck", StringComparison.OrdinalIgnoreCase))
+        {
+            Log($"未找到外部脚本 {p.Script}，回退到通用模板打开事务码");
+        }
+
+        return ReadEmbeddedTemplate("transaction_template.vbs");
+    }
+
+    static string? FindExternalScript(string script, string tcode)
+    {
+        string fileName = NormalizeScriptFileName(script, tcode);
+        if (string.IsNullOrWhiteSpace(fileName))
+            return null;
+
+        string[] roots =
+        {
+            Path.Combine(ExeDirectory, "transactions"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SapRpaLauncher", "transactions"),
+            Path.Combine(Directory.GetCurrentDirectory(), "transactions"),
+            Path.Combine(Directory.GetCurrentDirectory(), "网页启动登录", "transactions")
+        };
+
+        foreach (string root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            string candidate = Path.Combine(root, fileName);
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        return null;
+    }
+
+    static string NormalizeScriptFileName(string script, string tcode)
+    {
+        string raw = FirstNonEmpty(script, $"{tcode}.vbs").Trim();
+        if (raw.Equals("openOnly", StringComparison.OrdinalIgnoreCase) ||
+            raw.Equals("zck", StringComparison.OrdinalIgnoreCase))
+            return "";
+
+        string fileName = Path.GetFileName(raw);
+        if (!fileName.EndsWith(".vbs", StringComparison.OrdinalIgnoreCase))
+            fileName += ".vbs";
+
+        if (!Regex.IsMatch(fileName, @"^[A-Za-z0-9_.-]{1,80}\.vbs$"))
+            throw new ArgumentException($"脚本文件名不合法: {raw}");
+
+        return fileName;
     }
 
     static string ReadEmbeddedTemplate(string fileName)
@@ -664,6 +736,8 @@ static class Program
                 .Replace("{BUSINESS_AREAS}", "2900,3960")
                 .Replace("{FACTORY_GROUP}", "PINGHU_30")
                 .Replace("{RUN_STRATEGY}", "byPlant")
+                .Replace("{YEAR}", "2026")
+                .Replace("{WEEK}", "23")
                 .Replace("{PERIOD}", "2026-W23")
                 .Replace("{WEEK_END}", "2026-06-07")
                 .Replace("{CARET_POS}", "0")
@@ -709,7 +783,7 @@ static class Program
 
     static string DescribeParams(SapRunParams p)
     {
-        return $"tcode={p.TCode}, script={p.Script}, system={p.System}, client={p.Client}, user={p.User}, pw={MaskValue("pw", p.Password)}, lang={p.Language}, sysnr={p.SysNr}, plant={p.Plant}, plants={p.Plants}, period={p.Period}, businessArea={p.BusinessArea}, businessAreas={p.BusinessAreas}, weekEnd={p.WeekEnd}, factoryGroup={p.FactoryGroup}, runStrategy={p.RunStrategy}";
+        return $"tcode={p.TCode}, script={p.Script}, system={p.System}, client={p.Client}, user={p.User}, pw={MaskValue("pw", p.Password)}, lang={p.Language}, sysnr={p.SysNr}, year={p.Year}, week={p.Week}, plant={p.Plant}, plants={p.Plants}, period={p.Period}, businessArea={p.BusinessArea}, businessAreas={p.BusinessAreas}, weekEnd={p.WeekEnd}, factoryGroup={p.FactoryGroup}, runStrategy={p.RunStrategy}";
     }
 
     static string MaskRawArg(string? arg)
@@ -753,6 +827,8 @@ class SapRunParams
     public string Script { get; set; } = "openOnly";
     public string Plant { get; set; } = "";
     public string Plants { get; set; } = "";
+    public string Year { get; set; } = "";
+    public string Week { get; set; } = "";
     public string Period { get; set; } = "";
     public string BusinessArea { get; set; } = "";
     public string BusinessAreas { get; set; } = "";

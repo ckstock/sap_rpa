@@ -69,6 +69,10 @@ Copy-Item -Path (Join-Path $packageSource "04_配置SAP登录信息.bat") -Desti
 if (-not $sourceEqualsOutput) {
     Copy-Item -Path (Join-Path $packageSource "scripts") -Destination $OutputRoot -Recurse -Force
 }
+$transactionsSource = Join-Path $repoRoot "网页启动登录\transactions"
+if (Test-Path $transactionsSource) {
+    Copy-Item -Path $transactionsSource -Destination $OutputRoot -Recurse -Force
+}
 
 $version = @"
 GeneratedAt=$((Get-Date).ToString("yyyy-MM-dd HH:mm:ss"))

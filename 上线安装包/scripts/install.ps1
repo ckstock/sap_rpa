@@ -65,6 +65,11 @@ if (-not (Test-Path $sourceExe)) {
 Write-Step "Copy launcher to $installDir"
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Copy-Item -Path (Join-Path $sourceDir "*") -Destination $installDir -Recurse -Force
+$transactionsDir = Join-Path $packageRoot "transactions"
+if (Test-Path $transactionsDir) {
+    Write-Step "Copy transaction scripts to local launcher"
+    Copy-Item -Path $transactionsDir -Destination $installDir -Recurse -Force
+}
 
 Write-Step "Create local SAP config template"
 New-Item -ItemType Directory -Force -Path $configDir | Out-Null
