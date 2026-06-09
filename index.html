@@ -871,10 +871,6 @@
               <div class="transaction-name">${esc(item.name)}</div>
             </div>
           </div>
-          <div class="area-chips">
-            <span class="area-chip">${esc(item.script)}</span>
-            <span class="area-chip">${item.automation === "script" ? "已接脚本" : "先打开事务码"}</span>
-          </div>
           <button class="btn primary" data-action="go-execute" data-tcode="${esc(item.code)}">${icon("play")}执行</button>
         </div>
       `;
