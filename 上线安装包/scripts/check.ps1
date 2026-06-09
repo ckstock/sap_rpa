@@ -6,6 +6,7 @@ $ErrorActionPreference = "Continue"
 
 $installDir = Join-Path $env:LOCALAPPDATA "SapRpaLauncher"
 $installExe = Join-Path $installDir "SapWebLauncher.exe"
+$configFile = Join-Path (Join-Path $env:LOCALAPPDATA "SapWebLauncher") "config.json"
 
 function Get-ProtocolCommand {
     param([string]$Protocol)
@@ -57,6 +58,32 @@ foreach ($protocol in @("sap-rpa")) {
     } else {
         Write-Host "[FAIL] $protocol protocol is not registered" -ForegroundColor Red
     }
+}
+
+if (Test-Path $configFile) {
+    try {
+        $config = Get-Content $configFile -Raw | ConvertFrom-Json
+        $hasUser = -not [string]::IsNullOrWhiteSpace($config.user)
+        $hasProtectedPassword = -not [string]::IsNullOrWhiteSpace($config.passwordProtected)
+        $hasLegacyPassword = -not [string]::IsNullOrWhiteSpace($config.password)
+
+        if (-not $hasUser -or (-not $hasProtectedPassword -and -not $hasLegacyPassword)) {
+            Write-Host "[WARN] SAP login config exists but user/password is incomplete: $configFile" -ForegroundColor Yellow
+            Write-Host "       Run 04_配置SAP登录信息.bat before executing SAP tasks." -ForegroundColor Yellow
+        } else {
+            if ($hasProtectedPassword) {
+                Write-Host "[OK] SAP login config found with DPAPI protected password: $configFile" -ForegroundColor Green
+            } else {
+                Write-Host "[WARN] SAP login config uses legacy plaintext password. Run 04_配置SAP登录信息.bat to migrate it." -ForegroundColor Yellow
+            }
+            Write-Host "     system=$($config.system), client=$($config.client), user=$($config.user), sysNr=$($config.sysNr)" -ForegroundColor Gray
+        }
+    } catch {
+        Write-Host "[FAIL] SAP login config is invalid: $configFile" -ForegroundColor Red
+    }
+} else {
+    Write-Host "[WARN] SAP login config not found: $configFile" -ForegroundColor Yellow
+    Write-Host "       Run 04_配置SAP登录信息.bat before executing SAP tasks." -ForegroundColor Yellow
 }
 
 $sapShortcut = Find-SapShortcut

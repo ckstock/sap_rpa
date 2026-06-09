@@ -5,25 +5,19 @@
 using System.Collections.Specialized;
 using System.Text.Json;
 
-string uri = "sap-rpa://run?action=run&tcode=ZFI019NL&system=Y4Q&client=630&user=MYUSER&pw=MYPASS&lang=ZH&sysnr=00";
+string uri = "sap-rpa://run?action=run&tcode=ZFI019NL&script=openOnly&plants=1022,1024&businessAreas=2900,3960";
 var query = ParseUri(uri);
 Console.WriteLine($"action = {query["action"]}");
 Console.WriteLine($"tcode  = {query["tcode"]}");
-Console.WriteLine($"system = {query["system"]}");
-Console.WriteLine($"client = {query["client"]}");
-Console.WriteLine($"user   = {query["user"]}");
-Console.WriteLine($"pw     = {query["pw"]}");
-Console.WriteLine($"lang   = {query["lang"]}");
-Console.WriteLine($"sysnr  = {query["sysnr"]}");
+Console.WriteLine($"script = {query["script"]}");
+Console.WriteLine($"plants = {query["plants"]}");
+Console.WriteLine($"areas  = {query["businessareas"]}");
 
 bool pass = query["action"] == "run"
          && query["tcode"] == "ZFI019NL"
-         && query["system"] == "Y4Q"
-         && query["client"] == "630"
-         && query["user"] == "MYUSER"
-         && query["pw"] == "MYPASS"
-         && query["lang"] == "ZH"
-         && query["sysnr"] == "00";
+         && query["script"] == "openOnly"
+         && query["plants"] == "1022,1024"
+         && query["businessareas"] == "2900,3960";
 
 Console.WriteLine($"[sap-rpa URI] {(pass ? "PASS" : "FAIL")}");
 

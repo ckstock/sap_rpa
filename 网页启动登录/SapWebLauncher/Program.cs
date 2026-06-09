@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -20,6 +21,7 @@ static class Program
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "SapWebLauncher");
     private static readonly string LogFilePath = Path.Combine(LogDirectory, "launcher.log");
+    private static readonly string ConfigFilePath = Path.Combine(LogDirectory, "config.json");
 
     static void Main(string[] args)
     {
@@ -50,7 +52,7 @@ static class Program
 
         if (raw.Equals("test", StringComparison.OrdinalIgnoreCase))
         {
-            RunSelfTest();
+            Environment.Exit(RunSelfTest());
             return;
         }
 
@@ -63,7 +65,7 @@ static class Program
         }
 
         Console.WriteLine($"用法: {Process.GetCurrentProcess().ProcessName}.exe [--register]");
-        Console.WriteLine($"  或从浏览器跳转 {PrimaryProtocolName}://run?action=run&tcode=ZFI019NL&system=Fiori&...");
+        Console.WriteLine($"  或从浏览器跳转 {PrimaryProtocolName}://run?action=run&tcode=ZFI019NL&script=openOnly&plants=1022,1024");
     }
 
     static bool IsSupportedUri(string raw)
@@ -104,17 +106,12 @@ static class Program
 
     static void RunDirect()
     {
-        LaunchSapGuiAndExecute(new SapRunParams
+        var p = ApplyLocalConfig(new SapRunParams
         {
-            System = "Fiori",
-            Client = "400",
-            User = "UI5035",
-            Password = "fiori666",
-            Language = "ZH",
-            SysNr = "04",
             TCode = "ZFI019NL",
             Script = "openOnly"
         });
+        LaunchSapGuiAndExecute(p);
     }
 
     static NameValueCollection ParseUri(string raw)
@@ -209,19 +206,97 @@ static class Program
         LaunchSapGuiAndExecute(pars);
     }
 
+    static SapLocalConfig LoadLocalConfig()
+    {
+        try
+        {
+            if (!File.Exists(ConfigFilePath))
+                return new SapLocalConfig();
+
+            string json = File.ReadAllText(ConfigFilePath, Encoding.UTF8);
+            var config = JsonSerializer.Deserialize<SapLocalConfig>(json, new JsonSerializerOptions
+            {
+                PropertyNameCaseInsensitive = true,
+                ReadCommentHandling = JsonCommentHandling.Skip,
+                AllowTrailingCommas = true
+            }) ?? new SapLocalConfig();
+
+            config.Password = ResolveLocalPassword(config);
+            return config;
+        }
+        catch (Exception ex)
+        {
+            Log($"读取本机配置失败: {ConfigFilePath}, {ex.Message}");
+            return new SapLocalConfig();
+        }
+    }
+
+    static string ResolveLocalPassword(SapLocalConfig config)
+    {
+        if (!string.IsNullOrWhiteSpace(config.PasswordProtected))
+        {
+            try
+            {
+                byte[] protectedBytes = Convert.FromBase64String(config.PasswordProtected);
+                byte[] plainBytes = ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser);
+                return Encoding.UTF8.GetString(plainBytes);
+            }
+            catch (Exception ex)
+            {
+                Log($"本机密码解密失败。请重新运行 04_配置SAP登录信息.bat。{ex.Message}");
+                return "";
+            }
+        }
+
+        // 兼容旧版明文配置。重新运行配置脚本后会迁移到 passwordProtected。
+        return config.Password ?? "";
+    }
+
+    static SapRunParams ApplyLocalConfig(SapRunParams p)
+    {
+        var local = LoadLocalConfig();
+        p.System = FirstNonEmpty(local.System ?? "", p.System);
+        p.Client = FirstNonEmpty(local.Client ?? "", p.Client);
+        p.User = FirstNonEmpty(local.User ?? "", p.User);
+        p.Password = FirstNonEmpty(local.Password ?? "", p.Password);
+        p.Language = FirstNonEmpty(local.Language ?? "", p.Language, "ZH");
+        p.SysNr = FirstNonEmpty(local.SysNr ?? "", p.SysNr);
+        ValidateLoginConfig(p);
+        return p;
+    }
+
+    static void ValidateLoginConfig(SapRunParams p)
+    {
+        if (!string.IsNullOrWhiteSpace(p.System) &&
+            !string.IsNullOrWhiteSpace(p.Client) &&
+            !string.IsNullOrWhiteSpace(p.User) &&
+            !string.IsNullOrWhiteSpace(p.Password))
+            return;
+
+        string message = $"SAP 登录配置不完整。请先运行上线安装包里的 04_配置SAP登录信息.bat，维护 system/client/user/password，或手工维护 {ConfigFilePath}";
+        Console.Error.WriteLine(message);
+        Log(message);
+        throw new InvalidOperationException(message);
+    }
+
     static SapRunParams BuildParams(NameValueCollection query, string protocolName)
+    {
+        return BuildParams(query, protocolName, LoadLocalConfig());
+    }
+
+    static SapRunParams BuildParams(NameValueCollection query, string protocolName, SapLocalConfig local)
     {
         string tcode = First(query, "tcode", "t-code", "transaction", "transactioncode") ?? "ZFI019NL";
         string script = First(query, "script", "scriptmode", "mode") ?? (tcode.Equals("zck", StringComparison.OrdinalIgnoreCase) ? "zck" : "openOnly");
 
         var p = new SapRunParams
         {
-            System = First(query, "system", "sys") ?? "Fiori",
-            Client = First(query, "client", "cli") ?? "400",
-            User = First(query, "user", "usr") ?? "UI5035",
-            Password = First(query, "pw", "password") ?? "fiori666",
-            Language = First(query, "lang", "language") ?? "ZH",
-            SysNr = First(query, "sysnr") ?? "04",
+            System = FirstNonEmpty(local.System ?? "", First(query, "system", "sys") ?? ""),
+            Client = FirstNonEmpty(local.Client ?? "", First(query, "client", "cli") ?? ""),
+            User = FirstNonEmpty(local.User ?? "", First(query, "user", "usr") ?? ""),
+            Password = FirstNonEmpty(local.Password ?? "", First(query, "pw", "password") ?? ""),
+            Language = FirstNonEmpty(local.Language ?? "", First(query, "lang", "language") ?? "", "ZH"),
+            SysNr = FirstNonEmpty(local.SysNr ?? "", First(query, "sysnr") ?? ""),
             TCode = SanitizeTCode(tcode),
             Script = script,
             Plant = First(query, "plant", "werks") ?? "",
@@ -241,6 +316,7 @@ static class Program
 
         ApplyScriptDefaults(p);
         NormalizeBatchParams(p);
+        ValidateLoginConfig(p);
         return p;
     }
 
@@ -320,18 +396,30 @@ static class Program
             return;
         }
 
-        string args = $"-sysname=\"{EscapeArg(p.System)}\" -client={EscapeArg(p.Client)} " +
-                      $"-user={EscapeArg(p.User)} -pw={EscapeArg(p.Password)} -language={EscapeArg(p.Language)} " +
-                      $"-type=Transaction -command=\"{EscapeArg(p.TCode)}\"";
+        var args = new[]
+        {
+            $"-sysname={EscapeArg(p.System)}",
+            $"-client={EscapeArg(p.Client)}",
+            $"-user={EscapeArg(p.User)}",
+            $"-pw={EscapeArg(p.Password)}",
+            "-GuiSize=Maximized",
+            $"-language={EscapeArg(p.Language)}"
+        };
 
-        if (!string.IsNullOrWhiteSpace(p.SysNr))
-            args += $" -sysnr={EscapeArg(p.SysNr)}";
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = sapshcut,
+            UseShellExecute = false,
+            CreateNoWindow = false
+        };
+        foreach (string arg in args)
+            startInfo.ArgumentList.Add(arg);
 
-        Log($"启动 SAP GUI: path={sapshcut}, args={MaskSapArgs(args)}");
-        Process.Start(sapshcut, args);
+        Log($"启动 SAP GUI: path={sapshcut}, args={MaskSapArgs(string.Join(" ", args))}");
+        Process.Start(startInfo);
 
-        Log("SAP GUI 已启动，0.1 秒后开始执行 VBS 自动化");
-        Thread.Sleep(100);
+        Log("SAP GUI 已启动，3 秒后开始执行 VBS 自动化");
+        Thread.Sleep(3000);
 
         try
         {
@@ -427,7 +515,7 @@ static class Program
                 RedirectStandardError = true,
             };
             using var proc = Process.Start(psi);
-            proc?.WaitForExit(38_000);
+            proc?.WaitForExit(70_000);
             string stdOut = proc?.StandardOutput.ReadToEnd() ?? string.Empty;
             string stdErr = proc?.StandardError.ReadToEnd() ?? string.Empty;
             string mergedOutput = string.Join(Environment.NewLine,
@@ -450,6 +538,16 @@ static class Program
                 Console.WriteLine($"VBS 退出码: {proc.ExitCode}");
                 Log($"VBS 退出码: {proc.ExitCode}");
                 throw new Exception($"VBS 执行失败，退出码 {proc.ExitCode}");
+            }
+
+            if (stdOut.Contains("ERROR:", StringComparison.OrdinalIgnoreCase) ||
+                stdErr.Contains("ERROR:", StringComparison.OrdinalIgnoreCase))
+            {
+                keepTempFile = true;
+                Log($"VBS 返回错误，保留脚本文件: {tmpFile}");
+                throw new Exception(string.IsNullOrWhiteSpace(mergedOutput)
+                    ? $"VBS 返回错误，脚本已保留: {tmpFile}"
+                    : $"VBS 返回错误: {mergedOutput}");
             }
 
             if (!stdOut.Contains("INFO: transaction script executed", StringComparison.OrdinalIgnoreCase))
@@ -489,7 +587,7 @@ static class Program
         return (value ?? "").Replace("\"", "\"\"");
     }
 
-    static void RunSelfTest()
+    static int RunSelfTest()
     {
         Console.WriteLine("=== SapWebLauncher 自测试 ===\n");
         int passed = 0, failed = 0;
@@ -501,17 +599,49 @@ static class Program
         }
 
         {
-            string uri = "sap-rpa://run?action=run&tcode=ZFI019NL&system=Y4Q&client=630&user=MYUSER&pw=MYPASS&lang=ZH&sysnr=00";
+            string uri = "sap-rpa://run?action=run&tcode=ZFI019NL&script=openOnly&plants=1022,1024&businessAreas=2900,3960";
             var q = ParseUri(uri);
-            Check("新协议URI", q["action"] == "run" && q["tcode"] == "ZFI019NL" && q["system"] == "Y4Q" && q["client"] == "630", uri);
+            Check("新协议URI", q["action"] == "run" && q["tcode"] == "ZFI019NL" && q["plants"] == "1022,1024" && q["businessareas"] == "2900,3960", uri);
         }
 
         {
-            string uri = "sap-rpa://run?payload=%7B%22tCode%22%3A%22ZFI019NL%22%2C%22plants%22%3A%5B%221022%22%2C%221024%22%5D%2C%22businessAreas%22%3A%5B%222900%22%2C%223960%22%5D%7D";
+            string uri = "sap-rpa://run?user=MYUSER&pw=MYPASS&payload=%7B%22tCode%22%3A%22ZFI019NL%22%2C%22plants%22%3A%5B%221022%22%2C%221024%22%5D%2C%22businessAreas%22%3A%5B%222900%22%2C%223960%22%5D%7D";
             var q = ParseUri(uri);
             MergePayload(q);
-            var p = BuildParams(q, PrimaryProtocolName);
+            var p = BuildParams(q, PrimaryProtocolName, new SapLocalConfig
+            {
+                System = "LOCAL",
+                Client = "300",
+                User = "LOCALUSER",
+                Password = "LOCALPASS",
+                Language = "ZH"
+            });
             Check("payload兼容", p.TCode == "ZFI019NL" && p.Plants == "1022,1024" && p.BusinessAreas == "2900,3960", $"tcode={p.TCode}, plants={p.Plants}, businessAreas={p.BusinessAreas}");
+        }
+
+        {
+            var q = new NameValueCollection
+            {
+                ["system"] = "URLSYS",
+                ["client"] = "630",
+                ["user"] = "URLUSER",
+                ["pw"] = "URLPASS",
+                ["lang"] = "EN",
+                ["sysnr"] = "00"
+            };
+            var local = new SapLocalConfig
+            {
+                System = "dev300",
+                Client = "300",
+                User = "LOCALUSER",
+                Password = "LOCALPASS",
+                Language = "ZH",
+                SysNr = "10"
+            };
+            var p = BuildParams(q, PrimaryProtocolName, local);
+            bool ok = p.System == "dev300" && p.Client == "300" && p.User == "LOCALUSER" &&
+                      p.Password == "LOCALPASS" && p.Language == "ZH" && p.SysNr == "10";
+            Check("本机配置优先", ok, $"system={p.System}, client={p.Client}, user={p.User}, lang={p.Language}, sysnr={p.SysNr}");
         }
 
         {
@@ -538,11 +668,23 @@ static class Program
                 .Replace("{WEEK_END}", "2026-06-07")
                 .Replace("{CARET_POS}", "0")
                 .Replace("{BUTTON_ID}", "");
-            bool ok = result.Contains("ZFI019NL") && !result.Contains("{OK_CODE}") && !result.Contains("{PLANTS}") && result.Contains("transaction script executed");
+            bool ok = result.Contains("ZFI019NL") &&
+                      !Regex.IsMatch(result, @"\{[A-Z0-9_]+\}") &&
+                      result.Contains("SAP login screen is still active") &&
+                      result.Contains("SAP rejected transaction") &&
+                      result.Contains("transaction script executed");
             Check("VBS替换", ok, $"模板 {template.Length} 字节 -> {result.Length} 字节");
         }
 
+        {
+            string secret = "dummy-secret";
+            byte[] protectedBytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(secret), null, DataProtectionScope.CurrentUser);
+            string plainText = Encoding.UTF8.GetString(ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser));
+            Check("DPAPI密码保护", plainText == secret, "CurrentUser protect/unprotect");
+        }
+
         Console.WriteLine($"\n=== 总计: {passed} PASS, {failed} FAIL, {(failed == 0 ? "全部通过" : "有失败项")} ===");
+        return failed == 0 ? 0 : 1;
     }
 
     static void Log(string message)
@@ -601,12 +743,12 @@ static class Program
 
 class SapRunParams
 {
-    public string System { get; set; } = "Fiori";
-    public string Client { get; set; } = "400";
-    public string User { get; set; } = "UI5035";
-    public string Password { get; set; } = "fiori666";
+    public string System { get; set; } = "";
+    public string Client { get; set; } = "";
+    public string User { get; set; } = "";
+    public string Password { get; set; } = "";
     public string Language { get; set; } = "ZH";
-    public string SysNr { get; set; } = "04";
+    public string SysNr { get; set; } = "";
     public string TCode { get; set; } = "ZFI019NL";
     public string Script { get; set; } = "openOnly";
     public string Plant { get; set; } = "";
@@ -623,4 +765,15 @@ class SapRunParams
     public string Field2Value { get; set; } = "";
     public string CaretPos { get; set; } = "0";
     public string ButtonId { get; set; } = "";
+}
+
+class SapLocalConfig
+{
+    public string? System { get; set; }
+    public string? Client { get; set; }
+    public string? User { get; set; }
+    public string? Password { get; set; }
+    public string? PasswordProtected { get; set; }
+    public string? Language { get; set; }
+    public string? SysNr { get; set; }
 }

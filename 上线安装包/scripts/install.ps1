@@ -9,6 +9,8 @@ $sourceDir = Join-Path $packageRoot "SapWebLauncher"
 $sourceExe = Join-Path $sourceDir "SapWebLauncher.exe"
 $installDir = Join-Path $env:LOCALAPPDATA "SapRpaLauncher"
 $installExe = Join-Path $installDir "SapWebLauncher.exe"
+$configDir = Join-Path $env:LOCALAPPDATA "SapWebLauncher"
+$configFile = Join-Path $configDir "config.json"
 
 function Write-Step {
     param([string]$Message)
@@ -23,11 +25,13 @@ function Register-Protocol {
 
     $root = "HKCU:\Software\Classes\$Protocol"
     Remove-Item $root -Force -Recurse -ErrorAction SilentlyContinue
-    New-Item $root -Force | Out-Null
-    Set-ItemProperty $root -Name "(default)" -Value "URL:$Protocol Protocol"
-    Set-ItemProperty $root -Name "URL Protocol" -Value ""
-    New-Item "$root\shell\open\command" -Force | Out-Null
-    Set-ItemProperty "$root\shell\open\command" -Name "(default)" -Value "`"$ExePath`" `"%1`""
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey("Software\Classes\$Protocol")
+    $key.SetValue("", "URL:$Protocol Protocol")
+    $key.SetValue("URL Protocol", "")
+    $cmdKey = $key.CreateSubKey("shell\open\command")
+    $cmdKey.SetValue("", "`"$ExePath`" `"%1`"")
+    $cmdKey.Close()
+    $key.Close()
 }
 
 function Save-RegFile {
@@ -62,20 +66,35 @@ Write-Step "Copy launcher to $installDir"
 New-Item -ItemType Directory -Force -Path $installDir | Out-Null
 Copy-Item -Path (Join-Path $sourceDir "*") -Destination $installDir -Recurse -Force
 
-Write-Step "Register browser protocols for current user"
+Write-Step "Create local SAP config template"
+New-Item -ItemType Directory -Force -Path $configDir | Out-Null
+if (-not (Test-Path $configFile)) {
+    $config = [ordered]@{
+        system = ""
+        client = ""
+        user = ""
+        passwordProtected = ""
+        language = "ZH"
+        sysNr = ""
+    } | ConvertTo-Json
+    Set-Content -LiteralPath $configFile -Value $config -Encoding UTF8
+}
+
+Write-Step "Register browser protocol for current user"
 Register-Protocol -Protocol "sap-rpa" -ExePath $installExe
 Save-RegFile -ExePath $installExe
 
 Write-Step "Run launcher self-test"
-& $installExe test
-if ($LASTEXITCODE -ne 0) {
+$testProcess = Start-Process -FilePath $installExe -ArgumentList "test" -Wait -PassThru -NoNewWindow
+if ($testProcess.ExitCode -ne 0) {
     Write-Host "Launcher self-test failed." -ForegroundColor Red
-    exit $LASTEXITCODE
+    exit $testProcess.ExitCode
 }
 
 Write-Host ""
 Write-Host "Install completed." -ForegroundColor Green
 Write-Host "Installed exe: $installExe"
-Write-Host "Test URL: sap-rpa://run?action=run&tcode=ZFI019NL&script=openOnly&system=Fiori&client=400&user=UI5035&pw=fiori666&sysnr=04&lang=ZH"
+Write-Host "Config file: $configFile"
+Write-Host "Test URL: sap-rpa://run?action=run&tcode=ZFI019NL&script=openOnly"
 Write-Host ""
-Write-Host "Next step: run 02_检测环境.bat"
+Write-Host "Next step: run 04_配置SAP登录信息.bat, then 02_检测环境.bat"

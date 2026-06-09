@@ -38,4 +38,4 @@ Write-Host "OK: sap-rpa:// has been registered." -ForegroundColor Green
 Write-Host "Executable: $appPath" -ForegroundColor Gray
 Write-Host ""
 Write-Host "Test link:" -ForegroundColor Cyan
-Write-Host "sap-rpa://run?action=run&tcode=ZFI019NL&system=Fiori&client=400&user=UI5035&pw=fiori666&sysnr=04"
+Write-Host "sap-rpa://run?action=run&tcode=ZFI019NL&script=openOnly&plants=1022,1024,1032,6041"
