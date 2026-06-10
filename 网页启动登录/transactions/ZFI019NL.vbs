@@ -57,7 +57,7 @@ For retries = 1 To maxRetries
          Set connection = application.Children(0)
          If Err.Number = 0 And IsObject(connection) And connection.Children.Count > 0 Then
             Set session = connection.Children(0)
-            If Err.Number = 0 And IsObject(session) And ObjectExists("wnd[0]/tbar[0]/okcd") And Not ObjectExists("wnd[0]/usr/pwdRSYST-BCODE") Then
+            If Err.Number = 0 And IsObject(session) And ObjectExists("wnd[0]/tbar[0]/okcd") Then
                Exit For
             End If
          End If
@@ -79,8 +79,8 @@ If Not IsObject(session) Then
    WScript.Quit 2
 End If
 
-If ObjectExists("wnd[0]/usr/pwdRSYST-BCODE") Then
-   WScript.Echo "ERROR: SAP login screen is still active. Check local config user/password/system/client."
+If Not ObjectExists("wnd[0]/tbar[0]/okcd") Then
+   WScript.Echo "ERROR: SAP command field is not ready. Check local config user/password/system/client."
    WScript.Quit 7
 End If
 

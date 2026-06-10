@@ -9,6 +9,7 @@ $sourceDir = Join-Path $packageRoot "SapWebLauncher"
 $sourceExe = Join-Path $sourceDir "SapWebLauncher.exe"
 $installDir = Join-Path $env:LOCALAPPDATA "SapRpaLauncher"
 $installExe = Join-Path $installDir "SapWebLauncher.exe"
+$installTransactionsDir = Join-Path $installDir "transactions"
 $configDir = Join-Path $env:LOCALAPPDATA "SapWebLauncher"
 $configFile = Join-Path $configDir "config.json"
 
@@ -68,7 +69,18 @@ Copy-Item -Path (Join-Path $sourceDir "*") -Destination $installDir -Recurse -Fo
 $transactionsDir = Join-Path $packageRoot "transactions"
 if (Test-Path $transactionsDir) {
     Write-Step "Copy transaction scripts to local launcher"
+    Remove-Item -LiteralPath $installTransactionsDir -Recurse -Force -ErrorAction SilentlyContinue
     Copy-Item -Path $transactionsDir -Destination $installDir -Recurse -Force
+} elseif (Test-Path (Join-Path $sourceDir "transactions")) {
+    Write-Step "Copy packaged transaction scripts from launcher folder"
+    Remove-Item -LiteralPath $installTransactionsDir -Recurse -Force -ErrorAction SilentlyContinue
+    Copy-Item -Path (Join-Path $sourceDir "transactions") -Destination $installDir -Recurse -Force
+}
+
+if (-not (Test-Path (Join-Path $installTransactionsDir "ZFI072A.vbs"))) {
+    Write-Host "Transaction scripts were not installed: $installTransactionsDir" -ForegroundColor Red
+    Write-Host "Regenerate the package with 00_生成上线安装包.cmd, then run 01_安装到本机.bat again." -ForegroundColor Yellow
+    exit 1
 }
 
 Write-Step "Create local SAP config template"
@@ -99,6 +111,7 @@ if ($testProcess.ExitCode -ne 0) {
 Write-Host ""
 Write-Host "Install completed." -ForegroundColor Green
 Write-Host "Installed exe: $installExe"
+Write-Host "Transaction scripts: $installTransactionsDir"
 Write-Host "Config file: $configFile"
 Write-Host "Test URL: sap-rpa://run?action=run&tcode=ZFI019NL&script=openOnly"
 Write-Host ""

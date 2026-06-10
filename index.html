@@ -624,6 +624,7 @@
       { code: "ZFI148", name: "推送大数据平台", module: "FI", stage: "周结推送", script: "ZFI148.vbs", icon: "send", params: ["year", "week", "plants"], factoryRule: "保存后推送", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true }
     ];
     const stageOrder = ["并行启动", "顺序执行", "核心并行", "最终生成", "周结推送"];
+    const zfi072PlantRule = ["5021", "9301", "1101", "207M", "1024", "1032", "6041", "1022", "103C", "103D", "1031", "1033", "103C", "103D", "1035", "1036"];
     const workflow = [
       {
         title: "并行启动阶段",
@@ -1055,9 +1056,15 @@
 
     function getDefaultPlantsForTCode(tCode, groupId = state.form.factoryGroup) {
       const group = getFactoryGroup(groupId);
-      if (tCode === "ZFI072A" || tCode === "ZFI072" || tCode === "ZFI072N") return unique([...procurementPlants, ...group.zfi072Plants]);
+      if (tCode === "ZFI072A") return unique(zfi072PlantRule);
+      if (tCode === "ZFI072" || tCode === "ZFI072N") return unique([...procurementPlants, ...group.zfi072Plants]);
       if (tCode === "ZCO019") return unique(group.zco019Plants);
       return unique(group.plants);
+    }
+
+    function getRunPlantsForTCode(tCode, selectedPlants) {
+      if (tCode === "ZFI072A") return [...zfi072PlantRule];
+      return unique(selectedPlants);
     }
 
     function getBusinessAreasForSelection(tCode, selectedPlants = state.form.plants, groupId = state.form.factoryGroup) {
@@ -1337,8 +1344,10 @@
       wakeProtocol();
       setTimeout(() => {
         setStep(1, "done");
-        setStep(2, "run");
-        addLog("WARN", "等待本机脚本执行。网页不会接收 SAP 账号密码，也不会保存连接参数。");
+        setStep(2, "done");
+        setStep(3, "run");
+        addLog("INFO", "已提交给本机执行器，SAP 登录与 /n 事务码跳转由本机脚本处理。");
+        addLog("WARN", "网页不会接收 SAP 账号密码，也不会保存连接参数；真实执行结果以本机日志为准。");
         finishLocalSimulation("协议唤醒已完成，结果请查看本地日志", "WARN");
       }, 850);
     }
@@ -1355,8 +1364,8 @@
     }
 
     function finishLocalSimulation(message, type) {
-      setStep(2, state.steps[2].status === "pending" ? "done" : state.steps[2].status);
-      setStep(3, state.steps[3].status === "pending" ? "done" : state.steps[3].status);
+      if (state.steps[2].status !== "done") setStep(2, "done");
+      if (state.steps[3].status !== "done") setStep(3, "done");
       setStep(4, type === "OK" ? "done" : "run");
       addLog(type, message);
       state.executing = false;
@@ -1368,7 +1377,7 @@
       syncExecutionDefaults(false);
       const t = getTCode(state.form.tCode);
       const group = getFactoryGroup(state.form.factoryGroup);
-      const selectedPlants = unique(state.form.plants);
+      const selectedPlants = getRunPlantsForTCode(state.form.tCode, state.form.plants);
       return {
         source: "netlify-static-portal",
         action: "run",

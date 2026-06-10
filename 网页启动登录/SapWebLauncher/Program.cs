@@ -1,9 +1,12 @@
 using Microsoft.Win32;
+using Microsoft.Data.Sqlite;
 using System;
+using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -17,16 +20,40 @@ static class Program
 {
     private const string PrimaryProtocolName = "sap-rpa";
     private const string MutexId = "SapWebLauncher-SingleInstance-Mutex";
+    private const int BridgePort = 17890;
     private static readonly string LogDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "SapWebLauncher");
     private static readonly string LogFilePath = Path.Combine(LogDirectory, "launcher.log");
     private static readonly string ConfigFilePath = Path.Combine(LogDirectory, "config.json");
+    private static readonly string DatabaseFilePath = Path.Combine(LogDirectory, "sap-rpa-config.db");
     private static readonly string ExeDirectory = AppContext.BaseDirectory;
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        WriteIndented = true
+    };
 
     static void Main(string[] args)
     {
         Log($"启动参数: {MaskRawArg(args.FirstOrDefault())}");
+
+        if (args.Length > 0 &&
+            (args[0].Equals("--serve", StringComparison.OrdinalIgnoreCase) ||
+             args[0].Equals("serve", StringComparison.OrdinalIgnoreCase)))
+        {
+            RunBridgeServer();
+            return;
+        }
+
+        if (args.Length > 0 &&
+            (args[0].Equals("--init-db", StringComparison.OrdinalIgnoreCase) ||
+             args[0].Equals("init-db", StringComparison.OrdinalIgnoreCase)))
+        {
+            InitializeDatabase(seedFromScripts: true);
+            Console.WriteLine($"SQLite 数据库已初始化: {DatabaseFilePath}");
+            return;
+        }
 
         using var mutex = new Mutex(true, MutexId);
         if (!mutex.WaitOne(TimeSpan.Zero, true))
@@ -66,6 +93,8 @@ static class Program
         }
 
         Console.WriteLine($"用法: {Process.GetCurrentProcess().ProcessName}.exe [--register]");
+        Console.WriteLine($"  初始化本机数据库: {Process.GetCurrentProcess().ProcessName}.exe --init-db");
+        Console.WriteLine($"  启动本机 Bridge API: {Process.GetCurrentProcess().ProcessName}.exe --serve");
         Console.WriteLine($"  或从浏览器跳转 {PrimaryProtocolName}://run?action=run&tcode=ZFI019NL&script=openOnly&plants=1022,1024");
     }
 
@@ -343,6 +372,17 @@ static class Program
                 .Distinct(StringComparer.OrdinalIgnoreCase));
     }
 
+    static string NormalizeCsvPreserveOrder(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "";
+
+        return string.Join(",",
+            value.Split(new[] { ',', ';', '|', '，', '；', '、', '\r', '\n', '\t', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(v => v.Trim())
+                .Where(v => !string.IsNullOrWhiteSpace(v)));
+    }
+
     static string FirstCsvValue(string value)
     {
         return NormalizeCsv(value).Split(',', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
@@ -397,40 +437,445 @@ static class Program
         return values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)) ?? "";
     }
 
-    static void LaunchSapGuiAndExecute(SapRunParams p)
+    static void RunBridgeServer()
     {
-        string? sapshcut = FindSapshcut();
-        if (string.IsNullOrEmpty(sapshcut))
+        InitializeDatabase(seedFromScripts: true);
+
+        using var listener = new HttpListener();
+        string prefix = $"http://127.0.0.1:{BridgePort}/";
+        listener.Prefixes.Add(prefix);
+        listener.Start();
+        Log($"Bridge API 已启动: {prefix}");
+        Console.WriteLine($"Bridge API running: {prefix}");
+
+        while (true)
         {
-            Console.Error.WriteLine("未找到 sapshcut.exe，请安装 SAP GUI");
-            Log("未找到 sapshcut.exe，请安装 SAP GUI");
+            var context = listener.GetContext();
+            ThreadPool.QueueUserWorkItem(_ => HandleBridgeRequest(context));
+        }
+    }
+
+    static void HandleBridgeRequest(HttpListenerContext context)
+    {
+        try
+        {
+            AddCorsHeaders(context.Response);
+            if (context.Request.HttpMethod.Equals("OPTIONS", StringComparison.OrdinalIgnoreCase))
+            {
+                context.Response.StatusCode = 204;
+                context.Response.Close();
+                return;
+            }
+
+            string path = context.Request.Url?.AbsolutePath.TrimEnd('/') ?? "";
+            if (path.Equals("", StringComparison.OrdinalIgnoreCase))
+                path = "/";
+
+            if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                path.Equals("/api/health", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteJson(context.Response, new
+                {
+                    ok = true,
+                    app = "SapWebLauncher Bridge",
+                    version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "",
+                    database = DatabaseFilePath,
+                    time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+                });
+                return;
+            }
+
+            if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                path.Equals("/api/transactions", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteJson(context.Response, LoadTransactionsFromDatabase());
+                return;
+            }
+
+            Match metadataMatch = Regex.Match(path, @"^/api/scripts/([A-Za-z0-9_.-]+)/metadata$", RegexOptions.IgnoreCase);
+            if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && metadataMatch.Success)
+            {
+                string tcode = SanitizeTCode(metadataMatch.Groups[1].Value).ToUpperInvariant();
+                var metadata = LoadScriptMetadataFromDatabase(tcode);
+                if (metadata == null)
+                {
+                    WriteJson(context.Response, new { error = $"metadata not found: {tcode}" }, 404);
+                    return;
+                }
+
+                WriteJson(context.Response, metadata);
+                return;
+            }
+
+            WriteJson(context.Response, new { error = $"not found: {path}" }, 404);
+        }
+        catch (Exception ex)
+        {
+            Log($"Bridge API 请求失败: {ex}");
+            try
+            {
+                WriteJson(context.Response, new { error = ex.Message }, 500);
+            }
+            catch
+            {
+                try { context.Response.Close(); } catch { }
+            }
+        }
+    }
+
+    static void AddCorsHeaders(HttpListenerResponse response)
+    {
+        response.Headers["Access-Control-Allow-Origin"] = "*";
+        response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
+        response.Headers["Access-Control-Allow-Headers"] = "Content-Type";
+        response.Headers["Access-Control-Allow-Private-Network"] = "true";
+    }
+
+    static void WriteJson(HttpListenerResponse response, object value, int statusCode = 200)
+    {
+        byte[] bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(value, JsonOptions));
+        response.StatusCode = statusCode;
+        response.ContentType = "application/json; charset=utf-8";
+        response.ContentLength64 = bytes.Length;
+        response.OutputStream.Write(bytes, 0, bytes.Length);
+        response.Close();
+    }
+
+    static void InitializeDatabase(bool seedFromScripts)
+    {
+        Directory.CreateDirectory(LogDirectory);
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    applied_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS transactions (
+    tcode TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    stage TEXT NOT NULL DEFAULT '',
+    script_file TEXT NOT NULL DEFAULT '',
+    icon TEXT NOT NULL DEFAULT '',
+    params_json TEXT NOT NULL DEFAULT '[]',
+    factory_rule TEXT NOT NULL DEFAULT '',
+    fixed_plants_json TEXT NOT NULL DEFAULT '[]',
+    default_group TEXT NOT NULL DEFAULT '',
+    automation TEXT NOT NULL DEFAULT '',
+    script_version TEXT NOT NULL DEFAULT '',
+    script_hash TEXT NOT NULL DEFAULT '',
+    script_metadata_json TEXT NOT NULL DEFAULT '{}',
+    enabled INTEGER NOT NULL DEFAULT 1,
+    updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS run_logs (
+    run_id TEXT PRIMARY KEY,
+    tcode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    message TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS script_cache (
+    tcode TEXT PRIMARY KEY,
+    script_file TEXT NOT NULL,
+    script_hash TEXT NOT NULL DEFAULT '',
+    script_text TEXT NOT NULL DEFAULT '',
+    cached_at TEXT NOT NULL
+);
+INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, datetime('now'));
+""";
+        command.ExecuteNonQuery();
+
+        if (seedFromScripts)
+            SeedTransactions(connection);
+
+        Log($"SQLite 数据库初始化完成: {DatabaseFilePath}");
+    }
+
+    static SqliteConnection OpenDatabaseConnection()
+    {
+        var connection = new SqliteConnection($"Data Source={DatabaseFilePath}");
+        connection.Open();
+        return connection;
+    }
+
+    static void SeedTransactions(SqliteConnection connection)
+    {
+        string configPath = FindTransactionConfigPath();
+        if (!File.Exists(configPath))
+        {
+            Log($"事务码配置文件不存在，跳过种子数据: {configPath}");
             return;
         }
 
-        var args = new[]
+        using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(configPath, Encoding.UTF8));
+        if (!doc.RootElement.TryGetProperty("transactions", out JsonElement transactions) ||
+            transactions.ValueKind != JsonValueKind.Array)
+            return;
+
+        foreach (JsonElement item in transactions.EnumerateArray())
         {
-            $"-sysname={EscapeArg(p.System)}",
-            $"-client={EscapeArg(p.Client)}",
-            $"-user={EscapeArg(p.User)}",
-            $"-pw={EscapeArg(p.Password)}",
-            "-GuiSize=Maximized",
-            $"-language={EscapeArg(p.Language)}"
+            string tcode = GetJsonString(item, "code").ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(tcode))
+                continue;
+
+            string scriptFile = FirstNonEmpty(GetJsonString(item, "script"), $"{tcode}.vbs");
+            string scriptText = ReadScriptTextIfExists(scriptFile, tcode);
+            var metadata = ExtractScriptMetadata(scriptText);
+            string fixedPlants = FirstNonEmpty(
+                metadata.TryGetValue("fixedPlants", out string? metaPlants) ? metaPlants ?? "" : "",
+                JsonArrayToCsv(item, "fixedPlants"));
+            string scriptVersion = metadata.TryGetValue("version", out string? version) ? version ?? "" : "";
+            string scriptHash = string.IsNullOrWhiteSpace(scriptText) ? "" : Sha256Hex(scriptText);
+
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+INSERT INTO transactions (
+    tcode, name, stage, script_file, icon, params_json, factory_rule, fixed_plants_json,
+    default_group, automation, script_version, script_hash, script_metadata_json, enabled, updated_at
+) VALUES (
+    $tcode, $name, $stage, $scriptFile, $icon, $paramsJson, $factoryRule, $fixedPlantsJson,
+    $defaultGroup, $automation, $scriptVersion, $scriptHash, $metadataJson, 1, $updatedAt
+)
+ON CONFLICT(tcode) DO UPDATE SET
+    name=excluded.name,
+    stage=excluded.stage,
+    script_file=excluded.script_file,
+    icon=excluded.icon,
+    params_json=excluded.params_json,
+    factory_rule=excluded.factory_rule,
+    fixed_plants_json=excluded.fixed_plants_json,
+    default_group=excluded.default_group,
+    automation=excluded.automation,
+    script_version=excluded.script_version,
+    script_hash=excluded.script_hash,
+    script_metadata_json=excluded.script_metadata_json,
+    enabled=excluded.enabled,
+    updated_at=excluded.updated_at;
+""";
+            command.Parameters.AddWithValue("$tcode", tcode);
+            command.Parameters.AddWithValue("$name", GetJsonString(item, "name"));
+            command.Parameters.AddWithValue("$stage", GetJsonString(item, "stage"));
+            command.Parameters.AddWithValue("$scriptFile", scriptFile);
+            command.Parameters.AddWithValue("$icon", GetJsonString(item, "icon"));
+            command.Parameters.AddWithValue("$paramsJson", JsonArrayPropertyToJson(item, "params"));
+            command.Parameters.AddWithValue("$factoryRule", GetJsonString(item, "factoryRule"));
+            command.Parameters.AddWithValue("$fixedPlantsJson", CsvToJsonArray(fixedPlants));
+            command.Parameters.AddWithValue("$defaultGroup", GetJsonString(item, "defaultPlantGroup"));
+            command.Parameters.AddWithValue("$automation", GetJsonString(item, "automation"));
+            command.Parameters.AddWithValue("$scriptVersion", scriptVersion);
+            command.Parameters.AddWithValue("$scriptHash", scriptHash);
+            command.Parameters.AddWithValue("$metadataJson", JsonSerializer.Serialize(metadata, JsonOptions));
+            command.Parameters.AddWithValue("$updatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            command.ExecuteNonQuery();
+
+            if (!string.IsNullOrWhiteSpace(scriptText))
+                UpsertScriptCache(connection, tcode, scriptFile, scriptHash, scriptText);
+        }
+    }
+
+    static void UpsertScriptCache(SqliteConnection connection, string tcode, string scriptFile, string scriptHash, string scriptText)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+INSERT INTO script_cache(tcode, script_file, script_hash, script_text, cached_at)
+VALUES($tcode, $scriptFile, $scriptHash, $scriptText, $cachedAt)
+ON CONFLICT(tcode) DO UPDATE SET
+    script_file=excluded.script_file,
+    script_hash=excluded.script_hash,
+    script_text=excluded.script_text,
+    cached_at=excluded.cached_at;
+""";
+        command.Parameters.AddWithValue("$tcode", tcode);
+        command.Parameters.AddWithValue("$scriptFile", scriptFile);
+        command.Parameters.AddWithValue("$scriptHash", scriptHash);
+        command.Parameters.AddWithValue("$scriptText", scriptText);
+        command.Parameters.AddWithValue("$cachedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        command.ExecuteNonQuery();
+    }
+
+    static object LoadTransactionsFromDatabase()
+    {
+        InitializeDatabase(seedFromScripts: true);
+        var list = new List<object>();
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT tcode, name, stage, script_file, icon, params_json, factory_rule, fixed_plants_json,
+       default_group, automation, script_version, script_hash, enabled, updated_at
+FROM transactions
+ORDER BY stage, tcode;
+""";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            list.Add(new
+            {
+                code = reader.GetString(0),
+                name = reader.GetString(1),
+                stage = reader.GetString(2),
+                script = reader.GetString(3),
+                icon = reader.GetString(4),
+                paramsList = JsonSerializer.Deserialize<string[]>(reader.GetString(5)) ?? Array.Empty<string>(),
+                factoryRule = reader.GetString(6),
+                fixedPlants = JsonSerializer.Deserialize<string[]>(reader.GetString(7)) ?? Array.Empty<string>(),
+                defaultPlantGroup = reader.GetString(8),
+                automation = reader.GetString(9),
+                scriptVersion = reader.GetString(10),
+                scriptHash = reader.GetString(11),
+                enabled = reader.GetInt32(12) == 1,
+                updatedAt = reader.GetString(13)
+            });
+        }
+
+        return new
+        {
+            version = 1,
+            source = "sqlite",
+            database = DatabaseFilePath,
+            transactions = list
+        };
+    }
+
+    static object? LoadScriptMetadataFromDatabase(string tcode)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT tcode, name, script_file, fixed_plants_json, script_version, script_hash, script_metadata_json, updated_at
+FROM transactions
+WHERE tcode=$tcode;
+""";
+        command.Parameters.AddWithValue("$tcode", tcode.ToUpperInvariant());
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        return new
+        {
+            code = reader.GetString(0),
+            name = reader.GetString(1),
+            script = reader.GetString(2),
+            fixedPlants = JsonSerializer.Deserialize<string[]>(reader.GetString(3)) ?? Array.Empty<string>(),
+            scriptVersion = reader.GetString(4),
+            scriptHash = reader.GetString(5),
+            metadata = JsonSerializer.Deserialize<Dictionary<string, string>>(reader.GetString(6)) ?? new Dictionary<string, string>(),
+            updatedAt = reader.GetString(7)
+        };
+    }
+
+    static string FindTransactionConfigPath()
+    {
+        string[] candidates =
+        {
+            Path.Combine(ExeDirectory, "transactions", "transaction-config.json"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SapRpaLauncher", "transactions", "transaction-config.json"),
+            Path.Combine(Directory.GetCurrentDirectory(), "transactions", "transaction-config.json"),
+            Path.Combine(Directory.GetCurrentDirectory(), "网页启动登录", "transactions", "transaction-config.json")
         };
 
-        var startInfo = new ProcessStartInfo
+        return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
+    }
+
+    static string ReadScriptTextIfExists(string script, string tcode)
+    {
+        string? path = FindExternalScript(script, tcode);
+        return !string.IsNullOrWhiteSpace(path) && File.Exists(path)
+            ? File.ReadAllText(path, Encoding.UTF8)
+            : "";
+    }
+
+    static Dictionary<string, string> ExtractScriptMetadata(string scriptText)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(scriptText))
+            return result;
+
+        foreach (Match match in Regex.Matches(scriptText, @"(?im)^\s*'\s*@([A-Za-z0-9_.-]+)\s*=\s*(.+?)\s*$"))
+            result[match.Groups[1].Value.Trim()] = match.Groups[2].Value.Trim();
+
+        return result;
+    }
+
+    static string GetJsonString(JsonElement item, string property)
+    {
+        return item.TryGetProperty(property, out JsonElement value) && value.ValueKind != JsonValueKind.Null
+            ? JsonValueToString(value)
+            : "";
+    }
+
+    static string JsonArrayPropertyToJson(JsonElement item, string property)
+    {
+        return item.TryGetProperty(property, out JsonElement value) && value.ValueKind == JsonValueKind.Array
+            ? value.GetRawText()
+            : "[]";
+    }
+
+    static string JsonArrayToCsv(JsonElement item, string property)
+    {
+        if (!item.TryGetProperty(property, out JsonElement value) || value.ValueKind != JsonValueKind.Array)
+            return "";
+
+        return string.Join(",", value.EnumerateArray().Select(JsonValueToString).Where(v => !string.IsNullOrWhiteSpace(v)));
+    }
+
+    static string CsvToJsonArray(string value)
+    {
+        string[] items = NormalizeCsvPreserveOrder(value).Split(',', StringSplitOptions.RemoveEmptyEntries);
+        return JsonSerializer.Serialize(items, JsonOptions);
+    }
+
+    static string Sha256Hex(string value)
+    {
+        byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
+        return Convert.ToHexString(bytes).ToLowerInvariant();
+    }
+
+    static void LaunchSapGuiAndExecute(SapRunParams p)
+    {
+        if (HasReadySapSession())
         {
-            FileName = sapshcut,
-            UseShellExecute = false,
-            CreateNoWindow = false
-        };
-        foreach (string arg in args)
-            startInfo.ArgumentList.Add(arg);
+            Log("检测到已登录 SAP GUI 会话，跳过 sapshcut 登录，直接执行事务码脚本");
+        }
+        else
+        {
+            string? sapshcut = FindSapshcut();
+            if (string.IsNullOrEmpty(sapshcut))
+            {
+                Console.Error.WriteLine("未找到 sapshcut.exe，请安装 SAP GUI");
+                Log("未找到 sapshcut.exe，请安装 SAP GUI");
+                return;
+            }
 
-        Log($"启动 SAP GUI: path={sapshcut}, args={MaskSapArgs(string.Join(" ", args))}");
-        Process.Start(startInfo);
+            var args = new[]
+            {
+                $"-sysname={EscapeArg(p.System)}",
+                $"-client={EscapeArg(p.Client)}",
+                $"-user={EscapeArg(p.User)}",
+                $"-pw={EscapeArg(p.Password)}",
+                "-GuiSize=Maximized",
+                $"-language={EscapeArg(p.Language)}"
+            };
 
-        Log("SAP GUI 已启动，3 秒后开始执行 VBS 自动化");
-        Thread.Sleep(3000);
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = sapshcut,
+                UseShellExecute = false,
+                CreateNoWindow = false
+            };
+            foreach (string arg in args)
+                startInfo.ArgumentList.Add(arg);
+
+            Log($"未检测到可用 SAP GUI 会话，启动 SAP GUI: path={sapshcut}, args={MaskSapArgs(string.Join(" ", args))}");
+            Process.Start(startInfo);
+
+            Log("SAP GUI 已启动，3 秒后开始执行 VBS 自动化");
+            Thread.Sleep(3000);
+        }
 
         try
         {
@@ -442,6 +887,81 @@ static class Program
         {
             Console.Error.WriteLine($"{p.TCode} 执行失败: {ex.Message}");
             Log($"{p.TCode} 执行失败: {ex}");
+        }
+    }
+
+    static bool HasReadySapSession()
+    {
+        string probeFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_probe_{Guid.NewGuid():N}.vbs");
+        string probeScript = """
+On Error Resume Next
+Dim SapGuiAuto, application, connection, session
+Set SapGuiAuto = GetObject("SAPGUI")
+If Err.Number <> 0 Then
+   WScript.Echo "NO: SAPGUI object not found"
+   WScript.Quit 1
+End If
+Set application = SapGuiAuto.GetScriptingEngine
+If Err.Number <> 0 Or Not IsObject(application) Or application.Children.Count = 0 Then
+   WScript.Echo "NO: scripting engine or connection not ready"
+   WScript.Quit 2
+End If
+Set connection = application.Children(0)
+If Err.Number <> 0 Or Not IsObject(connection) Or connection.Children.Count = 0 Then
+   WScript.Echo "NO: connection/session not ready"
+   WScript.Quit 3
+End If
+Set session = connection.Children(0)
+If Err.Number <> 0 Or Not IsObject(session) Then
+   WScript.Echo "NO: session not ready"
+   WScript.Quit 4
+End If
+Err.Clear
+Dim okcd
+Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
+If Err.Number <> 0 Or Not IsObject(okcd) Then
+   WScript.Echo "NO: command field not ready"
+   WScript.Quit 5
+End If
+WScript.Echo "OK: user=" & session.Info.User & ", transaction=" & session.Info.Transaction
+WScript.Quit 0
+""";
+
+        try
+        {
+            File.WriteAllText(probeFile, probeScript, Encoding.Default);
+            var psi = new ProcessStartInfo("cscript.exe", $"//T:8 //nologo \"{probeFile}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc == null)
+                return false;
+
+            proc.WaitForExit(10_000);
+            string output = proc.StandardOutput.ReadToEnd().Trim();
+            string error = proc.StandardError.ReadToEnd().Trim();
+            string merged = string.Join(" ", new[] { output, error }.Where(x => !string.IsNullOrWhiteSpace(x)));
+            Log($"SAP 会话探测: exit={proc.ExitCode}, {merged}");
+            return proc.ExitCode == 0 && output.StartsWith("OK:", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            Log($"SAP 会话探测失败: {ex.Message}");
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(probeFile))
+                    File.Delete(probeFile);
+            }
+            catch { }
         }
     }
 
@@ -495,6 +1015,14 @@ static class Program
     static void ExecuteViaGuiScripting(SapRunParams p)
     {
         string template = ReadTransactionScript(p);
+        string effectivePlants = p.Plants;
+        string scriptFixedPlants = ExtractScriptMetadataValue(template, "fixedPlants");
+        if (!string.IsNullOrWhiteSpace(scriptFixedPlants))
+        {
+            effectivePlants = NormalizeCsvPreserveOrder(scriptFixedPlants);
+            Log($"脚本元数据固定工厂覆盖页面参数: {effectivePlants}");
+        }
+
         string vbsScript = template
             .Replace("{OK_CODE}", VbsEscape(p.TCode))
             .Replace("{SCRIPT_MODE}", VbsEscape(p.Script))
@@ -502,7 +1030,7 @@ static class Program
             .Replace("{FIELD1_VALUE}", VbsEscape(p.Field1Value))
             .Replace("{FIELD2_NAME}", VbsEscape(p.Field2Name))
             .Replace("{FIELD2_VALUE}", VbsEscape(p.Field2Value))
-            .Replace("{PLANTS}", VbsEscape(p.Plants))
+            .Replace("{PLANTS}", VbsEscape(effectivePlants))
             .Replace("{BUSINESS_AREAS}", VbsEscape(p.BusinessAreas))
             .Replace("{FACTORY_GROUP}", VbsEscape(p.FactoryGroup))
             .Replace("{RUN_STRATEGY}", VbsEscape(p.RunStrategy))
@@ -517,7 +1045,7 @@ static class Program
         bool keepTempFile = false;
         try
         {
-            File.WriteAllText(tmpFile, vbsScript, Encoding.Default);
+            File.WriteAllText(tmpFile, vbsScript, Encoding.Unicode);
             Log($"执行 VBS: {tmpFile}");
 
             var psi = new ProcessStartInfo("cscript.exe", $"//T:35 //nologo \"{tmpFile}\"")
@@ -599,6 +1127,17 @@ static class Program
         }
 
         return ReadEmbeddedTemplate("transaction_template.vbs");
+    }
+
+    static string ExtractScriptMetadataValue(string scriptText, string key)
+    {
+        if (string.IsNullOrWhiteSpace(scriptText) || string.IsNullOrWhiteSpace(key))
+            return "";
+
+        var match = Regex.Match(
+            scriptText,
+            @"(?im)^\s*'\s*@" + Regex.Escape(key) + @"\s*=\s*(.+?)\s*$");
+        return match.Success ? match.Groups[1].Value.Trim() : "";
     }
 
     static string? FindExternalScript(string script, string tcode)
@@ -744,7 +1283,7 @@ static class Program
                 .Replace("{BUTTON_ID}", "");
             bool ok = result.Contains("ZFI019NL") &&
                       !Regex.IsMatch(result, @"\{[A-Z0-9_]+\}") &&
-                      result.Contains("SAP login screen is still active") &&
+                      result.Contains("SAP command field is not ready") &&
                       result.Contains("SAP rejected transaction") &&
                       result.Contains("transaction script executed");
             Check("VBS替换", ok, $"模板 {template.Length} 字节 -> {result.Length} 字节");

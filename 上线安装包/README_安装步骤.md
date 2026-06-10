@@ -22,6 +22,26 @@
 5. 打开 Netlify 网页，点击“只唤醒 SapWebLauncher”或“开始执行”测试。
 6. 如果检测提示没有 SAP GUI，先安装 SAP GUI，并确认 SAP GUI Scripting 已启用。
 
+## 普通用户电脑不需要 .NET SDK
+
+上线包里的 `SapWebLauncher.exe` 是已经发布好的程序。普通执行电脑只需要安装 SAP GUI、配置 SAP 登录信息并注册 `sap-rpa://` 协议，不需要安装 .NET SDK，也不需要打开源码或编译程序。
+
+只有开发/打包电脑需要 .NET 8 SDK，场景包括：
+
+- 修改 `SapWebLauncher\Program.cs` 后重新生成 `SapWebLauncher.exe`
+- 重新发布本机执行器程序
+- 重新生成完整上线安装包
+
+如果只是修改事务码 VBS，例如 `transactions\ZFI072A.vbs` 里的工厂清单或 SAP GUI Script 步骤，一般不需要 .NET SDK；重新运行 `01_安装到本机.bat` 或复制 VBS 到 `%LOCALAPPDATA%\SapRpaLauncher\transactions` 即可。
+
+开发/打包机检测 SDK：
+
+```powershell
+dotnet --list-sdks
+```
+
+没有 SDK 时，安装 Microsoft .NET 8 SDK 后再编译执行器；普通用户电脑不要因为这个检测失败而中断安装。
+
 ## 安装后位置
 
 执行器安装位置：

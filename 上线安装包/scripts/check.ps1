@@ -6,6 +6,7 @@ $ErrorActionPreference = "Continue"
 
 $installDir = Join-Path $env:LOCALAPPDATA "SapRpaLauncher"
 $installExe = Join-Path $installDir "SapWebLauncher.exe"
+$installTransactionsDir = Join-Path $installDir "transactions"
 $configFile = Join-Path (Join-Path $env:LOCALAPPDATA "SapWebLauncher") "config.json"
 
 function Get-ProtocolCommand {
@@ -49,6 +50,14 @@ if (Test-Path $installExe) {
     & $installExe test
 } else {
     Write-Host "[FAIL] Launcher is not installed: $installExe" -ForegroundColor Red
+}
+
+if (Test-Path (Join-Path $installTransactionsDir "ZFI072A.vbs")) {
+    $scriptCount = (Get-ChildItem -LiteralPath $installTransactionsDir -Filter "*.vbs" -File -ErrorAction SilentlyContinue | Measure-Object).Count
+    Write-Host "[OK] Transaction scripts installed: $installTransactionsDir ($scriptCount vbs)" -ForegroundColor Green
+} else {
+    Write-Host "[FAIL] Transaction scripts missing: $installTransactionsDir" -ForegroundColor Red
+    Write-Host "       Run 01_安装到本机.bat again after regenerating the package." -ForegroundColor Yellow
 }
 
 foreach ($protocol in @("sap-rpa")) {
