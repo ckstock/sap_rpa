@@ -579,6 +579,20 @@ static class Program
                 return;
             }
 
+            if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                path.Equals("/api/schema", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteJson(context.Response, LoadDatabaseSchema());
+                return;
+            }
+
+            Match tablePreviewMatch = Regex.Match(path, @"^/api/schema/tables/([A-Za-z0-9_]+)$", RegexOptions.IgnoreCase);
+            if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && tablePreviewMatch.Success)
+            {
+                WriteJson(context.Response, LoadTablePreview(tablePreviewMatch.Groups[1].Value, context.Request));
+                return;
+            }
+
             if (context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) &&
                 path.Equals("/api/transactions", StringComparison.OrdinalIgnoreCase))
             {
@@ -1079,6 +1093,136 @@ WHERE tcode=$tcode;
             metadata = JsonSerializer.Deserialize<Dictionary<string, string>>(reader.GetString(6)) ?? new Dictionary<string, string>(),
             updatedAt = reader.GetString(7)
         };
+    }
+
+    static object LoadDatabaseSchema()
+    {
+        InitializeDatabase(seedFromScripts: true);
+        var tables = new List<object>();
+        using var connection = OpenDatabaseConnection();
+        foreach (string tableName in GetUserTableNames(connection))
+        {
+            tables.Add(new
+            {
+                name = tableName,
+                rowCount = CountRows(connection, tableName),
+                columns = LoadTableColumns(connection, tableName),
+                indexes = LoadTableIndexes(connection, tableName)
+            });
+        }
+
+        return new
+        {
+            version = 1,
+            source = "sqlite",
+            database = DatabaseFilePath,
+            tables
+        };
+    }
+
+    static object LoadTablePreview(string tableName, HttpListenerRequest request)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        tableName = tableName.Trim();
+        using var connection = OpenDatabaseConnection();
+        var tableNames = GetUserTableNames(connection);
+        if (!tableNames.Contains(tableName, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException($"Unknown table: {tableName}");
+
+        string actualName = tableNames.First(v => v.Equals(tableName, StringComparison.OrdinalIgnoreCase));
+        int limit = DefaultRunListLimit;
+        if (int.TryParse(request.QueryString["limit"], out int parsedLimit))
+            limit = Math.Clamp(parsedLimit, 1, 200);
+
+        var rows = new List<Dictionary<string, object?>>();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT * FROM \"{actualName.Replace("\"", "\"\"")}\" LIMIT $limit";
+        command.Parameters.AddWithValue("$limit", limit);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            var row = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase);
+            for (int i = 0; i < reader.FieldCount; i++)
+                row[reader.GetName(i)] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+            rows.Add(row);
+        }
+
+        return new
+        {
+            version = 1,
+            source = "sqlite",
+            database = DatabaseFilePath,
+            table = actualName,
+            rowCount = CountRows(connection, actualName),
+            columns = LoadTableColumns(connection, actualName),
+            rows
+        };
+    }
+
+    static List<string> GetUserTableNames(SqliteConnection connection)
+    {
+        var result = new List<string>();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT name
+FROM sqlite_master
+WHERE type='table'
+  AND name NOT LIKE 'sqlite_%'
+ORDER BY name;
+""";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            result.Add(reader.GetString(0));
+        return result;
+    }
+
+    static long CountRows(SqliteConnection connection, string tableName)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = $"SELECT COUNT(*) FROM \"{tableName.Replace("\"", "\"\"")}\"";
+        return Convert.ToInt64(command.ExecuteScalar() ?? 0);
+    }
+
+    static List<object> LoadTableColumns(SqliteConnection connection, string tableName)
+    {
+        var columns = new List<object>();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info(\"{tableName.Replace("\"", "\"\"")}\")";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            columns.Add(new
+            {
+                cid = reader.GetInt32(0),
+                name = reader.GetString(1),
+                type = reader.GetString(2),
+                notNull = reader.GetInt32(3) == 1,
+                defaultValue = reader.IsDBNull(4) ? "" : reader.GetString(4),
+                primaryKey = reader.GetInt32(5) == 1
+            });
+        }
+
+        return columns;
+    }
+
+    static List<object> LoadTableIndexes(SqliteConnection connection, string tableName)
+    {
+        var indexes = new List<object>();
+        using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA index_list(\"{tableName.Replace("\"", "\"\"")}\")";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            indexes.Add(new
+            {
+                name = reader.GetString(1),
+                unique = reader.GetInt32(2) == 1,
+                origin = reader.GetString(3),
+                partial = reader.GetInt32(4) == 1
+            });
+        }
+
+        return indexes;
     }
 
     static string UpsertTransaction(TransactionConfigRequest item, string routeCode)
