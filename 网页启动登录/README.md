@@ -47,12 +47,34 @@ Netlify 页面不传 SAP 密码。`SapWebLauncher` 从本机配置读取 SAP 登
 ```text
 公司门户/静态页面
   -> http://<windows-server>:17890/api/runs
-  -> SQLite: %LOCALAPPDATA%\SapWebLauncher\sap-rpa-config.db
+  -> V2 运行目录: D:\sap_ai
+  -> SQLite: D:\sap_ai\data\sap-rpa-config.db
   -> SapWebLauncher.exe --serve 后台队列线程
   -> SAP GUI 交互桌面会话
-  -> transactions/<TCODE>.vbs
+  -> D:\sap_ai\transactions\<TCODE>.vbs
   -> runs/run_result_logs/run_files
 ```
+
+默认 V2 运行目录是 `D:\sap_ai`，也可以用 `SAP_RPA_HOME` 覆盖：
+
+```powershell
+$env:SAP_RPA_HOME = "D:\sap_ai"
+SapWebLauncher.exe --init-db
+SapWebLauncher.exe --serve
+```
+
+目录约定：
+
+```text
+D:\sap_ai\index.html                         # V2 页面预览/门户静态页
+D:\sap_ai\data\sap-rpa-config.db             # SQLite 配置和执行历史
+D:\sap_ai\transactions\transaction-config.json
+D:\sap_ai\transactions\ZFI072A.vbs
+D:\sap_ai\logs\launcher.log
+D:\sap_ai\outputs\
+```
+
+首次启动时，如果新库不存在且旧库 `%LOCALAPPDATA%\SapWebLauncher\sap-rpa-config.db` 存在，程序会复制一份到 `D:\sap_ai\data\sap-rpa-config.db`。SAP 登录配置仍固定保留在 `%LOCALAPPDATA%\SapWebLauncher\config.json`，不要复制进 `D:\sap_ai` 或提交到 Git。
 
 `--serve` 会同时启动：
 
@@ -93,6 +115,8 @@ SQLite 是第一阶段本地数据库，表设计按未来迁移 SQL Server/Post
 - `app_settings`：脚本目录、输出目录、密码存储方式和队列模式等本地设置。
 
 后续迁移服务器数据库时，优先保持 API 合约和字段含义稳定，只替换 repository 层；SAP GUI/VBS 执行仍应留在 Windows Server 交互桌面执行器内。
+
+迁移到公司服务器时，建议迁移 `D:\sap_ai\index.html`、`D:\sap_ai\transactions`、`D:\sap_ai\data`、`D:\sap_ai\outputs`。不要迁移个人电脑上的 `%LOCALAPPDATA%\SapWebLauncher\config.json`；应在服务器执行账号下重新运行登录配置脚本，让 DPAPI 按服务器 Windows 用户重新加密。
 
 ## V2 Local API
 
@@ -202,5 +226,11 @@ sap-rpa://run?action=run&tcode=zck&script=zck
 ## 本地日志
 
 ```text
-%LOCALAPPDATA%\SapWebLauncher\launcher.log
+D:\sap_ai\logs\launcher.log
+```
+
+SAP 登录配置读取路径仍是：
+
+```text
+%LOCALAPPDATA%\SapWebLauncher\config.json
 ```

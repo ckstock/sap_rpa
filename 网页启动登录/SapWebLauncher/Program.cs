@@ -22,13 +22,19 @@ static class Program
     private const string MutexId = "SapWebLauncher-SingleInstance-Mutex";
     private const int BridgePort = 17890;
     private const int DefaultRunListLimit = 50;
-    private static readonly string LogDirectory = Path.Combine(
+    private static readonly string ExeDirectory = AppContext.BaseDirectory;
+    private static readonly string LocalConfigDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "SapWebLauncher");
+    private static readonly string RuntimeRoot = ResolveRuntimeRoot();
+    private static readonly string DataDirectory = Path.Combine(RuntimeRoot, "data");
+    private static readonly string LogDirectory = Path.Combine(RuntimeRoot, "logs");
+    private static readonly string OutputDirectory = Path.Combine(RuntimeRoot, "outputs");
+    private static readonly string RuntimeTransactionsDirectory = Path.Combine(RuntimeRoot, "transactions");
     private static readonly string LogFilePath = Path.Combine(LogDirectory, "launcher.log");
-    private static readonly string ConfigFilePath = Path.Combine(LogDirectory, "config.json");
-    private static readonly string DatabaseFilePath = Path.Combine(LogDirectory, "sap-rpa-config.db");
-    private static readonly string ExeDirectory = AppContext.BaseDirectory;
+    private static readonly string ConfigFilePath = Path.Combine(LocalConfigDirectory, "config.json");
+    private static readonly string DatabaseFilePath = Path.Combine(DataDirectory, "sap-rpa-config.db");
+    private static readonly string LegacyDatabaseFilePath = Path.Combine(LocalConfigDirectory, "sap-rpa-config.db");
     private static readonly string ExecutorId = $"{Environment.MachineName}\\{Environment.UserName}";
     private static readonly object DatabaseInitLock = new();
     private static readonly JsonSerializerOptions JsonOptions = new()
@@ -104,6 +110,44 @@ static class Program
     static bool IsSupportedUri(string raw)
     {
         return raw.StartsWith(PrimaryProtocolName + "://", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string ResolveRuntimeRoot()
+    {
+        string configured = Environment.GetEnvironmentVariable("SAP_RPA_HOME") ?? "";
+        if (!string.IsNullOrWhiteSpace(configured))
+            return Path.GetFullPath(Environment.ExpandEnvironmentVariables(configured));
+
+        const string handoffRoot = @"D:\sap_ai";
+        if (Directory.Exists(handoffRoot))
+            return handoffRoot;
+
+        return LocalConfigDirectory;
+    }
+
+    static void EnsureRuntimeDirectories()
+    {
+        Directory.CreateDirectory(RuntimeRoot);
+        Directory.CreateDirectory(DataDirectory);
+        Directory.CreateDirectory(LogDirectory);
+        Directory.CreateDirectory(OutputDirectory);
+        Directory.CreateDirectory(RuntimeTransactionsDirectory);
+    }
+
+    static void MigrateLegacyDatabaseIfNeeded()
+    {
+        try
+        {
+            if (File.Exists(DatabaseFilePath) || !File.Exists(LegacyDatabaseFilePath))
+                return;
+
+            File.Copy(LegacyDatabaseFilePath, DatabaseFilePath, overwrite: false);
+            Log($"Legacy SQLite database copied to runtime data folder: {LegacyDatabaseFilePath} -> {DatabaseFilePath}");
+        }
+        catch (Exception ex)
+        {
+            Log($"Legacy SQLite database migration skipped: {ex.Message}");
+        }
     }
 
     static string GetProtocolName(string raw)
@@ -515,7 +559,12 @@ static class Program
                     ok = true,
                     app = "SapWebLauncher Bridge",
                     version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "",
+                    runtimeRoot = RuntimeRoot,
                     database = DatabaseFilePath,
+                    logFile = LogFilePath,
+                    outputRoot = OutputDirectory,
+                    transactionRoot = RuntimeTransactionsDirectory,
+                    credentialConfig = ConfigFilePath,
                     executor = ExecutorId,
                     queueMode = IsQueueDisabled() ? "disabled" : "serial",
                     time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
@@ -668,7 +717,8 @@ static class Program
     {
         lock (DatabaseInitLock)
         {
-            Directory.CreateDirectory(LogDirectory);
+            EnsureRuntimeDirectories();
+            MigrateLegacyDatabaseIfNeeded();
             using var connection = OpenDatabaseConnection();
             using var command = connection.CreateCommand();
             command.CommandText = """
@@ -772,12 +822,16 @@ CREATE TABLE IF NOT EXISTS app_settings (
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, datetime('now'));
 INSERT OR IGNORE INTO app_settings(setting_key, setting_value)
 VALUES
-    ('script_root', '%LOCALAPPDATA%\SapRpaLauncher\transactions'),
-    ('output_root', '%LOCALAPPDATA%\SapWebLauncher\outputs'),
     ('sap_password_storage', 'DPAPI_CURRENT_USER'),
     ('queue_mode', 'serial');
 """;
             command.ExecuteNonQuery();
+
+            UpsertAppSetting(connection, "runtime_root", RuntimeRoot);
+            UpsertAppSetting(connection, "script_root", RuntimeTransactionsDirectory);
+            UpsertAppSetting(connection, "output_root", OutputDirectory);
+            UpsertAppSetting(connection, "database_path", DatabaseFilePath);
+            UpsertAppSetting(connection, "credential_config_path", ConfigFilePath);
 
             EnsureColumn(connection, "runs", "source", "TEXT NOT NULL DEFAULT ''");
             EnsureColumn(connection, "runs", "notify_target", "TEXT NOT NULL DEFAULT ''");
@@ -796,9 +850,25 @@ VALUES
 
     static SqliteConnection OpenDatabaseConnection()
     {
+        EnsureRuntimeDirectories();
         var connection = new SqliteConnection($"Data Source={DatabaseFilePath}");
         connection.Open();
         return connection;
+    }
+
+    static void UpsertAppSetting(SqliteConnection connection, string key, string value)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+INSERT INTO app_settings(setting_key, setting_value, updated_at)
+VALUES($key, $value, datetime('now', 'localtime'))
+ON CONFLICT(setting_key) DO UPDATE SET
+    setting_value=excluded.setting_value,
+    updated_at=excluded.updated_at;
+""";
+        command.Parameters.AddWithValue("$key", key);
+        command.Parameters.AddWithValue("$value", value);
+        command.ExecuteNonQuery();
     }
 
     static string GetApiPrefix()
@@ -1667,10 +1737,11 @@ ORDER BY id;
     {
         string[] candidates =
         {
+            Path.Combine(RuntimeTransactionsDirectory, "transaction-config.json"),
             Path.Combine(ExeDirectory, "transactions", "transaction-config.json"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SapRpaLauncher", "transactions", "transaction-config.json"),
             Path.Combine(Directory.GetCurrentDirectory(), "transactions", "transaction-config.json"),
-            Path.Combine(Directory.GetCurrentDirectory(), "网页启动登录", "transactions", "transaction-config.json")
+            Path.Combine(Directory.GetCurrentDirectory(), "网页启动登录", "transactions", "transaction-config.json"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SapRpaLauncher", "transactions", "transaction-config.json")
         };
 
         return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
@@ -2050,10 +2121,11 @@ WScript.Quit 0
 
         string[] roots =
         {
+            RuntimeTransactionsDirectory,
             Path.Combine(ExeDirectory, "transactions"),
-            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SapRpaLauncher", "transactions"),
             Path.Combine(Directory.GetCurrentDirectory(), "transactions"),
-            Path.Combine(Directory.GetCurrentDirectory(), "网页启动登录", "transactions")
+            Path.Combine(Directory.GetCurrentDirectory(), "网页启动登录", "transactions"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SapRpaLauncher", "transactions")
         };
 
         foreach (string root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
@@ -2196,6 +2268,15 @@ WScript.Quit 0
             byte[] protectedBytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(secret), null, DataProtectionScope.CurrentUser);
             string plainText = Encoding.UTF8.GetString(ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser));
             Check("DPAPI密码保护", plainText == secret, "CurrentUser protect/unprotect");
+        }
+
+        {
+            string runtimeRoot = Path.GetFullPath(RuntimeRoot);
+            bool ok = Path.GetFullPath(DatabaseFilePath).StartsWith(runtimeRoot, StringComparison.OrdinalIgnoreCase) &&
+                      Path.GetFullPath(LogFilePath).StartsWith(runtimeRoot, StringComparison.OrdinalIgnoreCase) &&
+                      Path.GetFullPath(OutputDirectory).StartsWith(runtimeRoot, StringComparison.OrdinalIgnoreCase) &&
+                      Path.GetFullPath(ConfigFilePath).StartsWith(Path.GetFullPath(LocalConfigDirectory), StringComparison.OrdinalIgnoreCase);
+            Check("V2 runtime root", ok, $"runtime={RuntimeRoot}, db={DatabaseFilePath}, config={ConfigFilePath}");
         }
 
         Console.WriteLine($"\n=== 总计: {passed} PASS, {failed} FAIL, {(failed == 0 ? "全部通过" : "有失败项")} ===");
@@ -2341,7 +2422,7 @@ WScript.Quit 0
     {
         try
         {
-            Directory.CreateDirectory(LogDirectory);
+            EnsureRuntimeDirectories();
             File.AppendAllText(LogFilePath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}{Environment.NewLine}", Encoding.UTF8);
         }
         catch
