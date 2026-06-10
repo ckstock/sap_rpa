@@ -468,13 +468,21 @@ static class Program
         Log($"Bridge API 已启动: {prefix}");
         Console.WriteLine($"Bridge API running: {prefix}");
 
-        var worker = new Thread(ProcessRunQueueLoop)
+        if (IsQueueDisabled())
         {
-            IsBackground = true,
-            Name = "SapRpaSerialQueueWorker"
-        };
-        worker.Start();
-        Log("串行执行队列后台线程已启动");
+            Log("串行执行队列已通过 SAP_RPA_DISABLE_QUEUE=1 禁用");
+            Console.WriteLine("Queue worker disabled by SAP_RPA_DISABLE_QUEUE=1");
+        }
+        else
+        {
+            var worker = new Thread(ProcessRunQueueLoop)
+            {
+                IsBackground = true,
+                Name = "SapRpaSerialQueueWorker"
+            };
+            worker.Start();
+            Log("串行执行队列后台线程已启动");
+        }
 
         while (true)
         {
@@ -509,7 +517,7 @@ static class Program
                     version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "",
                     database = DatabaseFilePath,
                     executor = ExecutorId,
-                    queueMode = "serial",
+                    queueMode = IsQueueDisabled() ? "disabled" : "serial",
                     time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
                 });
                 return;
@@ -802,6 +810,14 @@ VALUES
         value = value.Replace("://0.0.0.0:", "://+:", StringComparison.OrdinalIgnoreCase);
 
         return value.EndsWith("/", StringComparison.Ordinal) ? value : value + "/";
+    }
+
+    static bool IsQueueDisabled()
+    {
+        string value = Environment.GetEnvironmentVariable("SAP_RPA_DISABLE_QUEUE") ?? "";
+        return value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("yes", StringComparison.OrdinalIgnoreCase);
     }
 
     static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string definition)

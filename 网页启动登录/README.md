@@ -59,6 +59,15 @@ Netlify 页面不传 SAP 密码。`SapWebLauncher` 从本机配置读取 SAP 登
 - HTTP API：健康检查、事务码配置、执行任务、执行历史和结果回写。
 - 串行队列工作线程：每次只领取一个 `queued` run，标记为 `running`，执行完成后写回 `success`、`failed` 或 `canceled`。
 
+开发验证数据库和页面时，可以临时禁用后台队列，避免测试点击后立即进入 SAP：
+
+```powershell
+$env:SAP_RPA_DISABLE_QUEUE = "1"
+SapWebLauncher.exe --serve
+```
+
+此时 `/api/health` 会返回 `queueMode: "disabled"`，`POST /api/runs` 仍会写入 SQLite，但不会执行 SAP GUI。正式服务器执行时不要设置这个环境变量。
+
 不要把 SAP GUI 自动化做成纯 Session 0 Windows Service。建议在服务器上使用固定 Windows 执行账号登录桌面后，通过任务计划程序“用户登录时启动”运行：
 
 ```powershell
