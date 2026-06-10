@@ -574,7 +574,7 @@
       selectedTCode: "ZFI019NL",
       executing: false,
       currentRun: null,
-      bridge: { online: false, lastChecked: "", database: "" },
+      bridge: { online: false, lastChecked: "", database: "", queueMode: "" },
       modal: null,
       form: {
         account: "",
@@ -776,6 +776,17 @@
       return Math.floor(ms / 60000) + " 分 " + Math.round((ms % 60000) / 1000) + " 秒";
     }
 
+    function bridgeStatusText() {
+      if (!state.bridge.online) return "sap-rpa://";
+      return state.bridge.queueMode === "disabled" ? "API 已连接 / 队列禁用" : "API 已连接 / 串行队列";
+    }
+
+    function bridgeStatusSubtext() {
+      if (!state.bridge.online) return "点击执行时由浏览器唤醒 SapWebLauncher";
+      if (state.bridge.queueMode === "disabled") return "当前只创建 SQLite 任务，不会启动 SAP";
+      return "本机 API 会创建任务并由后台队列执行 SAP";
+    }
+
     function render() {
       app.innerHTML = state.loggedIn ? renderShell() : renderLogin();
       bindEvents();
@@ -788,7 +799,8 @@
         state.bridge = {
           online: !!health.ok,
           lastChecked: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
-          database: health.database || ""
+          database: health.database || "",
+          queueMode: health.queueMode || ""
         };
 
         const txData = await bridgeFetch("/api/transactions");
@@ -805,6 +817,7 @@
         render();
       } catch (err) {
         state.bridge.online = false;
+        state.bridge.queueMode = "";
         state.bridge.lastChecked = new Date().toLocaleTimeString("zh-CN", { hour12: false });
         if (!silent) toast("本机执行器未启动，继续使用协议唤醒模式", "warn");
         render();
@@ -927,7 +940,7 @@
             ${renderTransactionGroups()}
             <div style="height:16px"></div>
               <div class="grid cols-3">
-              ${metric("本机执行器", state.bridge.online ? "API 已连接" : "sap-rpa://", state.bridge.online ? "本机 API 可创建任务并写入 SQLite" : "点击执行时由浏览器唤醒 SapWebLauncher")}
+              ${metric("本机执行器", bridgeStatusText(), bridgeStatusSubtext())}
               ${metric("SAP 登录配置", "本机保存", "系统、客户端、账号和密码不放在网页里")}
               ${metric("执行历史", state.bridge.online ? "SQLite" : "静态示例", state.bridge.online ? "最近刷新 " + state.bridge.lastChecked : "启动本机 Bridge 后自动切换")}
             </div>
@@ -1505,8 +1518,14 @@
         state.currentRun.id = created.runId;
         addLog("INFO", "SQLite 已创建 runId：" + created.runId);
         setStep(1, "done");
-        setStep(2, "run");
-        addLog("INFO", "任务已进入服务器串行队列，后台执行器会在 Windows Server 桌面会话中执行 SAP。");
+        if (state.bridge.queueMode === "disabled") {
+          setStep(2, "pending");
+          addLog("WARN", "当前后台队列已禁用，只写入 SQLite，不会启动 SAP。请重启执行器并取消 SAP_RPA_DISABLE_QUEUE 后再执行。");
+          toast("已创建任务，但队列禁用：只入库不执行", "warn");
+        } else {
+          setStep(2, "run");
+          addLog("INFO", "任务已进入服务器串行队列，后台执行器会在 Windows Server 桌面会话中执行 SAP。");
+        }
         render();
         pollRunStatus(created.runId, 0);
       } catch (err) {
@@ -1555,6 +1574,12 @@
     }
 
     async function pollRunStatus(runId, count) {
+      if (state.bridge.queueMode === "disabled") {
+        state.executing = false;
+        await refreshBridgeData({ silent: true });
+        return;
+      }
+
       if (!runId || count > 30) {
         state.executing = false;
         await refreshBridgeData({ silent: true });
