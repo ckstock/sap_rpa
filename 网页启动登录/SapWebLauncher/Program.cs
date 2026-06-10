@@ -21,6 +21,7 @@ static class Program
     private const string PrimaryProtocolName = "sap-rpa";
     private const string MutexId = "SapWebLauncher-SingleInstance-Mutex";
     private const int BridgePort = 17890;
+    private const int DefaultRunListLimit = 50;
     private static readonly string LogDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "SapWebLauncher");
@@ -28,6 +29,8 @@ static class Program
     private static readonly string ConfigFilePath = Path.Combine(LogDirectory, "config.json");
     private static readonly string DatabaseFilePath = Path.Combine(LogDirectory, "sap-rpa-config.db");
     private static readonly string ExeDirectory = AppContext.BaseDirectory;
+    private static readonly string ExecutorId = $"{Environment.MachineName}\\{Environment.UserName}";
+    private static readonly object DatabaseInitLock = new();
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -231,9 +234,25 @@ static class Program
             return;
         }
 
-        var pars = BuildParams(query, protocolName);
-        Log($"准备执行: {DescribeParams(pars)}");
-        LaunchSapGuiAndExecute(pars);
+        string runId = First(query, "runid", "run_id") ?? "";
+        try
+        {
+            var pars = BuildParams(query, protocolName);
+            Log($"准备执行: {DescribeParams(pars)}");
+            if (!string.IsNullOrWhiteSpace(pars.RunId))
+                MarkRunStarted(pars.RunId);
+
+            var result = LaunchSapGuiAndExecute(pars);
+            if (!string.IsNullOrWhiteSpace(pars.RunId))
+                CompleteRun(pars.RunId, result);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"执行请求失败: {ex.Message}");
+            Log($"执行请求失败: {ex}");
+            if (!string.IsNullOrWhiteSpace(runId))
+                CompleteRun(runId, FailedRunResult(ex.Message, DateTime.UtcNow));
+        }
     }
 
     static SapLocalConfig LoadLocalConfig()
@@ -343,7 +362,8 @@ static class Program
             Field1Value = First(query, "value1", "field1value") ?? "",
             Field2Name = First(query, "field2", "field2name") ?? "",
             Field2Value = First(query, "value2", "field2value") ?? "",
-            ButtonId = First(query, "button", "buttonid") ?? ""
+            ButtonId = First(query, "button", "buttonid") ?? "",
+            RunId = First(query, "runid", "run_id") ?? ""
         };
 
         ApplyScriptDefaults(p);
@@ -442,11 +462,19 @@ static class Program
         InitializeDatabase(seedFromScripts: true);
 
         using var listener = new HttpListener();
-        string prefix = $"http://127.0.0.1:{BridgePort}/";
+        string prefix = GetApiPrefix();
         listener.Prefixes.Add(prefix);
         listener.Start();
         Log($"Bridge API 已启动: {prefix}");
         Console.WriteLine($"Bridge API running: {prefix}");
+
+        var worker = new Thread(ProcessRunQueueLoop)
+        {
+            IsBackground = true,
+            Name = "SapRpaSerialQueueWorker"
+        };
+        worker.Start();
+        Log("串行执行队列后台线程已启动");
 
         while (true)
         {
@@ -480,6 +508,8 @@ static class Program
                     app = "SapWebLauncher Bridge",
                     version = Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "",
                     database = DatabaseFilePath,
+                    executor = ExecutorId,
+                    queueMode = "serial",
                     time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
                 });
                 return;
@@ -489,6 +519,76 @@ static class Program
                 path.Equals("/api/transactions", StringComparison.OrdinalIgnoreCase))
             {
                 WriteJson(context.Response, LoadTransactionsFromDatabase());
+                return;
+            }
+
+            if (context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) &&
+                path.Equals("/api/transactions", StringComparison.OrdinalIgnoreCase))
+            {
+                var item = ReadJson<TransactionConfigRequest>(context.Request);
+                string code = UpsertTransaction(item, routeCode: "");
+                WriteJson(context.Response, new { ok = true, code });
+                return;
+            }
+
+            Match transactionMatch = Regex.Match(path, @"^/api/transactions/([A-Za-z0-9_./-]+)$", RegexOptions.IgnoreCase);
+            if (transactionMatch.Success &&
+                context.Request.HttpMethod.Equals("PUT", StringComparison.OrdinalIgnoreCase))
+            {
+                var item = ReadJson<TransactionConfigRequest>(context.Request);
+                string code = UpsertTransaction(item, transactionMatch.Groups[1].Value);
+                WriteJson(context.Response, new { ok = true, code });
+                return;
+            }
+
+            if (transactionMatch.Success &&
+                context.Request.HttpMethod.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
+            {
+                string tcode = SanitizeTCode(transactionMatch.Groups[1].Value).ToUpperInvariant();
+                SetTransactionEnabled(tcode, enabled: false);
+                WriteJson(context.Response, new { ok = true, code = tcode, enabled = false });
+                return;
+            }
+
+            if (path.Equals("/api/runs", StringComparison.OrdinalIgnoreCase) &&
+                context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
+            {
+                var request = ReadJson<CreateRunRequest>(context.Request);
+                var run = CreateRun(request);
+                WriteJson(context.Response, new { runId = run.RunId, status = run.Status, queuedAt = run.QueuedAt });
+                return;
+            }
+
+            if (path.Equals("/api/runs", StringComparison.OrdinalIgnoreCase) &&
+                context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteJson(context.Response, LoadRuns(context.Request));
+                return;
+            }
+
+            Match runResultMatch = Regex.Match(path, @"^/api/runs/([A-Za-z0-9_.-]+)/result$", RegexOptions.IgnoreCase);
+            if (runResultMatch.Success &&
+                context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
+            {
+                var result = ReadJson<RunResultRequest>(context.Request);
+                string runId = runResultMatch.Groups[1].Value;
+                CompleteRun(runId, result);
+                WriteJson(context.Response, new { ok = true, runId });
+                return;
+            }
+
+            Match runMatch = Regex.Match(path, @"^/api/runs/([A-Za-z0-9_.-]+)$", RegexOptions.IgnoreCase);
+            if (runMatch.Success &&
+                context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase))
+            {
+                var run = LoadRun(runMatch.Groups[1].Value, includeDetails: true);
+                if (run == null)
+                {
+                    WriteJson(context.Response, new { error = $"run not found: {runMatch.Groups[1].Value}" }, 404);
+                    return;
+                }
+
+                WriteJson(context.Response, run);
                 return;
             }
 
@@ -526,9 +626,24 @@ static class Program
     static void AddCorsHeaders(HttpListenerResponse response)
     {
         response.Headers["Access-Control-Allow-Origin"] = "*";
-        response.Headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS";
+        response.Headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS";
         response.Headers["Access-Control-Allow-Headers"] = "Content-Type";
         response.Headers["Access-Control-Allow-Private-Network"] = "true";
+    }
+
+    static T ReadJson<T>(HttpListenerRequest request)
+    {
+        using var reader = new StreamReader(request.InputStream, request.ContentEncoding ?? Encoding.UTF8);
+        string json = reader.ReadToEnd();
+        if (string.IsNullOrWhiteSpace(json))
+            throw new InvalidOperationException("Request body is empty.");
+
+        return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions(JsonOptions)
+        {
+            PropertyNameCaseInsensitive = true,
+            ReadCommentHandling = JsonCommentHandling.Skip,
+            AllowTrailingCommas = true
+        }) ?? throw new InvalidOperationException("Invalid JSON request body.");
     }
 
     static void WriteJson(HttpListenerResponse response, object value, int statusCode = 200)
@@ -543,10 +658,12 @@ static class Program
 
     static void InitializeDatabase(bool seedFromScripts)
     {
-        Directory.CreateDirectory(LogDirectory);
-        using var connection = OpenDatabaseConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
+        lock (DatabaseInitLock)
+        {
+            Directory.CreateDirectory(LogDirectory);
+            using var connection = OpenDatabaseConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
     version INTEGER PRIMARY KEY,
     applied_at TEXT NOT NULL
@@ -585,14 +702,88 @@ CREATE TABLE IF NOT EXISTS script_cache (
     script_text TEXT NOT NULL DEFAULT '',
     cached_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS runs (
+    run_id TEXT PRIMARY KEY,
+    transaction_code TEXT NOT NULL,
+    operator_id TEXT NOT NULL DEFAULT '',
+    operator_name TEXT NOT NULL DEFAULT '',
+    operator_dept TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'queued',
+    request_json TEXT NOT NULL DEFAULT '{}',
+    sap_status_type TEXT NOT NULL DEFAULT '',
+    sap_status_text TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL DEFAULT '',
+    script_file TEXT NOT NULL DEFAULT '',
+    script_hash TEXT NOT NULL DEFAULT '',
+    source TEXT NOT NULL DEFAULT '',
+    notify_target TEXT NOT NULL DEFAULT '',
+    priority INTEGER NOT NULL DEFAULT 0,
+    attempt INTEGER NOT NULL DEFAULT 0,
+    max_attempts INTEGER NOT NULL DEFAULT 1,
+    locked_by TEXT NOT NULL DEFAULT '',
+    locked_at TEXT NOT NULL DEFAULT '',
+    queued_at TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL DEFAULT '',
+    finished_at TEXT NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_runs_status_queued_at ON runs(status, queued_at);
+CREATE INDEX IF NOT EXISTS idx_runs_transaction_finished ON runs(transaction_code, finished_at);
+CREATE TABLE IF NOT EXISTS run_params (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    param_key TEXT NOT NULL,
+    param_value TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    UNIQUE(run_id, param_key)
+);
+CREATE INDEX IF NOT EXISTS idx_run_params_run_id ON run_params(run_id, id);
+CREATE TABLE IF NOT EXISTS run_result_logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    level TEXT NOT NULL DEFAULT 'INFO',
+    message TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_run_result_logs_run_id ON run_result_logs(run_id, id);
+CREATE TABLE IF NOT EXISTS run_files (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id TEXT NOT NULL,
+    file_type TEXT NOT NULL DEFAULT 'output',
+    file_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    file_size INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_run_files_run_id ON run_files(run_id, id);
+CREATE TABLE IF NOT EXISTS app_settings (
+    setting_key TEXT PRIMARY KEY,
+    setting_value TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
 INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, datetime('now'));
+INSERT OR IGNORE INTO app_settings(setting_key, setting_value)
+VALUES
+    ('script_root', '%LOCALAPPDATA%\SapRpaLauncher\transactions'),
+    ('output_root', '%LOCALAPPDATA%\SapWebLauncher\outputs'),
+    ('sap_password_storage', 'DPAPI_CURRENT_USER'),
+    ('queue_mode', 'serial');
 """;
-        command.ExecuteNonQuery();
+            command.ExecuteNonQuery();
 
-        if (seedFromScripts)
-            SeedTransactions(connection);
+            EnsureColumn(connection, "runs", "source", "TEXT NOT NULL DEFAULT ''");
+            EnsureColumn(connection, "runs", "notify_target", "TEXT NOT NULL DEFAULT ''");
+            EnsureColumn(connection, "runs", "priority", "INTEGER NOT NULL DEFAULT 0");
+            EnsureColumn(connection, "runs", "attempt", "INTEGER NOT NULL DEFAULT 0");
+            EnsureColumn(connection, "runs", "max_attempts", "INTEGER NOT NULL DEFAULT 1");
+            EnsureColumn(connection, "runs", "locked_by", "TEXT NOT NULL DEFAULT ''");
+            EnsureColumn(connection, "runs", "locked_at", "TEXT NOT NULL DEFAULT ''");
 
-        Log($"SQLite 数据库初始化完成: {DatabaseFilePath}");
+            if (seedFromScripts && CountTransactions(connection) == 0)
+                SeedTransactions(connection);
+
+            Log($"SQLite 数据库初始化完成: {DatabaseFilePath}");
+        }
     }
 
     static SqliteConnection OpenDatabaseConnection()
@@ -600,6 +791,42 @@ INSERT OR IGNORE INTO schema_migrations(version, applied_at) VALUES(1, datetime(
         var connection = new SqliteConnection($"Data Source={DatabaseFilePath}");
         connection.Open();
         return connection;
+    }
+
+    static string GetApiPrefix()
+    {
+        string value = Environment.GetEnvironmentVariable("SAP_RPA_API_PREFIX") ?? "";
+        if (string.IsNullOrWhiteSpace(value))
+            value = $"http://127.0.0.1:{BridgePort}/";
+
+        value = value.Replace("://0.0.0.0:", "://+:", StringComparison.OrdinalIgnoreCase);
+
+        return value.EndsWith("/", StringComparison.Ordinal) ? value : value + "/";
+    }
+
+    static void EnsureColumn(SqliteConnection connection, string tableName, string columnName, string definition)
+    {
+        using var check = connection.CreateCommand();
+        check.CommandText = $"PRAGMA table_info({tableName})";
+        using (var reader = check.ExecuteReader())
+        {
+            while (reader.Read())
+            {
+                if (reader.GetString(1).Equals(columnName, StringComparison.OrdinalIgnoreCase))
+                    return;
+            }
+        }
+
+        using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {definition}";
+        alter.ExecuteNonQuery();
+    }
+
+    static long CountTransactions(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM transactions";
+        return (long)(command.ExecuteScalar() ?? 0L);
     }
 
     static void SeedTransactions(SqliteConnection connection)
@@ -768,6 +995,658 @@ WHERE tcode=$tcode;
         };
     }
 
+    static string UpsertTransaction(TransactionConfigRequest item, string routeCode)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        string tcode = SanitizeTCode(FirstNonEmpty(routeCode, item.Code)).ToUpperInvariant();
+        string scriptFile = NormalizeScriptFileName(FirstNonEmpty(item.ScriptFile, item.Script, $"{tcode}.vbs"), tcode);
+        if (string.IsNullOrWhiteSpace(scriptFile))
+            scriptFile = $"{tcode}.vbs";
+
+        string scriptText = ReadScriptTextIfExists(scriptFile, tcode);
+        var metadata = ExtractScriptMetadata(scriptText);
+        string fixedPlants = FirstNonEmpty(
+            item.FixedPlantsCsv,
+            JsonElementArrayToCsv(item.FixedPlants),
+            metadata.TryGetValue("fixedPlants", out string? metaPlants) ? metaPlants ?? "" : "");
+        string scriptVersion = FirstNonEmpty(
+            item.ScriptVersion,
+            metadata.TryGetValue("version", out string? version) ? version ?? "" : "");
+        string scriptHash = string.IsNullOrWhiteSpace(scriptText)
+            ? FirstNonEmpty(item.ScriptHash)
+            : Sha256Hex(scriptText);
+
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+INSERT INTO transactions (
+    tcode, name, stage, script_file, icon, params_json, factory_rule, fixed_plants_json,
+    default_group, automation, script_version, script_hash, script_metadata_json, enabled, updated_at
+) VALUES (
+    $tcode, $name, $stage, $scriptFile, $icon, $paramsJson, $factoryRule, $fixedPlantsJson,
+    $defaultGroup, $automation, $scriptVersion, $scriptHash, $metadataJson, $enabled, $updatedAt
+)
+ON CONFLICT(tcode) DO UPDATE SET
+    name=excluded.name,
+    stage=excluded.stage,
+    script_file=excluded.script_file,
+    icon=excluded.icon,
+    params_json=excluded.params_json,
+    factory_rule=excluded.factory_rule,
+    fixed_plants_json=excluded.fixed_plants_json,
+    default_group=excluded.default_group,
+    automation=excluded.automation,
+    script_version=excluded.script_version,
+    script_hash=excluded.script_hash,
+    script_metadata_json=excluded.script_metadata_json,
+    enabled=excluded.enabled,
+    updated_at=excluded.updated_at;
+""";
+        command.Parameters.AddWithValue("$tcode", tcode);
+        command.Parameters.AddWithValue("$name", FirstNonEmpty(item.Name, tcode));
+        command.Parameters.AddWithValue("$stage", item.Stage ?? "");
+        command.Parameters.AddWithValue("$scriptFile", scriptFile);
+        command.Parameters.AddWithValue("$icon", FirstNonEmpty(item.Icon, "terminal"));
+        command.Parameters.AddWithValue("$paramsJson", TransactionParamsToJson(item.Params));
+        command.Parameters.AddWithValue("$factoryRule", item.FactoryRule ?? "");
+        command.Parameters.AddWithValue("$fixedPlantsJson", CsvToJsonArray(fixedPlants));
+        command.Parameters.AddWithValue("$defaultGroup", item.DefaultPlantGroup ?? "");
+        command.Parameters.AddWithValue("$automation", FirstNonEmpty(item.Automation, item.DefaultRunMode, "openOnly"));
+        command.Parameters.AddWithValue("$scriptVersion", scriptVersion);
+        command.Parameters.AddWithValue("$scriptHash", scriptHash);
+        command.Parameters.AddWithValue("$metadataJson", JsonSerializer.Serialize(metadata, JsonOptions));
+        command.Parameters.AddWithValue("$enabled", item.Enabled.GetValueOrDefault(true) ? 1 : 0);
+        command.Parameters.AddWithValue("$updatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        command.ExecuteNonQuery();
+
+        if (!string.IsNullOrWhiteSpace(scriptText))
+            UpsertScriptCache(connection, tcode, scriptFile, scriptHash, scriptText);
+
+        return tcode;
+    }
+
+    static void SetTransactionEnabled(string tcode, bool enabled)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "UPDATE transactions SET enabled=$enabled, updated_at=$updatedAt WHERE tcode=$tcode";
+        command.Parameters.AddWithValue("$tcode", tcode.ToUpperInvariant());
+        command.Parameters.AddWithValue("$enabled", enabled ? 1 : 0);
+        command.Parameters.AddWithValue("$updatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        command.ExecuteNonQuery();
+    }
+
+    static RunRecordView CreateRun(CreateRunRequest request)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        string tcode = SanitizeTCode(FirstNonEmpty(request.TransactionCode, request.TCode, request.Code)).ToUpperInvariant();
+        var script = LoadScriptInfo(tcode);
+        string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        string rawRunId = $"RUN-{DateTime.Now:yyyyMMddHHmmss}-{tcode}-{Guid.NewGuid():N}";
+        string runId = rawRunId[..Math.Min(56, rawRunId.Length)];
+
+        request.TransactionCode = tcode;
+        request.TCode = tcode;
+        request.Code = tcode;
+
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+INSERT INTO runs(
+    run_id, transaction_code, operator_id, operator_name, operator_dept, status, request_json,
+    script_file, script_hash, source, notify_target, priority, max_attempts, queued_at
+) VALUES(
+    $runId, $tcode, $operatorId, $operatorName, $operatorDept, 'queued', $requestJson,
+    $scriptFile, $scriptHash, $source, $notifyTarget, $priority, $maxAttempts, $queuedAt
+);
+""";
+        command.Parameters.AddWithValue("$runId", runId);
+        command.Parameters.AddWithValue("$tcode", tcode);
+        command.Parameters.AddWithValue("$operatorId", request.Operator.Id ?? "");
+        command.Parameters.AddWithValue("$operatorName", request.Operator.Name ?? "");
+        command.Parameters.AddWithValue("$operatorDept", request.Operator.Dept ?? "");
+        command.Parameters.AddWithValue("$requestJson", JsonSerializer.Serialize(request, JsonOptions));
+        command.Parameters.AddWithValue("$scriptFile", script.ScriptFile);
+        command.Parameters.AddWithValue("$scriptHash", script.ScriptHash);
+        command.Parameters.AddWithValue("$source", request.Source ?? "");
+        command.Parameters.AddWithValue("$notifyTarget", request.NotifyTarget ?? "");
+        command.Parameters.AddWithValue("$priority", request.Priority);
+        command.Parameters.AddWithValue("$maxAttempts", request.MaxAttempts <= 0 ? 1 : request.MaxAttempts);
+        command.Parameters.AddWithValue("$queuedAt", now);
+        command.ExecuteNonQuery();
+
+        foreach (var pair in request.Params)
+        {
+            using var paramCommand = connection.CreateCommand();
+            paramCommand.Transaction = tx;
+            paramCommand.CommandText = """
+INSERT INTO run_params(run_id, param_key, param_value)
+VALUES($runId, $key, $value)
+ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
+""";
+            paramCommand.Parameters.AddWithValue("$runId", runId);
+            paramCommand.Parameters.AddWithValue("$key", pair.Key);
+            paramCommand.Parameters.AddWithValue("$value", pair.Value ?? "");
+            paramCommand.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+
+        AppendRunLog(runId, "INFO", $"queued {tcode}");
+
+        return new RunRecordView
+        {
+            RunId = runId,
+            TransactionCode = tcode,
+            OperatorId = request.Operator.Id ?? "",
+            OperatorName = request.Operator.Name ?? "",
+            OperatorDept = request.Operator.Dept ?? "",
+            Status = "queued",
+            RequestJson = JsonSerializer.Serialize(request, JsonOptions),
+            ScriptFile = script.ScriptFile,
+            ScriptHash = script.ScriptHash,
+            QueuedAt = now
+        };
+    }
+
+    static object LoadRuns(HttpListenerRequest request)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        int limit = DefaultRunListLimit;
+        if (int.TryParse(request.QueryString["limit"], out int parsedLimit))
+            limit = Math.Clamp(parsedLimit, 1, 200);
+
+        string status = request.QueryString["status"] ?? "";
+        var runs = new List<RunRecordView>();
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        if (string.IsNullOrWhiteSpace(status))
+        {
+            command.CommandText = """
+SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, status, request_json,
+       sap_status_type, sap_status_text, message, script_file, script_hash,
+       queued_at, started_at, finished_at, duration_ms,
+       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at
+FROM runs
+ORDER BY COALESCE(NULLIF(finished_at, ''), queued_at) DESC
+LIMIT $limit;
+""";
+        }
+        else
+        {
+            command.CommandText = """
+SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, status, request_json,
+       sap_status_type, sap_status_text, message, script_file, script_hash,
+       queued_at, started_at, finished_at, duration_ms,
+       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at
+FROM runs
+WHERE status=$status
+ORDER BY queued_at
+LIMIT $limit;
+""";
+            command.Parameters.AddWithValue("$status", status.ToLowerInvariant());
+        }
+
+        command.Parameters.AddWithValue("$limit", limit);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            runs.Add(ReadRunRecord(reader));
+
+        return new
+        {
+            version = 2,
+            source = "sqlite",
+            database = DatabaseFilePath,
+            runs
+        };
+    }
+
+    static RunRecordView? LoadRun(string runId, bool includeDetails)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, status, request_json,
+       sap_status_type, sap_status_text, message, script_file, script_hash,
+       queued_at, started_at, finished_at, duration_ms,
+       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at
+FROM runs
+WHERE run_id=$runId;
+""";
+        command.Parameters.AddWithValue("$runId", runId);
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        var run = ReadRunRecord(reader);
+        if (includeDetails)
+        {
+            run.Logs = LoadRunLogs(runId);
+            run.Files = LoadRunFiles(runId);
+        }
+
+        return run;
+    }
+
+    static void ProcessRunQueueLoop()
+    {
+        while (true)
+        {
+            try
+            {
+                var item = ClaimNextQueuedRun();
+                if (item == null)
+                {
+                    Thread.Sleep(1500);
+                    continue;
+                }
+
+                ExecuteQueuedRun(item);
+            }
+            catch (Exception ex)
+            {
+                Log($"队列工作线程异常: {ex}");
+                Thread.Sleep(3000);
+            }
+        }
+    }
+
+    static QueuedRunWorkItem? ClaimNextQueuedRun()
+    {
+        InitializeDatabase(seedFromScripts: false);
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+
+        string runId;
+        using (var select = connection.CreateCommand())
+        {
+            select.Transaction = tx;
+            select.CommandText = """
+SELECT run_id
+FROM runs
+WHERE status='queued'
+ORDER BY priority DESC, queued_at
+LIMIT 1;
+""";
+            runId = select.ExecuteScalar() as string ?? "";
+        }
+
+        if (string.IsNullOrWhiteSpace(runId))
+        {
+            tx.Commit();
+            return null;
+        }
+
+        string startedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        using (var update = connection.CreateCommand())
+        {
+            update.Transaction = tx;
+            update.CommandText = """
+UPDATE runs
+SET status='running',
+    started_at=$startedAt,
+    locked_by=$lockedBy,
+    locked_at=$startedAt,
+    attempt=attempt + 1
+WHERE run_id=$runId AND status='queued';
+""";
+            update.Parameters.AddWithValue("$runId", runId);
+            update.Parameters.AddWithValue("$startedAt", startedAt);
+            update.Parameters.AddWithValue("$lockedBy", ExecutorId);
+            if (update.ExecuteNonQuery() != 1)
+            {
+                tx.Commit();
+                return null;
+            }
+        }
+
+        QueuedRunWorkItem? item = null;
+        using (var select = connection.CreateCommand())
+        {
+            select.Transaction = tx;
+            select.CommandText = """
+SELECT run_id, transaction_code, request_json, script_file
+FROM runs
+WHERE run_id=$runId;
+""";
+            select.Parameters.AddWithValue("$runId", runId);
+            using var reader = select.ExecuteReader();
+            if (reader.Read())
+            {
+                item = new QueuedRunWorkItem
+                {
+                    RunId = reader.GetString(0),
+                    TransactionCode = reader.GetString(1),
+                    RequestJson = reader.GetString(2),
+                    ScriptFile = reader.GetString(3)
+                };
+            }
+        }
+
+        tx.Commit();
+        if (item != null)
+            AppendRunLog(item.RunId, "INFO", "queue worker claimed run");
+        return item;
+    }
+
+    static void ExecuteQueuedRun(QueuedRunWorkItem item)
+    {
+        var started = DateTime.UtcNow;
+        try
+        {
+            var request = JsonSerializer.Deserialize<CreateRunRequest>(item.RequestJson, new JsonSerializerOptions(JsonOptions)
+            {
+                PropertyNameCaseInsensitive = true
+            }) ?? new CreateRunRequest { TransactionCode = item.TransactionCode };
+
+            var query = BuildQueryFromRunRequest(request, item);
+            var pars = BuildParams(query, PrimaryProtocolName);
+            pars.RunId = item.RunId;
+            Log($"队列执行: runId={item.RunId}, {DescribeParams(pars)}");
+
+            var result = LaunchSapGuiAndExecute(pars);
+            CompleteRun(item.RunId, result);
+        }
+        catch (Exception ex)
+        {
+            Log($"队列执行失败: runId={item.RunId}, {ex}");
+            CompleteRun(item.RunId, FailedRunResult(ex.Message, started));
+        }
+    }
+
+    static NameValueCollection BuildQueryFromRunRequest(CreateRunRequest request, QueuedRunWorkItem item)
+    {
+        var query = new NameValueCollection
+        {
+            ["action"] = "run",
+            ["tcode"] = item.TransactionCode,
+            ["script"] = FirstNonEmpty(item.ScriptFile, DefaultScriptForTCode(item.TransactionCode)),
+            ["runid"] = item.RunId
+        };
+
+        foreach (var pair in request.Params)
+            query[pair.Key.ToLowerInvariant()] = pair.Value ?? "";
+
+        return query;
+    }
+
+    static void MarkRunStarted(string runId)
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+            return;
+
+        InitializeDatabase(seedFromScripts: true);
+        string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+UPDATE runs
+SET status='running',
+    started_at=CASE WHEN started_at='' THEN $startedAt ELSE started_at END
+WHERE run_id=$runId AND status IN ('queued', 'running');
+""";
+        command.Parameters.AddWithValue("$runId", runId);
+        command.Parameters.AddWithValue("$startedAt", now);
+        command.ExecuteNonQuery();
+        AppendRunLog(runId, "INFO", "executor started");
+    }
+
+    static void CompleteRun(string runId, RunResultRequest result)
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+            return;
+
+        InitializeDatabase(seedFromScripts: true);
+        string status = NormalizeRunStatus(result.Status);
+        string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+
+        using (var command = connection.CreateCommand())
+        {
+            command.Transaction = tx;
+            command.CommandText = """
+UPDATE runs
+SET status=$status,
+    sap_status_type=$sapStatusType,
+    sap_status_text=$sapStatusText,
+    message=$message,
+    finished_at=$finishedAt,
+    duration_ms=$durationMs
+WHERE run_id=$runId;
+""";
+            command.Parameters.AddWithValue("$runId", runId);
+            command.Parameters.AddWithValue("$status", status);
+            command.Parameters.AddWithValue("$sapStatusType", result.SapStatusType ?? "");
+            command.Parameters.AddWithValue("$sapStatusText", result.SapStatusText ?? "");
+            command.Parameters.AddWithValue("$message", result.Message ?? "");
+            command.Parameters.AddWithValue("$finishedAt", now);
+            command.Parameters.AddWithValue("$durationMs", result.DurationMs);
+            command.ExecuteNonQuery();
+        }
+
+        using (var deleteLogs = connection.CreateCommand())
+        {
+            deleteLogs.Transaction = tx;
+            deleteLogs.CommandText = "DELETE FROM run_result_logs WHERE run_id=$runId";
+            deleteLogs.Parameters.AddWithValue("$runId", runId);
+            deleteLogs.ExecuteNonQuery();
+        }
+
+        using (var deleteFiles = connection.CreateCommand())
+        {
+            deleteFiles.Transaction = tx;
+            deleteFiles.CommandText = "DELETE FROM run_files WHERE run_id=$runId";
+            deleteFiles.Parameters.AddWithValue("$runId", runId);
+            deleteFiles.ExecuteNonQuery();
+        }
+
+        foreach (var line in result.Logs)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = tx;
+            command.CommandText = "INSERT INTO run_result_logs(run_id, level, message) VALUES($runId, $level, $message)";
+            command.Parameters.AddWithValue("$runId", runId);
+            command.Parameters.AddWithValue("$level", FirstNonEmpty(line.Level, "INFO"));
+            command.Parameters.AddWithValue("$message", line.Message ?? "");
+            command.ExecuteNonQuery();
+        }
+
+        foreach (var file in result.Files)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = tx;
+            command.CommandText = """
+INSERT INTO run_files(run_id, file_type, file_name, file_path, file_size)
+VALUES($runId, $type, $name, $path, $size);
+""";
+            command.Parameters.AddWithValue("$runId", runId);
+            command.Parameters.AddWithValue("$type", FirstNonEmpty(file.Type, "output"));
+            command.Parameters.AddWithValue("$name", file.Name ?? "");
+            command.Parameters.AddWithValue("$path", file.Path ?? "");
+            command.Parameters.AddWithValue("$size", file.Size);
+            command.ExecuteNonQuery();
+        }
+
+        tx.Commit();
+        Log($"run result updated: {runId}, status={status}, sap={result.SapStatusType}");
+    }
+
+    static TransactionScriptInfo LoadScriptInfo(string tcode)
+    {
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT script_file, script_hash FROM transactions WHERE tcode=$tcode";
+        command.Parameters.AddWithValue("$tcode", tcode.ToUpperInvariant());
+        using var reader = command.ExecuteReader();
+        if (reader.Read())
+        {
+            return new TransactionScriptInfo
+            {
+                ScriptFile = reader.GetString(0),
+                ScriptHash = reader.GetString(1)
+            };
+        }
+
+        return new TransactionScriptInfo { ScriptFile = $"{tcode.ToUpperInvariant()}.vbs" };
+    }
+
+    static RunRecordView ReadRunRecord(SqliteDataReader reader)
+    {
+        return new RunRecordView
+        {
+            RunId = reader.GetString(0),
+            TransactionCode = reader.GetString(1),
+            OperatorId = reader.GetString(2),
+            OperatorName = reader.GetString(3),
+            OperatorDept = reader.GetString(4),
+            Status = reader.GetString(5),
+            RequestJson = reader.GetString(6),
+            SapStatusType = reader.GetString(7),
+            SapStatusText = reader.GetString(8),
+            Message = reader.GetString(9),
+            ScriptFile = reader.GetString(10),
+            ScriptHash = reader.GetString(11),
+            QueuedAt = reader.GetString(12),
+            StartedAt = reader.GetString(13),
+            FinishedAt = reader.GetString(14),
+            DurationMs = reader.GetInt64(15),
+            Source = reader.GetString(16),
+            NotifyTarget = reader.GetString(17),
+            Priority = reader.GetInt32(18),
+            Attempt = reader.GetInt32(19),
+            MaxAttempts = reader.GetInt32(20),
+            LockedBy = reader.GetString(21),
+            LockedAt = reader.GetString(22)
+        };
+    }
+
+    static List<RunLogLine> LoadRunLogs(string runId)
+    {
+        var logs = new List<RunLogLine>();
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT level, message, created_at
+FROM run_result_logs
+WHERE run_id=$runId
+ORDER BY id;
+""";
+        command.Parameters.AddWithValue("$runId", runId);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            logs.Add(new RunLogLine
+            {
+                Level = reader.GetString(0),
+                Message = reader.GetString(1),
+                CreatedAt = reader.GetString(2)
+            });
+        }
+
+        return logs;
+    }
+
+    static List<RunFile> LoadRunFiles(string runId)
+    {
+        var files = new List<RunFile>();
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT file_type, file_name, file_path, file_size, created_at
+FROM run_files
+WHERE run_id=$runId
+ORDER BY id;
+""";
+        command.Parameters.AddWithValue("$runId", runId);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            files.Add(new RunFile
+            {
+                Type = reader.GetString(0),
+                Name = reader.GetString(1),
+                Path = reader.GetString(2),
+                Size = reader.GetInt64(3),
+                CreatedAt = reader.GetString(4)
+            });
+        }
+
+        return files;
+    }
+
+    static void AppendRunLog(string runId, string level, string message)
+    {
+        try
+        {
+            using var connection = OpenDatabaseConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "INSERT INTO run_result_logs(run_id, level, message) VALUES($runId, $level, $message)";
+            command.Parameters.AddWithValue("$runId", runId);
+            command.Parameters.AddWithValue("$level", level);
+            command.Parameters.AddWithValue("$message", message);
+            command.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            Log($"append run log failed: {runId}, {ex.Message}");
+        }
+    }
+
+    static string TransactionParamsToJson(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Array)
+            return "[]";
+
+        var keys = value.EnumerateArray()
+            .Select(ReadParamKey)
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        return JsonSerializer.Serialize(keys, JsonOptions);
+    }
+
+    static string ReadParamKey(JsonElement value)
+    {
+        if (value.ValueKind == JsonValueKind.String)
+            return value.GetString() ?? "";
+
+        if (value.ValueKind == JsonValueKind.Object)
+        {
+            foreach (string key in new[] { "key", "name", "paramKey" })
+            {
+                if (value.TryGetProperty(key, out JsonElement prop))
+                    return JsonValueToString(prop);
+            }
+        }
+
+        return "";
+    }
+
+    static string JsonElementArrayToCsv(JsonElement value)
+    {
+        if (value.ValueKind != JsonValueKind.Array)
+            return "";
+
+        return string.Join(",", value.EnumerateArray().Select(JsonValueToString).Where(v => !string.IsNullOrWhiteSpace(v)));
+    }
+
+    static string NormalizeRunStatus(string status)
+    {
+        string value = (status ?? "").Trim().ToLowerInvariant();
+        return value switch
+        {
+            "queued" or "running" or "success" or "failed" or "canceled" => value,
+            "ok" or "done" => "success",
+            "error" or "abort" => "failed",
+            _ => "failed"
+        };
+    }
+
     static string FindTransactionConfigPath()
     {
         string[] candidates =
@@ -835,8 +1714,9 @@ WHERE tcode=$tcode;
         return Convert.ToHexString(bytes).ToLowerInvariant();
     }
 
-    static void LaunchSapGuiAndExecute(SapRunParams p)
+    static RunResultRequest LaunchSapGuiAndExecute(SapRunParams p)
     {
+        var started = DateTime.UtcNow;
         if (HasReadySapSession())
         {
             Log("检测到已登录 SAP GUI 会话，跳过 sapshcut 登录，直接执行事务码脚本");
@@ -848,7 +1728,7 @@ WHERE tcode=$tcode;
             {
                 Console.Error.WriteLine("未找到 sapshcut.exe，请安装 SAP GUI");
                 Log("未找到 sapshcut.exe，请安装 SAP GUI");
-                return;
+                return FailedRunResult("未找到 sapshcut.exe，请安装 SAP GUI", started);
             }
 
             var args = new[]
@@ -879,14 +1759,17 @@ WHERE tcode=$tcode;
 
         try
         {
-            ExecuteViaGuiScripting(p);
+            var result = ExecuteViaGuiScripting(p);
+            result.DurationMs = EnsureDuration(result.DurationMs, started);
             Console.WriteLine($"{p.TCode} 执行完成");
             Log($"{p.TCode} 执行完成");
+            return result;
         }
         catch (Exception ex)
         {
             Console.Error.WriteLine($"{p.TCode} 执行失败: {ex.Message}");
             Log($"{p.TCode} 执行失败: {ex}");
+            return FailedRunResult(ex.Message, started);
         }
     }
 
@@ -1012,8 +1895,9 @@ WScript.Quit 0
         return null;
     }
 
-    static void ExecuteViaGuiScripting(SapRunParams p)
+    static RunResultRequest ExecuteViaGuiScripting(SapRunParams p)
     {
+        var started = DateTime.UtcNow;
         string template = ReadTransactionScript(p);
         string effectivePlants = p.Plants;
         string scriptFixedPlants = ExtractScriptMetadataValue(template, "fixedPlants");
@@ -1099,6 +1983,8 @@ WScript.Quit 0
                     ? $"VBS 未返回成功标记，脚本已保留: {tmpFile}"
                     : $"VBS 未返回成功标记: {mergedOutput}");
             }
+
+            return BuildRunResultFromVbs(stdOut, stdErr, proc?.ExitCode ?? 0, started);
         }
         finally
         {
@@ -1300,6 +2186,141 @@ WScript.Quit 0
         return failed == 0 ? 0 : 1;
     }
 
+    static RunResultRequest BuildRunResultFromVbs(string stdout, string stderr, int exitCode, DateTime started)
+    {
+        var result = new RunResultRequest
+        {
+            Status = exitCode == 0 ? "success" : "failed",
+            DurationMs = EnsureDuration(0, started)
+        };
+
+        foreach (string rawLine in SplitLines(stdout))
+        {
+            string line = rawLine.Trim();
+            if (line.Length == 0)
+                continue;
+
+            if (TryReadOutputKey(line, "STATUS_TYPE", out string statusType))
+            {
+                result.SapStatusType = statusType;
+                result.Logs.Add(new RunLogLine { Level = "INFO", Message = line });
+            }
+            else if (TryReadOutputKey(line, "STATUS_TEXT", out string statusText))
+            {
+                result.SapStatusText = statusText;
+                result.Logs.Add(new RunLogLine { Level = "INFO", Message = line });
+            }
+            else if (TryReadOutputKey(line, "OUTPUT_FILE", out string outputFile))
+            {
+                result.Files.Add(BuildRunFile(outputFile));
+                result.Logs.Add(new RunLogLine { Level = "INFO", Message = line });
+            }
+            else if (TryReadOutputKey(line, "ERROR", out string errorValue))
+            {
+                result.Status = "failed";
+                result.Logs.Add(new RunLogLine { Level = "ERROR", Message = errorValue });
+            }
+            else if (line.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Status = "failed";
+                result.Logs.Add(new RunLogLine { Level = "ERROR", Message = line });
+            }
+            else if (line.StartsWith("WARN:", StringComparison.OrdinalIgnoreCase))
+            {
+                result.Logs.Add(new RunLogLine { Level = "WARN", Message = line });
+            }
+            else
+            {
+                result.Logs.Add(new RunLogLine { Level = "INFO", Message = line });
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(stderr))
+        {
+            result.Status = "failed";
+            foreach (string line in SplitLines(stderr).Select(v => v.Trim()).Where(v => v.Length > 0))
+                result.Logs.Add(new RunLogLine { Level = "ERROR", Message = line });
+        }
+
+        if (result.SapStatusType.Equals("E", StringComparison.OrdinalIgnoreCase) ||
+            result.SapStatusType.Equals("A", StringComparison.OrdinalIgnoreCase))
+        {
+            result.Status = "failed";
+        }
+
+        result.Message = FirstNonEmpty(
+            result.SapStatusText,
+            result.Logs.LastOrDefault(l => l.Level.Equals("ERROR", StringComparison.OrdinalIgnoreCase))?.Message ?? "",
+            result.Logs.LastOrDefault()?.Message ?? "",
+            exitCode == 0 ? "transaction script executed" : $"VBS exit code {exitCode}");
+
+        return result;
+    }
+
+    static RunResultRequest FailedRunResult(string message, DateTime started)
+    {
+        return new RunResultRequest
+        {
+            Status = "failed",
+            Message = message,
+            DurationMs = EnsureDuration(0, started),
+            Logs = { new RunLogLine { Level = "ERROR", Message = message } }
+        };
+    }
+
+    static long EnsureDuration(long durationMs, DateTime started)
+    {
+        if (durationMs > 0)
+            return durationMs;
+
+        return Math.Max(0, (long)(DateTime.UtcNow - started).TotalMilliseconds);
+    }
+
+    static RunFile BuildRunFile(string path)
+    {
+        string expanded = Environment.ExpandEnvironmentVariables(path ?? "");
+        var file = new RunFile
+        {
+            Type = "output",
+            Name = Path.GetFileName(expanded),
+            Path = path ?? ""
+        };
+
+        try
+        {
+            if (File.Exists(expanded))
+                file.Size = new FileInfo(expanded).Length;
+        }
+        catch { }
+
+        return file;
+    }
+
+    static IEnumerable<string> SplitLines(string value)
+    {
+        return (value ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
+    }
+
+    static bool TryReadOutputKey(string line, string key, out string value)
+    {
+        value = "";
+        string equalsPrefix = key + "=";
+        if (line.StartsWith(equalsPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            value = line[equalsPrefix.Length..].Trim();
+            return true;
+        }
+
+        string colonPrefix = key + ":";
+        if (line.StartsWith(colonPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            value = line[colonPrefix.Length..].Trim();
+            return true;
+        }
+
+        return false;
+    }
+
     static void Log(string message)
     {
         try
@@ -1380,6 +2401,7 @@ class SapRunParams
     public string Field2Value { get; set; } = "";
     public string CaretPos { get; set; } = "0";
     public string ButtonId { get; set; } = "";
+    public string RunId { get; set; } = "";
 }
 
 class SapLocalConfig
@@ -1391,4 +2413,114 @@ class SapLocalConfig
     public string? PasswordProtected { get; set; }
     public string? Language { get; set; }
     public string? SysNr { get; set; }
+}
+
+class TransactionConfigRequest
+{
+    public string Code { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Stage { get; set; } = "";
+    public string Script { get; set; } = "";
+    public string ScriptFile { get; set; } = "";
+    public string Icon { get; set; } = "";
+    public JsonElement Params { get; set; }
+    public string FactoryRule { get; set; } = "";
+    public JsonElement FixedPlants { get; set; }
+    public string FixedPlantsCsv { get; set; } = "";
+    public string DefaultPlantGroup { get; set; } = "";
+    public string Automation { get; set; } = "";
+    public string DefaultRunMode { get; set; } = "";
+    public string ScriptVersion { get; set; } = "";
+    public string ScriptHash { get; set; } = "";
+    public bool? Enabled { get; set; }
+}
+
+class CreateRunRequest
+{
+    public string TransactionCode { get; set; } = "";
+    public string TCode { get; set; } = "";
+    public string Code { get; set; } = "";
+    public string Source { get; set; } = "";
+    public string NotifyTarget { get; set; } = "";
+    public int Priority { get; set; }
+    public int MaxAttempts { get; set; } = 1;
+    public OperatorIdentity Operator { get; set; } = new();
+    public Dictionary<string, string> Params { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+}
+
+class OperatorIdentity
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string Dept { get; set; } = "";
+}
+
+class RunResultRequest
+{
+    public string Status { get; set; } = "";
+    public string SapStatusType { get; set; } = "";
+    public string SapStatusText { get; set; } = "";
+    public string Message { get; set; } = "";
+    public long DurationMs { get; set; }
+    public List<RunLogLine> Logs { get; set; } = new();
+    public List<RunFile> Files { get; set; } = new();
+}
+
+class RunRecordView
+{
+    public string RunId { get; set; } = "";
+    public string TransactionCode { get; set; } = "";
+    public string OperatorId { get; set; } = "";
+    public string OperatorName { get; set; } = "";
+    public string OperatorDept { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string RequestJson { get; set; } = "";
+    public string SapStatusType { get; set; } = "";
+    public string SapStatusText { get; set; } = "";
+    public string Message { get; set; } = "";
+    public string ScriptFile { get; set; } = "";
+    public string ScriptHash { get; set; } = "";
+    public string QueuedAt { get; set; } = "";
+    public string StartedAt { get; set; } = "";
+    public string FinishedAt { get; set; } = "";
+    public long DurationMs { get; set; }
+    public string Source { get; set; } = "";
+    public string NotifyTarget { get; set; } = "";
+    public int Priority { get; set; }
+    public int Attempt { get; set; }
+    public int MaxAttempts { get; set; }
+    public string LockedBy { get; set; } = "";
+    public string LockedAt { get; set; } = "";
+    public List<RunLogLine> Logs { get; set; } = new();
+    public List<RunFile> Files { get; set; } = new();
+}
+
+class RunLogLine
+{
+    public string Level { get; set; } = "INFO";
+    public string Message { get; set; } = "";
+    public string CreatedAt { get; set; } = "";
+}
+
+class RunFile
+{
+    public string Type { get; set; } = "output";
+    public string Name { get; set; } = "";
+    public string Path { get; set; } = "";
+    public long Size { get; set; }
+    public string CreatedAt { get; set; } = "";
+}
+
+class TransactionScriptInfo
+{
+    public string ScriptFile { get; set; } = "";
+    public string ScriptHash { get; set; } = "";
+}
+
+class QueuedRunWorkItem
+{
+    public string RunId { get; set; } = "";
+    public string TransactionCode { get; set; } = "";
+    public string RequestJson { get; set; } = "";
+    public string ScriptFile { get; set; } = "";
 }

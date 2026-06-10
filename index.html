@@ -574,6 +574,7 @@
       selectedTCode: "ZFI019NL",
       executing: false,
       currentRun: null,
+      bridge: { online: false, lastChecked: "", database: "" },
       modal: null,
       form: {
         account: "",
@@ -605,7 +606,8 @@
       }
     };
 
-    const tCodes = [
+    const BRIDGE_API = localStorage.getItem("sapRpaApiBase") || window.SAP_RPA_API_BASE || "http://127.0.0.1:17890";
+    let tCodes = [
       { code: "ZFI072A", name: "采购价月表", module: "FI", stage: "并行启动", script: "ZFI072A.vbs", icon: "circle-dollar-sign", params: ["year", "week", "plants"], factoryRule: "先四个集采工厂，再其他工厂", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 300, retry: 2, enabled: true },
       { code: "ZFI085", name: "维护特殊价格", module: "FI", stage: "并行启动", script: "ZFI085.vbs", icon: "badge-dollar-sign", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
       { code: "ZFI014D", name: "维护仓领退料", module: "FI", stage: "并行启动", script: "ZFI014D.vbs", icon: "package-check", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
@@ -705,7 +707,7 @@
     const scheduleTasks = [
       { id: "SCH-001", name: "周一 ZFI019NL 周损益链路", tCode: "ZFI019NL", factoryGroup: "PINGHU_ALL", plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"], time: "08:00", frequency: "每周一", status: "启用", next: "2026/06/15 08:00" }
     ];
-    const history = [
+    let history = [
       { id: "RUN-20260608-001", time: "2026/06/08 08:00", task: "周一 ZFI019NL 周损益链路", tCode: "ZFI019NL", plant: "1022,1024,1032,6041", duration: "45 秒", status: "成功", notify: "已推送", result: "保存并导出周损益结果 18 行" },
       { id: "RUN-20260607-002", time: "2026/06/07 08:00", task: "ZFI057 产值拆分", tCode: "ZFI057", plant: "1032", duration: "1 分 23 秒", status: "失败", notify: "告警已推送", result: "SAP 连接超时" }
     ];
@@ -721,10 +723,103 @@
     const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const app = document.getElementById("app");
 
+    function normalizeTransactionFromApi(item) {
+      return {
+        code: item.code,
+        name: item.name || item.code,
+        module: item.module || "",
+        stage: item.stage || "未分组",
+        script: item.script || item.scriptFile || (item.code + ".vbs"),
+        icon: item.icon || "terminal",
+        params: item.paramsList || item.params || [],
+        factoryRule: item.factoryRule || "",
+        fixedPlants: item.fixedPlants || [],
+        defaultPlantGroup: item.defaultPlantGroup || "PINGHU_30",
+        automation: item.automation || "openOnly",
+        scriptVersion: item.scriptVersion || "",
+        scriptHash: item.scriptHash || "",
+        enabled: item.enabled !== false
+      };
+    }
+
+    function normalizeRunFromApi(run) {
+      const params = readRunParams(run.requestJson);
+      const statusText = run.status === "success" ? "成功" : run.status === "failed" ? "失败" : run.status === "running" ? "执行中" : run.status === "canceled" ? "已取消" : "排队中";
+      return {
+        id: run.runId,
+        time: run.finishedAt || run.startedAt || run.queuedAt || "",
+        task: (getTCode(run.transactionCode)?.name || run.transactionCode) + " / " + (run.operatorName || "本机用户"),
+        tCode: run.transactionCode,
+        plant: params.plants || params.plant || "",
+        duration: formatDuration(run.durationMs || 0),
+        status: statusText,
+        notify: "本地记录",
+        result: run.message || run.sapStatusText || run.status,
+        logs: run.logs || [],
+        files: run.files || []
+      };
+    }
+
+    function readRunParams(requestJson) {
+      try {
+        const data = JSON.parse(requestJson || "{}");
+        return data.params || {};
+      } catch {
+        return {};
+      }
+    }
+
+    function formatDuration(ms) {
+      if (!ms) return "-";
+      if (ms < 1000) return ms + " 毫秒";
+      if (ms < 60000) return Math.round(ms / 1000) + " 秒";
+      return Math.floor(ms / 60000) + " 分 " + Math.round((ms % 60000) / 1000) + " 秒";
+    }
+
     function render() {
       app.innerHTML = state.loggedIn ? renderShell() : renderLogin();
       bindEvents();
       lucide.createIcons();
+    }
+
+    async function refreshBridgeData({ silent = true } = {}) {
+      try {
+        const health = await bridgeFetch("/api/health");
+        state.bridge = {
+          online: !!health.ok,
+          lastChecked: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+          database: health.database || ""
+        };
+
+        const txData = await bridgeFetch("/api/transactions");
+        if (Array.isArray(txData.transactions) && txData.transactions.length) {
+          tCodes = txData.transactions.map(normalizeTransactionFromApi);
+        }
+
+        const runData = await bridgeFetch("/api/runs?limit=20");
+        if (Array.isArray(runData.runs)) {
+          history = runData.runs.map(normalizeRunFromApi);
+        }
+
+        if (!silent) toast("已连接本机执行器并刷新数据", "ok");
+        render();
+      } catch (err) {
+        state.bridge.online = false;
+        state.bridge.lastChecked = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+        if (!silent) toast("本机执行器未启动，继续使用协议唤醒模式", "warn");
+        render();
+      }
+    }
+
+    async function bridgeFetch(path, options = {}) {
+      const response = await fetch(BRIDGE_API + path, {
+        ...options,
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+      });
+      const text = await response.text();
+      const data = text ? JSON.parse(text) : {};
+      if (!response.ok) throw new Error(data.error || response.statusText);
+      return data;
     }
 
     function renderLogin() {
@@ -831,13 +926,14 @@
           <div class="panel-body">
             ${renderTransactionGroups()}
             <div style="height:16px"></div>
-            <div class="grid cols-3">
-              ${metric("本机执行器", "sap-rpa://", "点击执行时由浏览器唤醒 SapWebLauncher")}
+              <div class="grid cols-3">
+              ${metric("本机执行器", state.bridge.online ? "API 已连接" : "sap-rpa://", state.bridge.online ? "本机 API 可创建任务并写入 SQLite" : "点击执行时由浏览器唤醒 SapWebLauncher")}
               ${metric("SAP 登录配置", "本机保存", "系统、客户端、账号和密码不放在网页里")}
-              ${metric("当前重点", "ZFI019NL", "先跑通事务码跳转和脚本执行")}
+              ${metric("执行历史", state.bridge.online ? "SQLite" : "静态示例", state.bridge.online ? "最近刷新 " + state.bridge.lastChecked : "启动本机 Bridge 后自动切换")}
             </div>
           </div>
         </section>
+        ${renderHistoryPanel()}
         <section class="panel">
           <div class="panel-header"><div><div class="panel-title">${icon("route")}周损益自动化逻辑</div><div class="panel-sub">按需求文档的执行先后顺序展示，重点放在事务码、保存点和验证点。</div></div></div>
           <div class="panel-body"><div class="workflow-map">${workflow.map(renderWorkflowStage).join("")}</div></div>
@@ -847,6 +943,38 @@
 
     function metric(label, value, hint) {
       return `<div class="metric"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div><div class="hint">${esc(hint)}</div></div>`;
+    }
+
+    function renderHistoryPanel() {
+      return `
+        <section class="panel">
+          <div class="panel-header">
+            <div><div class="panel-title">${icon("history")}执行历史</div><div class="panel-sub">${state.bridge.online ? "来自本机 SQLite run 记录" : "本机 API 未连接，显示示例记录"}</div></div>
+            <div class="top-actions">
+              <button class="btn small" data-action="refresh-bridge">${icon("refresh-cw")}刷新</button>
+              <button class="btn small" data-action="export-history">${icon("download")}导出</button>
+            </div>
+          </div>
+          <div class="panel-body">
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>执行时间</th><th>事务码</th><th>工厂</th><th>耗时</th><th>状态</th><th>结果摘要</th><th>操作</th></tr></thead>
+                <tbody>${history.map(row => `
+                  <tr>
+                    <td>${esc(row.time || "-")}</td>
+                    <td><strong>${esc(row.tCode)}</strong></td>
+                    <td>${esc(row.plant || "-")}</td>
+                    <td>${esc(row.duration)}</td>
+                    <td><span class="tag ${row.status === "成功" ? "ok" : row.status === "失败" ? "warn" : "info"}">${esc(row.status)}</span></td>
+                    <td>${esc(row.result || "-")}</td>
+                    <td><button class="btn small" data-action="view-log" data-run="${esc(row.id)}">${icon("file-text")}日志</button></td>
+                  </tr>
+                `).join("")}</tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      `;
     }
 
     function renderTransactionGroups() {
@@ -1205,6 +1333,25 @@
       if (state.modal && state.modal.startsWith("log:")) {
         const id = state.modal.slice(4);
         const row = history.find(x => x.id === id) || history[0];
+        if (!row) {
+          return `
+            <div class="modal-backdrop">
+              <div class="modal">
+                <div class="modal-header"><strong>日志详情</strong><button class="btn small" data-action="close-modal">${icon("x")}关闭</button></div>
+                <div class="modal-body"><div class="notice">暂无执行历史。</div></div>
+                <div class="modal-footer"><button class="btn primary" data-action="close-modal">关闭</button></div>
+              </div>
+            </div>
+          `;
+        }
+        const logLines = row.logs?.length ? row.logs.map(line => `
+          <div class="log-line"><span class="log-time">[${esc((line.createdAt || "").slice(11, 19) || "--:--:--")}]</span><span class="${esc((line.level || "INFO").toUpperCase() === "ERROR" ? "ERR" : (line.level || "INFO").toUpperCase())}">${esc(line.message)}</span></div>
+        `).join("") : `
+          <div class="log-line"><span class="log-time">[08:00:00]</span><span class="INFO">任务触发：${esc(row.task)}</span></div>
+          <div class="log-line"><span class="log-time">[08:00:03]</span><span class="INFO">提交本机 SapWebLauncher</span></div>
+          <div class="log-line"><span class="log-time">[08:00:45]</span><span class="${row.status === "成功" ? "OK" : "ERR"}">${esc(row.result)}</span></div>
+        `;
+        const fileLines = row.files?.length ? `<div style="height:14px"></div><div class="table-wrap"><table><thead><tr><th>文件</th><th>路径</th><th>大小</th></tr></thead><tbody>${row.files.map(file => `<tr><td>${esc(file.name || "-")}</td><td>${esc(file.path || "-")}</td><td>${esc(file.size || 0)}</td></tr>`).join("")}</tbody></table></div>` : "";
         return `
           <div class="modal-backdrop">
             <div class="modal">
@@ -1215,11 +1362,8 @@
                   ${metric("执行结果", row.status, row.result)}
                 </div>
                 <div style="height:14px"></div>
-                <div class="log">
-                  <div class="log-line"><span class="log-time">[08:00:00]</span><span class="INFO">任务触发：${esc(row.task)}</span></div>
-                  <div class="log-line"><span class="log-time">[08:00:03]</span><span class="INFO">提交本机 SapWebLauncher</span></div>
-                  <div class="log-line"><span class="log-time">[08:00:45]</span><span class="${row.status === "成功" ? "OK" : "ERR"}">${esc(row.result)}</span></div>
-                </div>
+                <div class="log">${logLines}</div>
+                ${fileLines}
               </div>
               <div class="modal-footer"><button class="btn primary" data-action="close-modal">关闭</button></div>
             </div>
@@ -1283,8 +1427,9 @@
       if (action === "save-schedule") { state.modal = null; toast("定时任务已保存到本地示例配置", "ok"); return render(); }
       if (action === "test-robot") return toast("已模拟发送钉钉测试消息", "ok");
       if (action === "toast-edit") return toast("编辑弹窗后续接入后台保存", "info");
+      if (action === "refresh-bridge") return refreshBridgeData({ silent: false });
       if (action === "export-history") return exportHistory();
-      if (action === "view-log") { state.modal = "log:" + el.dataset.run; return render(); }
+      if (action === "view-log") return openRunLog(el.dataset.run);
     }
 
     function login() {
@@ -1294,6 +1439,23 @@
       localStorage.setItem("portalLoggedIn", "1");
       state.loggedIn = true;
       toast("登录成功", "ok");
+      render();
+      refreshBridgeData({ silent: true });
+    }
+
+    async function openRunLog(id) {
+      if (state.bridge.online && id) {
+        try {
+          const run = await bridgeFetch("/api/runs/" + encodeURIComponent(id));
+          const index = history.findIndex(x => x.id === id);
+          const normalized = normalizeRunFromApi(run);
+          if (index >= 0) history[index] = normalized;
+        } catch (err) {
+          toast("读取日志详情失败：" + err.message, "warn");
+        }
+      }
+
+      state.modal = "log:" + id;
       render();
     }
 
@@ -1320,11 +1482,8 @@
     }
 
     function wakeProtocol() {
-      const url = buildProtocolUrl();
-      const payload = buildRunPayload();
-      addLog("INFO", "协议唤醒 SapWebLauncher：" + payload.tcode + "，工厂 " + payload.plantsCsv);
+      launchProtocol();
       addLog("WARN", "协议唤醒模式没有浏览器回传，结果需要查看本地日志。");
-      location.href = url;
       toast("已发起协议唤醒", "info");
     }
 
@@ -1341,15 +1500,89 @@
 
       setStep(1, "run");
       render();
-      wakeProtocol();
-      setTimeout(() => {
+      try {
+        const created = await createBridgeRun(payload);
+        state.currentRun.id = created.runId;
+        addLog("INFO", "SQLite 已创建 runId：" + created.runId);
         setStep(1, "done");
-        setStep(2, "done");
-        setStep(3, "run");
-        addLog("INFO", "已提交给本机执行器，SAP 登录与 /n 事务码跳转由本机脚本处理。");
-        addLog("WARN", "网页不会接收 SAP 账号密码，也不会保存连接参数；真实执行结果以本机日志为准。");
-        finishLocalSimulation("协议唤醒已完成，结果请查看本地日志", "WARN");
-      }, 850);
+        setStep(2, "run");
+        addLog("INFO", "任务已进入服务器串行队列，后台执行器会在 Windows Server 桌面会话中执行 SAP。");
+        render();
+        pollRunStatus(created.runId, 0);
+      } catch (err) {
+        addLog("WARN", "本机 API 不可用，回退到协议唤醒：" + err.message);
+        wakeProtocol();
+        setTimeout(() => {
+          setStep(1, "done");
+          setStep(2, "done");
+          setStep(3, "run");
+          addLog("WARN", "协议唤醒模式没有 API 回写，真实执行结果以本机日志为准。");
+          finishLocalSimulation("协议唤醒已完成，结果请查看本地日志", "WARN");
+        }, 850);
+      }
+    }
+
+    async function createBridgeRun(payload) {
+      return bridgeFetch("/api/runs", {
+        method: "POST",
+        body: JSON.stringify({
+          transactionCode: payload.tcode,
+          source: "company-portal-v2",
+          notifyTarget: payload.notify ? "dingtalk" : "",
+          priority: 0,
+          maxAttempts: 1,
+          operator: {
+            id: state.user.name,
+            name: state.user.name,
+            dept: state.user.dept
+          },
+          params: {
+            plants: payload.plantsCsv,
+            plant: payload.plant,
+            factoryGroup: payload.factoryGroup,
+            businessAreas: payload.businessAreasCsv,
+            remark: payload.remark
+          }
+        })
+      });
+    }
+
+    function launchProtocol(runId = "") {
+      const url = buildProtocolUrl(runId);
+      const payload = buildRunPayload();
+      addLog("INFO", "协议唤醒 SapWebLauncher：" + payload.tcode + "，工厂 " + payload.plantsCsv);
+      location.href = url;
+    }
+
+    async function pollRunStatus(runId, count) {
+      if (!runId || count > 30) {
+        state.executing = false;
+        await refreshBridgeData({ silent: true });
+        return;
+      }
+
+      try {
+        const run = await bridgeFetch("/api/runs/" + encodeURIComponent(runId));
+        if (run.status === "running") {
+          setStep(2, "done");
+          setStep(3, "run");
+        }
+        if (run.status === "success" || run.status === "failed" || run.status === "canceled") {
+          setStep(2, "done");
+          setStep(3, run.status === "success" ? "done" : "fail");
+          setStep(4, run.status === "success" ? "done" : "fail");
+          addLog(run.status === "success" ? "OK" : "ERR", run.message || run.sapStatusText || run.status);
+          state.executing = false;
+          await refreshBridgeData({ silent: true });
+          toast(run.status === "success" ? "执行成功，结果已写入 SQLite" : "执行失败，结果已写入 SQLite", run.status === "success" ? "ok" : "warn");
+          return;
+        }
+        render();
+      } catch (err) {
+        addLog("WARN", "查询 run 状态失败：" + err.message);
+      }
+
+      setTimeout(() => pollRunStatus(runId, count + 1), 1500);
     }
 
     function simulateRun() {
@@ -1378,6 +1611,7 @@
       const t = getTCode(state.form.tCode);
       const group = getFactoryGroup(state.form.factoryGroup);
       const selectedPlants = getRunPlantsForTCode(state.form.tCode, state.form.plants);
+      const businessAreas = getBusinessAreasForSelection(state.form.tCode, selectedPlants, state.form.factoryGroup);
       return {
         source: "netlify-static-portal",
         action: "run",
@@ -1388,6 +1622,8 @@
         plants: selectedPlants,
         plant: selectedPlants[0] || "",
         plantsCsv: selectedPlants.join(","),
+        businessAreas,
+        businessAreasCsv: businessAreas.join(","),
         notify: state.form.notify,
         remark: state.form.remark,
         createdBy: state.user.name,
@@ -1395,7 +1631,7 @@
       };
     }
 
-    function buildProtocolUrl() {
+    function buildProtocolUrl(runId = "") {
       const p = buildRunPayload();
       const params = new URLSearchParams({
         action: "run",
@@ -1403,8 +1639,10 @@
         script: p.script,
         plant: p.plant,
         plants: p.plantsCsv,
+        businessAreas: p.businessAreasCsv,
         factoryGroup: p.factoryGroup
       });
+      if (runId) params.set("runId", runId);
       return `sap-rpa://run?${params.toString()}`;
     }
 
@@ -1449,6 +1687,7 @@
     }
 
     render();
+    if (state.loggedIn) refreshBridgeData({ silent: true });
   </script>
 </body>
 </html>
