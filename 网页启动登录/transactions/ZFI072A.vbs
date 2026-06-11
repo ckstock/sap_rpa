@@ -3,30 +3,37 @@
 ' @params=year,week,plants
 ' @dateRule=LAST_WEEK_ISO
 ' @factoryRule=先四个集采工厂，再其他工厂
-' @fixedPlants=5021,9301,1101,207M,1024,1032,6041,1022,103C,103D,1031,1033,103C,103D,1035,1036
 '
 ' Generated from SAP GUI Recorder output. Review SAP 操作区 before production use.
 
 On Error Resume Next
 
-Dim tcode, plantsCsv, businessAreasCsv, factoryGroup
-Dim fixedPlantsCsv
+Dim tcode, plantsCsv, businessAreasCsv, factoryGroup, unresolvedPlantsToken
 Dim targetDate, yearValue, weekValue, pageYear, pageWeek, periodValue, weekEndValue
 Dim plantValue, setOk
 Dim SapGuiAuto, application, connection, session
-Dim retries, maxRetries, sleepMs, statusType, statusText
+Dim retries, maxRetries, sleepMs, statusType, statusText, operationError
 
 tcode = "{OK_CODE}"
 plantsCsv = "{PLANTS}"
 businessAreasCsv = "{BUSINESS_AREAS}"
 factoryGroup = "{FACTORY_GROUP}"
-fixedPlantsCsv = "5021,9301,1101,207M,1024,1032,6041,1022,103C,103D,1031,1033,103C,103D,1035,1036"
-plantsCsv = fixedPlantsCsv
 pageYear = "{YEAR}"
 pageWeek = "{WEEK}"
 periodValue = "{PERIOD}"
 weekEndValue = "{WEEK_END}"
 maxRetries = 100
+unresolvedPlantsToken = "{" & "PLANTS" & "}"
+
+Sub EmitError(message)
+   WScript.Echo "ERROR=" & message
+   WScript.Echo "ERROR: " & message
+End Sub
+
+If Trim(CStr(plantsCsv)) = "" Or Trim(CStr(plantsCsv)) = unresolvedPlantsToken Then
+   EmitError "ZFI072A requires plants from launcher input/API selection"
+   WScript.Quit 5
+End If
 
 targetDate = DateAdd("d", -7, Date)
 yearValue = Year(targetDate)
@@ -133,7 +140,7 @@ Function PressButtonByCandidates(label, ids)
       End If
       Err.Clear
    Next
-   WScript.Echo "ERROR: SAP button not found for " & label
+   EmitError "SAP button not found for " & label
 End Function
 
 Function FillPlantMultipleSelection(value)
@@ -141,7 +148,7 @@ Function FillPlantMultipleSelection(value)
    FillPlantMultipleSelection = False
    firstPlant = FirstCsvValue(value)
    If firstPlant = "" Then
-      WScript.Echo "ERROR: no plant value"
+      EmitError "no plant value"
       Exit Function
    End If
 
@@ -154,31 +161,31 @@ Function FillPlantMultipleSelection(value)
    WScript.Echo "INFO: start s_werks multi plants, count=" & CStr(plantCount)
    clipboardText = CsvToClipboardText(value)
    If Not SetClipboardText(clipboardText) Then
-      WScript.Echo "ERROR: failed to set clipboard for plant list"
+      EmitError "failed to set clipboard for plant list"
       Exit Function
    End If
    WScript.Echo "INFO: clipboard ready for s_werks"
 
    If Not SetTextByCandidates("s_werks-low required seed", firstPlant, Array("wnd[0]/usr/ctxtS_WERKS-LOW", "wnd[0]/usr/txtS_WERKS-LOW")) Then
-      WScript.Echo "ERROR: set required s_werks seed before multiple selection failed"
+      EmitError "set required s_werks seed before multiple selection failed"
       Exit Function
    End If
 
    Err.Clear
    Set multipleButton = session.findById("wnd[0]/usr/btn%_S_WERKS_%_APP_%-VALU_PUSH")
    If Err.Number <> 0 Then
-      WScript.Echo "ERROR: S_WERKS multiple selection button not found - " & Err.Description
+      EmitError "S_WERKS multiple selection button not found - " & Err.Description
       Err.Clear
       Exit Function
    End If
    multipleButton.press
    If Err.Number <> 0 Then
-      WScript.Echo "ERROR: open S_WERKS multiple selection failed - " & Err.Description
+      EmitError "open S_WERKS multiple selection failed - " & Err.Description
       Err.Clear
       Exit Function
    End If
    If Not WaitForObject("wnd[1]", 3000) Then
-      WScript.Echo "ERROR: S_WERKS multiple selection window did not open"
+      EmitError "S_WERKS multiple selection window did not open"
       Err.Clear
       Exit Function
    End If
@@ -187,7 +194,7 @@ Function FillPlantMultipleSelection(value)
    Err.Clear
    session.findById("wnd[1]/tbar[0]/btn[16]").press
    If Err.Number <> 0 Then
-      WScript.Echo "ERROR: clear s_werks multiple selection failed - " & Err.Description
+      EmitError "clear s_werks multiple selection failed - " & Err.Description
       Err.Clear
       Exit Function
    End If
@@ -196,7 +203,7 @@ Function FillPlantMultipleSelection(value)
    Err.Clear
    session.findById("wnd[1]/tbar[0]/btn[24]").press
    If Err.Number <> 0 Then
-      WScript.Echo "ERROR: paste s_werks plant list failed - " & Err.Description
+      EmitError "paste s_werks plant list failed - " & Err.Description
       Err.Clear
       Exit Function
    End If
@@ -206,14 +213,14 @@ Function FillPlantMultipleSelection(value)
    Err.Clear
    session.findById("wnd[1]/tbar[0]/btn[8]").press
    If Err.Number <> 0 Then
-      WScript.Echo "ERROR: confirm s_werks multiple selection failed - " & Err.Description
+      EmitError "confirm s_werks multiple selection failed - " & Err.Description
       Err.Clear
       Exit Function
    End If
    WScript.Echo "INFO: confirmed s_werks multiple selection"
    WScript.Sleep 500
    If ObjectExists("wnd[1]") Then
-      WScript.Echo "ERROR: S_WERKS multiple selection window still open after confirm"
+      EmitError "S_WERKS multiple selection window still open after confirm"
       Err.Clear
       Exit Function
    End If
@@ -247,7 +254,7 @@ Function SetTextByCandidates(label, value, ids)
       Err.Clear
    Next
 
-   WScript.Echo "ERROR: SAP field not found for " & label & ", value=" & value
+   EmitError "SAP field not found for " & label & ", value=" & value
 End Function
 
 Sub SetCheckboxIfExists(id, selectedValue)
@@ -270,7 +277,7 @@ Function RequireObject(label, id)
       WScript.Echo "INFO: ready " & label & " via " & id
       RequireObject = True
    Else
-      WScript.Echo "ERROR: required SAP field not ready for " & label & " via " & id & " - " & Err.Description
+      EmitError "required SAP field not ready for " & label & " via " & id & " - " & Err.Description
    End If
    Err.Clear
 End Function
@@ -301,11 +308,11 @@ For retries = 1 To maxRetries
 Next
 
 If Not IsObject(session) Then
-   WScript.Echo "ERROR: SAP GUI session not ready after adaptive wait"
+   EmitError "SAP GUI session not ready after adaptive wait"
    WScript.Quit 2
 End If
 If Not ObjectExists("wnd[0]/tbar[0]/okcd") Then
-   WScript.Echo "ERROR: SAP command field is not ready. Check local config user/password/system/client."
+   EmitError "SAP command field is not ready. Check local SAP connection configuration."
    WScript.Quit 7
 End If
 
@@ -321,7 +328,7 @@ WScript.Echo "INFO: open transaction by /n" & tcode
 session.findById("wnd[0]/tbar[0]/okcd").Text = "/n" & tcode
 session.findById("wnd[0]").sendVKey 0
 If Err.Number <> 0 Then
-   WScript.Echo "ERROR: open transaction failed - " & Err.Description
+   EmitError "open transaction failed - " & Err.Description
    WScript.Quit 3
 End If
 WScript.Sleep 1000
@@ -335,7 +342,9 @@ statusType = session.findById("wnd[0]/sbar").MessageType
 statusText = session.findById("wnd[0]/sbar").Text
 If Err.Number = 0 And statusText <> "" Then WScript.Echo "INFO: sap status type=" & statusType & ", text=" & statusText
 If Err.Number = 0 And (statusType = "E" Or statusType = "A") Then
-   WScript.Echo "ERROR: SAP rejected transaction " & tcode & " - " & statusText
+   WScript.Echo "STATUS_TYPE=" & statusType
+   WScript.Echo "STATUS_TEXT=" & statusText
+   EmitError "SAP rejected transaction " & tcode & " - " & statusText
    WScript.Quit 6
 End If
 
@@ -354,9 +363,28 @@ SetCheckboxIfExists "wnd[0]/usr/chkP_SEL", False
 session.findById("wnd[0]/tbar[1]/btn[8]").press
 session.findById("wnd[0]/tbar[1]/btn[14]").press
 If Err.Number <> 0 Then
-   WScript.Echo "ERROR: SAP operation failed - " & Err.Description
+   operationError = Err.Description
+   Err.Clear
+   statusType = session.findById("wnd[0]/sbar").MessageType
+   statusText = session.findById("wnd[0]/sbar").Text
+   If Err.Number = 0 Then
+      WScript.Echo "STATUS_TYPE=" & statusType
+      WScript.Echo "STATUS_TEXT=" & statusText
+   End If
+   Err.Clear
+   EmitError "SAP operation failed - " & operationError
    WScript.Quit 8
 End If
 
+Err.Clear
+statusType = session.findById("wnd[0]/sbar").MessageType
+statusText = session.findById("wnd[0]/sbar").Text
+If Err.Number = 0 Then
+   WScript.Echo "STATUS_TYPE=" & statusType
+   WScript.Echo "STATUS_TEXT=" & statusText
+End If
+Err.Clear
+
+WScript.Echo "OUTPUT_FILE="
 WScript.Echo "INFO: transaction script executed"
 WScript.Quit 0

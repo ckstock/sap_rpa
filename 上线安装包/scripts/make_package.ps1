@@ -62,6 +62,10 @@ if (-not $sourceEqualsOutput) {
 } else {
     Copy-Item -Path (Join-Path (Join-Path $repoRoot "上线安装包") "README_安装步骤.md") -Destination $OutputRoot -Force
 }
+$finalDeployDocs = Join-Path $packageSource "最终上线部署步骤"
+if (Test-Path $finalDeployDocs) {
+    Copy-Item -Path $finalDeployDocs -Destination $OutputRoot -Recurse -Force
+}
 Copy-Item -Path (Join-Path $packageSource "01_安装到本机.bat") -Destination $OutputRoot -Force
 Copy-Item -Path (Join-Path $packageSource "02_检测环境.bat") -Destination $OutputRoot -Force
 Copy-Item -Path (Join-Path $packageSource "03_卸载协议和程序.bat") -Destination $OutputRoot -Force

@@ -1,0 +1,576 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SAP RPA SQLite 查看器</title>
+  <style>
+    :root {
+      --bg: #f4f6f9;
+      --panel: #ffffff;
+      --line: #d9e2ec;
+      --line-soft: #edf1f6;
+      --text: #172033;
+      --muted: #66758a;
+      --nav: #10233f;
+      --blue: #1769e0;
+      --green: #16825d;
+      --red: #c83232;
+      --amber: #a86500;
+      --shadow: 0 8px 24px rgba(15, 23, 42, .08);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      font-size: 14px;
+      letter-spacing: 0;
+    }
+    header {
+      height: 58px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 0 18px;
+      background: var(--nav);
+      color: #fff;
+      border-bottom: 1px solid #071427;
+    }
+    h1 { margin: 0; font-size: 18px; line-height: 1.25; }
+    main {
+      display: grid;
+      grid-template-columns: 320px minmax(0, 1fr);
+      gap: 12px;
+      padding: 12px;
+      min-height: calc(100vh - 58px);
+    }
+    .panel {
+      min-width: 0;
+      overflow: hidden;
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(15, 23, 42, .04);
+    }
+    .panel-head {
+      min-height: 52px;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      border-bottom: 1px solid var(--line);
+      background: #fbfcfe;
+    }
+    .panel-title { font-weight: 800; color: #10233f; }
+    .sub {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.45;
+      margin-top: 3px;
+      overflow-wrap: anywhere;
+    }
+    .toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    button, select, input, a.btn {
+      height: 34px;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+    }
+    button, a.btn {
+      padding: 0 12px;
+      cursor: pointer;
+      background: #eef5ff;
+      color: var(--blue);
+      border-color: #bdd6ff;
+      font-weight: 700;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    button:hover, a.btn:hover { background: #e2efff; }
+    select, input { padding: 0 9px; }
+    .status {
+      display: inline-flex;
+      align-items: center;
+      min-height: 26px;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: #eef2f6;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .status.success, .status.ok { background: #e7f6ef; color: var(--green); }
+    .status.failed, .status.err { background: #ffecec; color: var(--red); }
+    .status.running { background: #eaf2ff; color: var(--blue); }
+    .status.queued, .status.warn { background: #fff4df; color: var(--amber); }
+    .status.canceled { background: #eff1f5; color: #596579; }
+    .side-body { display: grid; grid-template-rows: auto auto minmax(0, 1fr); height: calc(100vh - 123px); }
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 6px;
+      padding: 10px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .tab {
+      background: #fff;
+      color: var(--text);
+      border-color: var(--line);
+    }
+    .tab.active {
+      background: #eaf2ff;
+      border-color: #bdd6ff;
+      color: var(--blue);
+    }
+    .search-row {
+      padding: 0 10px 10px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .object-list {
+      min-height: 0;
+      overflow: auto;
+    }
+    .object-row {
+      width: 100%;
+      border: 0;
+      border-bottom: 1px solid var(--line-soft);
+      border-radius: 0;
+      background: #fff;
+      color: var(--text);
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      height: auto;
+      min-height: 58px;
+      padding: 9px 12px;
+      text-align: left;
+      font-weight: 400;
+    }
+    .object-row:hover { background: #f7fbff; }
+    .object-row.active {
+      background: #edf5ff;
+      box-shadow: inset 3px 0 0 var(--blue);
+    }
+    .object-name { font-weight: 800; color: #10233f; overflow-wrap: anywhere; }
+    .object-meta { color: var(--muted); font-size: 12px; margin-top: 3px; overflow-wrap: anywhere; }
+    .content {
+      padding: 12px;
+      height: calc(100vh - 123px);
+      overflow: auto;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin-bottom: 12px;
+    }
+    .kv {
+      border: 1px solid #e4ebf4;
+      background: #fbfdff;
+      border-radius: 8px;
+      padding: 10px;
+      min-width: 0;
+    }
+    .kv .k { color: var(--muted); font-size: 12px; margin-bottom: 5px; }
+    .kv .v { font-weight: 800; overflow-wrap: anywhere; }
+    .section {
+      margin-top: 12px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+    }
+    .section h2 {
+      margin: 0;
+      min-height: 40px;
+      padding: 10px 12px;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      background: #f4f7fb;
+      border-bottom: 1px solid var(--line);
+    }
+    .table-shell { overflow: auto; max-height: calc(100vh - 310px); }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; }
+    th, td {
+      padding: 9px 10px;
+      border-bottom: 1px solid var(--line-soft);
+      text-align: left;
+      vertical-align: top;
+      white-space: nowrap;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      color: var(--muted);
+      font-size: 12px;
+      background: #fbfcfe;
+    }
+    td { overflow-wrap: anywhere; white-space: normal; }
+    pre {
+      margin: 0;
+      padding: 12px;
+      background: #0d1728;
+      color: #dfeaff;
+      overflow: auto;
+      line-height: 1.55;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: 12px;
+    }
+    .field-type { color: var(--muted); font-size: 12px; }
+    .empty { color: var(--muted); padding: 24px; text-align: center; }
+    .mask { color: var(--muted); font-style: italic; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 22px;
+      padding: 0 7px;
+      border-radius: 999px;
+      background: #eef2f6;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    @media (max-width: 980px) {
+      main { grid-template-columns: 1fr; }
+      .side-body, .content { height: auto; max-height: none; }
+      .object-list { max-height: 420px; }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>SAP RPA SQLite 查看器</h1>
+      <div id="dbPath" class="sub">等待连接本机 API</div>
+    </div>
+    <div class="toolbar">
+      <span id="apiState" class="status">未连接</span>
+      <a class="btn" href="index.html">返回门户</a>
+      <button id="refreshBtn">刷新</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div id="sideTitle" class="panel-title">数据库对象</div>
+          <div id="sideSub" class="sub">表结构和数据预览</div>
+        </div>
+      </div>
+      <div class="side-body">
+        <div class="tabs">
+          <button id="tablesTab" class="tab active">数据表</button>
+          <button id="runsTab" class="tab">执行历史</button>
+        </div>
+        <div class="search-row">
+          <input id="searchInput" placeholder="搜索表名 / runId / 事务码">
+        </div>
+        <div id="objectList" class="object-list"><div class="empty">加载中</div></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div>
+          <div id="detailTitle" class="panel-title">数据库表</div>
+          <div id="detailSub" class="sub">选择左侧对象查看字段和数据</div>
+        </div>
+        <div class="toolbar">
+          <select id="statusFilter" title="执行历史状态筛选">
+            <option value="">全部 run</option>
+            <option value="queued">queued</option>
+            <option value="running">running</option>
+            <option value="success">success</option>
+            <option value="failed">failed</option>
+            <option value="canceled">canceled</option>
+          </select>
+          <button id="copyBtn">复制当前 ID</button>
+        </div>
+      </div>
+      <div id="detail" class="content"><div class="empty">暂无数据</div></div>
+    </section>
+  </main>
+
+  <script>
+    const API_BASE = localStorage.getItem("sapRpaApiBase") || window.SAP_RPA_API_BASE || "http://127.0.0.1:17890";
+    let activeView = "tables";
+    let schemaTables = [];
+    let runs = [];
+    let selectedId = "";
+
+    const els = {
+      apiState: document.getElementById("apiState"),
+      dbPath: document.getElementById("dbPath"),
+      sideTitle: document.getElementById("sideTitle"),
+      sideSub: document.getElementById("sideSub"),
+      objectList: document.getElementById("objectList"),
+      detail: document.getElementById("detail"),
+      detailTitle: document.getElementById("detailTitle"),
+      detailSub: document.getElementById("detailSub"),
+      refreshBtn: document.getElementById("refreshBtn"),
+      tablesTab: document.getElementById("tablesTab"),
+      runsTab: document.getElementById("runsTab"),
+      searchInput: document.getElementById("searchInput"),
+      statusFilter: document.getElementById("statusFilter"),
+      copyBtn: document.getElementById("copyBtn")
+    };
+
+    els.refreshBtn.addEventListener("click", () => loadAll({ keepSelection: true }));
+    els.tablesTab.addEventListener("click", () => setView("tables"));
+    els.runsTab.addEventListener("click", () => setView("runs"));
+    els.searchInput.addEventListener("input", renderObjectList);
+    els.statusFilter.addEventListener("change", () => loadRuns({ keepSelection: false }));
+    els.copyBtn.addEventListener("click", copyCurrentId);
+
+    async function api(path, options = {}) {
+      const res = await fetch(API_BASE + path, {
+        ...options,
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) }
+      });
+      const text = await res.text();
+      const data = text ? JSON.parse(text) : {};
+      if (!res.ok) throw new Error(data.error || res.statusText);
+      return data;
+    }
+
+    async function loadAll(options = {}) {
+      try {
+        const health = await api("/api/health");
+        els.apiState.textContent = "API " + (health.queueMode || "");
+        els.apiState.className = "status " + (health.queueMode === "serial" ? "success" : "queued");
+        els.dbPath.textContent = health.database || "";
+        await Promise.all([loadSchema({ keepSelection: options.keepSelection }), loadRuns({ keepSelection: true })]);
+        setView(activeView, { keepSelection: options.keepSelection });
+      } catch (err) {
+        els.apiState.textContent = "连接失败";
+        els.apiState.className = "status failed";
+        els.dbPath.textContent = err.message;
+        els.objectList.innerHTML = `<div class="empty">${esc(err.message)}</div>`;
+        els.detail.innerHTML = `<div class="empty">请先启动 SapWebLauncher.exe --serve</div>`;
+      }
+    }
+
+    async function loadSchema(options = {}) {
+      const data = await api("/api/schema");
+      schemaTables = Array.isArray(data.tables) ? data.tables : [];
+      if (!options.keepSelection && activeView === "tables") selectedId = "";
+      if (activeView === "tables") renderObjectList();
+    }
+
+    async function loadRuns(options = {}) {
+      const status = els.statusFilter.value;
+      const query = status ? "?limit=120&status=" + encodeURIComponent(status) : "?limit=120";
+      const data = await api("/api/runs" + query);
+      runs = Array.isArray(data.runs) ? data.runs : [];
+      if (!options.keepSelection && activeView === "runs") selectedId = "";
+      if (activeView === "runs") renderObjectList();
+    }
+
+    function setView(view, options = {}) {
+      activeView = view;
+      els.tablesTab.classList.toggle("active", view === "tables");
+      els.runsTab.classList.toggle("active", view === "runs");
+      els.statusFilter.style.display = view === "runs" ? "" : "none";
+      els.sideTitle.textContent = view === "tables" ? "数据库对象" : "执行历史";
+      els.sideSub.textContent = view === "tables" ? `${schemaTables.length} 张表` : `${runs.length} 条 run 记录`;
+      renderObjectList();
+      if (!options.keepSelection || !selectedId) {
+        const first = view === "tables" ? preferredFirstTable() : runs[0]?.runId;
+        if (first) selectObject(first);
+      } else {
+        selectObject(selectedId);
+      }
+    }
+
+    function preferredFirstTable() {
+      const names = schemaTables.map(table => table.name);
+      return names.includes("plants") ? "plants" : names[0];
+    }
+
+    function renderObjectList() {
+      const query = els.searchInput.value.trim().toLowerCase();
+      if (activeView === "tables") {
+        const tables = schemaTables.filter(table => !query || table.name.toLowerCase().includes(query));
+        els.objectList.innerHTML = tables.length ? tables.map(table => `
+          <button class="object-row ${table.name === selectedId ? "active" : ""}" data-id="${esc(table.name)}">
+            <div>
+              <div class="object-name">${esc(table.name)}</div>
+              <div class="object-meta">${(table.columns || []).length} 个字段</div>
+            </div>
+            <span class="pill">${esc(String(table.rowCount ?? 0))}</span>
+          </button>
+        `).join("") : `<div class="empty">没有匹配的数据表</div>`;
+      } else {
+        const list = runs.filter(run => {
+          const text = `${run.runId || ""} ${run.transactionCode || ""} ${run.status || ""}`.toLowerCase();
+          return !query || text.includes(query);
+        });
+        els.objectList.innerHTML = list.length ? list.map(run => `
+          <button class="object-row ${run.runId === selectedId ? "active" : ""}" data-id="${esc(run.runId)}">
+            <div>
+              <div class="object-name">${esc(run.transactionCode || "-")}</div>
+              <div class="object-meta">${esc(run.runId || "")}<br>${esc(run.queuedAt || "")}</div>
+            </div>
+            <span class="status ${esc(run.status || "")}">${esc(run.status || "")}</span>
+          </button>
+        `).join("") : `<div class="empty">没有匹配的执行记录</div>`;
+      }
+      document.querySelectorAll("[data-id]").forEach(node => {
+        node.addEventListener("click", () => selectObject(node.dataset.id));
+      });
+    }
+
+    async function selectObject(id) {
+      selectedId = id;
+      renderObjectList();
+      if (activeView === "tables") return loadTablePreview(id);
+      return loadRun(id);
+    }
+
+    async function loadTablePreview(tableName) {
+      const data = await api("/api/schema/tables/" + encodeURIComponent(tableName) + "?limit=80");
+      const columns = data.columns || [];
+      const names = columns.map(col => col.name);
+      els.detailTitle.textContent = "表 / " + (data.table || tableName);
+      els.detailSub.textContent = `${data.database || ""}，共 ${data.rowCount ?? 0} 行，显示前 ${data.rows?.length || 0} 行`;
+      els.detail.innerHTML = `
+        <div class="grid">
+          ${kv("表名", esc(data.table || tableName))}
+          ${kv("行数", esc(String(data.rowCount ?? 0)))}
+          ${kv("字段数", esc(String(columns.length)))}
+          ${kv("数据源", "SQLite")}
+        </div>
+        <div class="section">
+          <h2><span>字段结构</span><span class="pill">${columns.length}</span></h2>
+          <div class="table-shell">
+            <table>
+              <thead><tr><th>字段</th><th>类型</th><th>主键</th><th>非空</th><th>默认值</th></tr></thead>
+              <tbody>${columns.map(col => `
+                <tr>
+                  <td><b>${esc(col.name || "")}</b></td>
+                  <td><span class="field-type">${esc(col.type || "")}</span></td>
+                  <td>${col.primaryKey ? "是" : ""}</td>
+                  <td>${col.notNull ? "是" : ""}</td>
+                  <td>${esc(col.defaultValue || "")}</td>
+                </tr>
+              `).join("")}</tbody>
+            </table>
+          </div>
+        </div>
+        <div class="section">
+          <h2><span>数据预览</span><span class="pill">前 ${data.rows?.length || 0} 行</span></h2>
+          <div class="table-shell">
+            <table>
+              <thead><tr>${names.map(col => `<th>${esc(col)}</th>`).join("")}</tr></thead>
+              <tbody>${(data.rows || []).length ? data.rows.map(row => `
+                <tr>${names.map(col => `<td>${formatCell(row[col], col)}</td>`).join("")}</tr>
+              `).join("") : `<tr><td colspan="${Math.max(names.length, 1)}" class="empty">暂无数据</td></tr>`}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    async function loadRun(runId) {
+      const run = await api("/api/runs/" + encodeURIComponent(runId));
+      const params = readJson(run.requestJson).params || {};
+      els.detailTitle.textContent = `${run.transactionCode || ""} / ${run.status || ""}`;
+      els.detailSub.textContent = run.runId || "";
+      els.detail.innerHTML = `
+        <div class="grid">
+          ${kv("状态", `<span class="status ${esc(run.status || "")}">${esc(run.status || "")}</span>`)}
+          ${kv("排队时间", esc(run.queuedAt || ""))}
+          ${kv("开始时间", esc(run.startedAt || "-"))}
+          ${kv("结束时间", esc(run.finishedAt || "-"))}
+          ${kv("耗时", formatDuration(run.durationMs))}
+          ${kv("执行人", esc((run.operatorName || "") + " / " + (run.operatorDept || "")))}
+          ${kv("脚本", esc(run.scriptFile || ""))}
+          ${kv("执行器", esc(run.lockedBy || "-"))}
+        </div>
+        <div class="section"><h2>结果摘要</h2><pre>${esc(run.message || run.sapStatusText || "-")}</pre></div>
+        <div class="section"><h2>参数</h2>${renderKeyValueTable(params)}</div>
+        <div class="section"><h2>日志</h2>${renderLogs(run.logs || [])}</div>
+        <div class="section"><h2>文件</h2>${renderFiles(run.files || [])}</div>
+      `;
+    }
+
+    function kv(key, value) {
+      return `<div class="kv"><div class="k">${esc(key)}</div><div class="v">${value}</div></div>`;
+    }
+
+    function renderKeyValueTable(obj) {
+      const entries = Object.entries(obj || {});
+      if (!entries.length) return '<div class="empty">无参数</div>';
+      return `<div class="table-shell"><table><tbody>${entries.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(String(v ?? ""))}</td></tr>`).join("")}</tbody></table></div>`;
+    }
+
+    function renderLogs(logs) {
+      if (!logs.length) return '<div class="empty">无日志</div>';
+      return `<div class="table-shell"><table><thead><tr><th>时间</th><th>级别</th><th>内容</th></tr></thead><tbody>${logs.map(log => `
+        <tr><td>${esc(log.createdAt || "")}</td><td>${esc(log.level || "")}</td><td>${esc(log.message || "")}</td></tr>
+      `).join("")}</tbody></table></div>`;
+    }
+
+    function renderFiles(files) {
+      if (!files.length) return '<div class="empty">无文件</div>';
+      return `<div class="table-shell"><table><thead><tr><th>类型</th><th>名称</th><th>路径</th><th>大小</th></tr></thead><tbody>${files.map(file => `
+        <tr><td>${esc(file.type || "")}</td><td>${esc(file.name || "")}</td><td>${esc(file.path || "")}</td><td>${esc(String(file.size || 0))}</td></tr>
+      `).join("")}</tbody></table></div>`;
+    }
+
+    function readJson(value) {
+      try { return JSON.parse(value || "{}"); } catch { return {}; }
+    }
+
+    function formatDuration(ms) {
+      if (!ms) return "-";
+      if (ms < 1000) return ms + " ms";
+      if (ms < 60000) return Math.round(ms / 1000) + " 秒";
+      return Math.floor(ms / 60000) + " 分 " + Math.round((ms % 60000) / 1000) + " 秒";
+    }
+
+    function formatCell(value, columnName = "") {
+      if (isSensitiveColumn(columnName)) return `<span class="mask">已隐藏</span>`;
+      if (value == null) return "";
+      const text = String(value);
+      return esc(text.length > 500 ? text.slice(0, 500) + "..." : text);
+    }
+
+    function isSensitiveColumn(name) {
+      return /password|passwd|pwd|secret|token|webhook|credential|protected/i.test(String(name || ""));
+    }
+
+    async function copyCurrentId() {
+      if (!selectedId) return;
+      await navigator.clipboard.writeText(selectedId);
+      els.copyBtn.textContent = "已复制";
+      setTimeout(() => { els.copyBtn.textContent = "复制当前 ID"; }, 1200);
+    }
+
+    function esc(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    loadAll();
+  </script>
+</body>
+</html>

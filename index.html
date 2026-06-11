@@ -283,54 +283,150 @@
     .metric .label { color: var(--muted); font-size: 12px; }
     .metric .value { font-size: 23px; font-weight: 800; }
     .metric .hint { color: var(--muted); font-size: 12px; line-height: 1.45; }
-    .quick-actions { display: grid; grid-template-columns: repeat(4, minmax(170px, 1fr)); gap: 18px; }
-    .action-card {
-      border: 1px solid var(--line);
+    .agent-v2-entry {
+      border: 1px solid #d9e5f2;
       border-radius: var(--radius);
-      background: #fff;
-      padding: 28px 16px 18px;
-      display: grid;
+      background: #f8fbff;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       gap: 12px;
-      justify-items: center;
-      min-height: 190px;
-      transition: border-color .16s, box-shadow .16s, transform .16s;
     }
-    .action-card:hover { border-color: #91d5ff; box-shadow: var(--shadow); transform: translateY(-1px); }
-    .action-top { display: grid; justify-items: center; gap: 8px; text-align: center; }
-    .action-icon {
-      width: 48px;
-      height: 48px;
+    .agent-v2-main { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+    .agent-v2-icon {
+      width: 32px;
+      height: 32px;
       border-radius: 8px;
       background: #e6f7ff;
       color: var(--blue);
       display: grid;
       place-items: center;
+      flex: 0 0 auto;
     }
-    .action-icon .icon { width: 26px; height: 26px; }
-    .action-name { font-weight: 800; font-size: 18px; color: #102a43; }
-    .action-desc { color: var(--muted); font-size: 14px; line-height: 1.5; }
-    .action-card .btn { width: min(190px, 100%); }
-    .transaction-groups { display: grid; gap: 16px; }
-    .transaction-group { display: grid; gap: 10px; }
-    .transaction-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #102a43; font-weight: 800; }
-    .transaction-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
-    .transaction-card {
+    .agent-v2-copy { display: grid; gap: 2px; min-width: 0; }
+    .agent-v2-title { color: #102a43; font-size: 14px; font-weight: 700; }
+    .agent-v2-desc { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .quick-actions { display: grid; grid-template-columns: repeat(4, minmax(170px, 1fr)); gap: 12px; }
+    .action-card {
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: #fff;
-      padding: 14px;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 86px;
+      transition: border-color .16s, box-shadow .16s, transform .16s;
+    }
+    .action-card:hover { border-color: #91d5ff; box-shadow: 0 4px 14px rgba(15, 23, 42, .07); transform: translateY(-1px); }
+    .action-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .action-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: #f5f8fc;
+      color: var(--blue);
+      display: grid;
+      place-items: center;
+      border: 1px solid #e3edf8;
+      flex: 0 0 auto;
+    }
+    .action-icon .icon { width: 18px; height: 18px; }
+    .action-copy { display: grid; gap: 3px; min-width: 0; }
+    .action-name { font-weight: 800; font-size: 15px; color: #102a43; line-height: 1.25; }
+    .action-desc { color: var(--muted); font-size: 12px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .action-card .btn { flex: 0 0 auto; }
+    .execute-shell { display: grid; gap: 16px; }
+    .execute-form-grid { display: grid; grid-template-columns: minmax(220px, 360px); gap: 16px; max-width: 360px; }
+    .execute-range {
+      border: 1px solid #91d5ff;
+      background: #eef8ff;
+      border-radius: var(--radius);
+      padding: 14px 16px;
       display: grid;
       gap: 10px;
-      min-height: 154px;
     }
-    .transaction-card:hover { border-color: #91d5ff; box-shadow: var(--shadow); }
-    .transaction-card-head { display: flex; align-items: flex-start; gap: 10px; }
-    .transaction-card .action-icon { width: 38px; height: 38px; }
-    .transaction-card .action-icon .icon { width: 21px; height: 21px; }
-    .transaction-meta { display: grid; gap: 4px; min-width: 0; }
-    .transaction-code { font-size: 16px; font-weight: 800; color: #102a43; }
-    .transaction-name { color: var(--muted); font-size: 13px; line-height: 1.45; }
-    .transaction-card .btn { width: 100%; }
+    .execute-range-row {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .execute-range-label { color: #475467; line-height: 28px; }
+    .execute-range-value { color: #102a43; font-weight: 800; line-height: 28px; }
+    .execute-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .transaction-groups { display: grid; gap: 22px; }
+    .transaction-group { display: grid; gap: 12px; }
+    .transaction-group-head {
+      color: #102a43;
+      font-size: 18px;
+      font-weight: 800;
+      line-height: 1.3;
+      padding: 0 2px;
+    }
+    .transaction-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+      overflow: visible;
+    }
+    .transaction-card {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: #fff;
+      padding: 18px 16px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      justify-items: center;
+      text-align: center;
+      gap: 10px;
+      min-height: 172px;
+      transition: border-color .18s, box-shadow .18s, transform .18s;
+    }
+    .transaction-card:hover {
+      border-color: #b7d9ff;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, .12);
+      transform: translateY(-4px);
+    }
+    .transaction-card-head { display: contents; }
+    .transaction-card .action-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      margin-bottom: 2px;
+    }
+    .transaction-card .action-icon .icon { width: 20px; height: 20px; }
+    .transaction-meta { display: contents; }
+    .transaction-code { font-size: 17px; font-weight: 800; color: #102a43; line-height: 1.25; }
+    .transaction-name {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      min-height: 38px;
+      max-width: 100%;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .transaction-tags { display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; min-height: 28px; }
+    .transaction-card .btn { justify-self: center; margin-top: 4px; }
+    .report-toolbar { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+    .report-toolbar .field { min-width: 170px; }
+    .report-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .report-metric {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 16px;
+      display: grid;
+      gap: 6px;
+      min-height: 92px;
+    }
+    .report-metric-value { font-size: 26px; font-weight: 800; color: #1677ff; }
+    .report-metric-label { color: var(--muted); font-size: 13px; }
     .param-preview { display: grid; gap: 10px; }
     .param-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .param-item {
@@ -450,6 +546,34 @@
       gap: 6px;
     }
     .tab.active { color: var(--blue); border-color: #91d5ff; background: #e6f7ff; }
+    .config-status {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .config-status-main { display: grid; gap: 4px; min-width: 0; }
+    .config-status-title { display: flex; align-items: center; gap: 8px; font-weight: 700; color: #102a43; }
+    .config-status-sub { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .config-section { display: grid; gap: 10px; }
+    .config-section + .config-section { margin-top: 16px; }
+    .config-section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 36px;
+    }
+    .config-section-title { display: flex; align-items: center; gap: 8px; font-weight: 800; color: #102a43; }
+    .inline-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .empty-cell { color: var(--muted); text-align: center; padding: 18px 12px; }
+    .secret-state { color: #102a43; font-weight: 700; }
+    .table-hint { color: var(--muted); font-size: 12px; line-height: 1.5; }
     .steps { display: grid; gap: 10px; }
     .step {
       display: grid;
@@ -512,6 +636,64 @@
     }
     .modal-footer { border-top: 1px solid var(--line); border-bottom: 0; justify-content: flex-end; gap: 10px; }
     .modal-body { padding: 16px; }
+    .rule-plant-editor {
+      grid-column: 1 / -1;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fafcff;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .rule-plant-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .rule-plant-title { color: #102a43; font-weight: 800; }
+    .rule-plant-add { display: flex; gap: 8px; align-items: center; max-width: 360px; }
+    .rule-plant-add input { min-width: 150px; }
+    .schedule-plant-preview {
+      grid-column: 1 / -1;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fafcff;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .schedule-plant-title { color: #102a43; font-weight: 800; }
+    .area-chip.editable { gap: 6px; padding-right: 4px; }
+    .chip-x {
+      width: 18px;
+      height: 18px;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: #0958d9;
+      padding: 0;
+      display: inline-grid;
+      place-items: center;
+      cursor: pointer;
+    }
+    .chip-x:hover { background: rgba(24, 144, 255, .12); }
+    .advanced-settings {
+      grid-column: 1 / -1;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fafbfc;
+    }
+    .advanced-settings summary {
+      min-height: 38px;
+      padding: 0 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #475467;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .advanced-settings .advanced-body {
+      border-top: 1px solid var(--line);
+      padding: 14px;
+    }
     .toast-wrap {
       position: fixed;
       right: 18px;
@@ -536,8 +718,12 @@
     .toast.ok { border-left-color: var(--green); }
     .toast.warn { border-left-color: var(--amber); }
     .toast.err { border-left-color: var(--red); }
+    @media (max-width: 1400px) {
+      .transaction-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
     @media (max-width: 1120px) {
       .quick-actions, .workflow-map, .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .transaction-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .param-grid { grid-template-columns: 1fr; }
       .grid.cols-3, .grid.cols-2 { grid-template-columns: 1fr; }
       .form-grid { grid-template-columns: 1fr; }
@@ -555,7 +741,8 @@
       .sidebar-footer { display: none; }
       .main { padding: 12px; }
       .topbar { align-items: flex-start; flex-direction: column; padding: 12px; }
-      .quick-actions, .workflow-map, .grid.cols-4 { grid-template-columns: 1fr; }
+      .quick-actions, .workflow-map, .grid.cols-4, .transaction-grid { grid-template-columns: 1fr; }
+      .agent-v2-entry { align-items: flex-start; flex-direction: column; }
       .plant-picker { grid-template-columns: 1fr; }
     }
   </style>
@@ -575,6 +762,7 @@
       executing: false,
       currentRun: null,
       bridge: { online: false, lastChecked: "", database: "", queueMode: "" },
+      config: { online: false, source: "fallback", lastLoaded: "", error: "" },
       modal: null,
       form: {
         account: "",
@@ -602,23 +790,31 @@
         frequency: "weekly",
         notifyStart: true,
         notifySuccess: true,
-        notifyFail: true
+        notifyFail: true,
+        nameEdited: false
       }
     };
 
     const BRIDGE_API = localStorage.getItem("sapRpaApiBase") || window.SAP_RPA_API_BASE || "http://127.0.0.1:17890";
+    const CONFIG_API_PATHS = {
+      root: "/api/config",
+      plants: code => "/api/config/plants/" + encodeURIComponent(code),
+      plantGroups: id => "/api/config/plant-groups/" + encodeURIComponent(id),
+      transactionRules: tcode => "/api/config/transaction-rules/" + encodeURIComponent(tcode),
+      notificationRobots: id => "/api/config/notification-robots/" + encodeURIComponent(id)
+    };
     let tCodes = [
       { code: "ZFI072A", name: "采购价月表", module: "FI", stage: "并行启动", script: "ZFI072A.vbs", icon: "circle-dollar-sign", params: ["year", "week", "plants"], factoryRule: "先四个集采工厂，再其他工厂", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 300, retry: 2, enabled: true },
-      { code: "ZFI085", name: "维护特殊价格", module: "FI", stage: "并行启动", script: "ZFI085.vbs", icon: "badge-dollar-sign", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
-      { code: "ZFI014D", name: "维护仓领退料", module: "FI", stage: "并行启动", script: "ZFI014D.vbs", icon: "package-check", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
-      { code: "ZFI072N", name: "维护采购价", module: "FI", stage: "顺序执行", script: "ZFI072N.vbs", icon: "receipt-text", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
-      { code: "ZFI057", name: "产值拆分", module: "CO", stage: "顺序执行", script: "ZFI057.vbs", icon: "trending-up", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 600, retry: 3, enabled: true },
-      { code: "ZCO020", name: "拆分验证", module: "CO", stage: "顺序执行", script: "ZCO020.vbs", icon: "list-checks", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
-      { code: "ZPP063", name: "验证备注", module: "PP", stage: "顺序执行", script: "ZPP063.vbs", icon: "clipboard-check", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
-      { code: "ZPP063X", name: "回检验证", module: "PP", stage: "顺序执行", script: "ZPP063X.vbs", icon: "rotate-ccw", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
-      { code: "ZFI019NC", name: "验证修正", module: "FI", stage: "顺序执行", script: "ZFI019NC.vbs", icon: "file-pen-line", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
+      { code: "ZFI085", name: "维护特殊价格", module: "FI", stage: "并行启动", script: "ZFI085.vbs", icon: "badge-dollar-sign", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
+      { code: "ZFI014D", name: "维护仓领退料", module: "FI", stage: "并行启动", script: "ZFI014D.vbs", icon: "package-check", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
+      { code: "ZFI072N", name: "维护采购价", module: "FI", stage: "顺序执行", script: "ZFI072N.vbs", icon: "receipt-text", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
+      { code: "ZFI057", name: "产值拆分", module: "CO", stage: "顺序执行", script: "ZFI057.vbs", icon: "trending-up", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 600, retry: 3, enabled: true },
+      { code: "ZCO020", name: "拆分验证", module: "CO", stage: "顺序执行", script: "ZCO020.vbs", icon: "list-checks", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
+      { code: "ZPP063", name: "验证备注", module: "PP", stage: "顺序执行", script: "ZPP063.vbs", icon: "clipboard-check", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
+      { code: "ZPP063X", name: "回检验证", module: "PP", stage: "顺序执行", script: "ZPP063X.vbs", icon: "rotate-ccw", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
+      { code: "ZFI019NC", name: "验证修正", module: "FI", stage: "顺序执行", script: "ZFI019NC.vbs", icon: "file-pen-line", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
       { code: "ZFI080", name: "实际材料保存", module: "FI", stage: "核心并行", script: "ZFI080.vbs", icon: "boxes", params: ["year", "week", "plants", "businessAreas", "weekEnd"], factoryRule: "按业务范围和周结日期保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
-      { code: "ZFI019NI", name: "实际材料结果保存", module: "FI", stage: "核心并行", script: "ZFI019NI.vbs", icon: "save", params: ["year", "week", "plants", "businessAreas"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
+      { code: "ZFI019NI", name: "实际材料结果保存", module: "FI", stage: "核心并行", script: "ZFI019NI.vbs", icon: "save", params: ["year", "week", "plants", "businessAreas"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
       { code: "ZCO019", name: "标准材料成本", module: "CO", stage: "核心并行", script: "ZCO019.vbs", icon: "tag", params: ["year", "week", "plants"], factoryRule: "明细保存与汇总保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
       { code: "ZFI019NA", name: "周损益生成", module: "FI", stage: "最终生成", script: "ZFI019NA.vbs", icon: "file-spreadsheet", params: ["year", "week", "plants", "businessAreas"], factoryRule: "东台、黄江等范围保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 300, retry: 2, enabled: true },
       { code: "ZFI019NL", name: "周损益保存导出", module: "FI", stage: "最终生成", script: "ZFI019NL.vbs", icon: "bar-chart-3", params: ["year", "week", "plants", "businessAreas"], factoryRule: "按选中厂区工厂和业务范围导出", defaultPlantGroup: "PINGHU_30", automation: "script", timeout: 300, retry: 3, enabled: true },
@@ -669,25 +865,43 @@
       "9301": { code: "9301", name: "集采工厂", area: "", groups: ["PROCUREMENT"], enabled: true },
       "1101": { code: "1101", name: "集采工厂", area: "", groups: ["PROCUREMENT"], enabled: true },
       "207M": { code: "207M", name: "集采工厂", area: "", groups: ["PROCUREMENT"], enabled: true },
-      "1022": { code: "1022", name: "平湖三十厂", area: "2800", groups: ["PINGHU_30"], enabled: true },
-      "1024": { code: "1024", name: "平湖三十厂", area: "2900", groups: ["PINGHU_30"], enabled: true },
-      "1032": { code: "1032", name: "平湖三十厂", area: "9200", groups: ["PINGHU_30"], enabled: true },
-      "6041": { code: "6041", name: "平湖三十厂", area: "2800", groups: ["PINGHU_30"], enabled: true },
+      "1022": { code: "1022", name: "平湖三厂", area: "2800", groups: ["PINGHU_30"], enabled: true },
+      "1024": { code: "1024", name: "平湖三厂", area: "2900", groups: ["PINGHU_30"], enabled: true },
+      "1032": { code: "1032", name: "平湖三厂", area: "9200", groups: ["PINGHU_30"], enabled: true },
+      "6041": { code: "6041", name: "平湖三厂", area: "2800", groups: ["PINGHU_30"], enabled: true },
       "103C": { code: "103C", name: "平湖七厂", area: "2910", groups: ["PINGHU_7", "PINGHU_19"], enabled: true },
-      "1031": { code: "1031", name: "平湖一九厂", area: "3400", groups: ["PINGHU_19"], enabled: true },
-      "1033": { code: "1033", name: "平湖一九厂", area: "2920", groups: ["PINGHU_19"], enabled: true },
-      "103D": { code: "103D", name: "平湖一九厂", area: "2920", groups: ["PINGHU_19"], enabled: true },
-      "1035": { code: "1035", name: "平湖二五厂", area: "5100", groups: ["PINGHU_25"], enabled: true },
-      "1036": { code: "1036", name: "平湖二五厂", area: "2790", groups: ["PINGHU_25"], enabled: true }
+      "1031": { code: "1031", name: "平湖一厂", area: "3400", groups: ["PINGHU_19"], enabled: true },
+      "1033": { code: "1033", name: "平湖九厂", area: "2920", groups: ["PINGHU_19"], enabled: true },
+      "103D": { code: "103D", name: "平湖九厂", area: "2920", groups: ["PINGHU_19"], enabled: true },
+      "1035": { code: "1035", name: "平湖二厂", area: "5100", groups: ["PINGHU_25"], enabled: true },
+      "1036": { code: "1036", name: "平湖五厂", area: "2790", groups: ["PINGHU_25"], enabled: true }
     };
-    const plants = Object.values(plantCatalog);
+    let plants = Object.values(plantCatalog);
     const procurementPlants = ["5021", "9301", "1101", "207M"];
-    const factoryGroups = [
-      { id: "PINGHU_30", name: "平湖三十厂", shortName: "三十厂", plants: ["1022", "1024", "1032", "6041"], zfi019nlAreas: ["2900", "9200", "2800", "3960"], zfi080Areas: ["2900", "9200", "2800", "3960"], zfi072Plants: ["1024", "1032", "6041", "1022"], zco019Plants: ["1022", "1024", "1032", "6041"] },
+    const businessRangeLabels = {
+      PROCUREMENT: "集采工厂",
+      PINGHU_30: "平湖三厂 / 平湖十厂",
+      PINGHU_7: "平湖七厂",
+      PINGHU_19: "平湖一厂 / 平湖九厂",
+      PINGHU_25: "平湖二厂 / 平湖五厂",
+      PINGHU_ALL: "全部平湖业务范围"
+    };
+    const legacyBusinessRangeNames = {
+      "Procurement plants": "集采工厂",
+      "Procurement Plants": "集采工厂",
+      "Pinghu 30": "平湖三厂 / 平湖十厂",
+      "Pinghu 7": "平湖七厂",
+      "Pinghu 19": "平湖一厂 / 平湖九厂",
+      "Pinghu 25": "平湖二厂 / 平湖五厂",
+      "All Pinghu plants": "全部平湖业务范围",
+      "All Pinghu Plants": "全部平湖业务范围"
+    };
+    let factoryGroups = [
+      { id: "PINGHU_30", name: "平湖三厂 / 平湖十厂", shortName: "三厂/十厂", plants: ["1022", "1024", "1032", "6041"], zfi019nlAreas: ["2900", "9200", "2800", "3960"], zfi080Areas: ["2900", "9200", "2800", "3960"], zfi072Plants: ["1024", "1032", "6041", "1022"], zco019Plants: ["1022", "1024", "1032", "6041"] },
       { id: "PINGHU_7", name: "平湖七厂", shortName: "七厂", plants: ["103C"], zfi019nlAreas: ["2910"], zfi080Areas: ["2910"], zfi072Plants: ["103C"], zco019Plants: ["103C"] },
-      { id: "PINGHU_19", name: "平湖一九厂", shortName: "一九厂", plants: ["1031", "1033", "103C", "103D"], zfi019nlAreas: ["3400", "2920"], zfi080Areas: ["3400", "2920"], zfi072Plants: ["1031", "1033", "103C", "103D"], zco019Plants: ["1031", "1033", "103C", "103D"] },
-      { id: "PINGHU_25", name: "平湖二五厂", shortName: "二五厂", plants: ["1035", "1036"], zfi019nlAreas: ["5100", "2790"], zfi080Areas: ["5100", "2790"], zfi072Plants: ["1035", "1036"], zco019Plants: ["1035", "1036"] },
-      { id: "PINGHU_ALL", name: "全部平湖厂区", shortName: "全部", plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"], zfi019nlAreas: ["2900", "9200", "2800", "3960", "2910", "3400", "2920", "5100", "2790"], zfi080Areas: ["2900", "9200", "2800", "3960", "2910", "3400", "2920", "5100", "2790"], zfi072Plants: ["5021", "9301", "1101", "207M", "1024", "1032", "6041", "1022", "103C", "1031", "1033", "103D", "1035", "1036"], zco019Plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"] }
+      { id: "PINGHU_19", name: "平湖一厂 / 平湖九厂", shortName: "一厂/九厂", plants: ["1031", "1033", "103C", "103D"], zfi019nlAreas: ["3400", "2920"], zfi080Areas: ["3400", "2920"], zfi072Plants: ["1031", "1033", "103C", "103D"], zco019Plants: ["1031", "1033", "103C", "103D"] },
+      { id: "PINGHU_25", name: "平湖二厂 / 平湖五厂", shortName: "二厂/五厂", plants: ["1035", "1036"], zfi019nlAreas: ["5100", "2790"], zfi080Areas: ["5100", "2790"], zfi072Plants: ["1035", "1036"], zco019Plants: ["1035", "1036"] },
+      { id: "PINGHU_ALL", name: "全部平湖业务范围", shortName: "全部", plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"], zfi019nlAreas: ["2900", "9200", "2800", "3960", "2910", "3400", "2920", "5100", "2790"], zfi080Areas: ["2900", "9200", "2800", "3960", "2910", "3400", "2920", "5100", "2790"], zfi072Plants: ["5021", "9301", "1101", "207M", "1024", "1032", "6041", "1022", "103C", "1031", "1033", "103D", "1035", "1036"], zco019Plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"] }
     ];
     const businessAreaCatalog = [
       { code: "2900", name: "平湖三厂" },
@@ -700,9 +914,9 @@
       { code: "5100", name: "平湖二厂" },
       { code: "2790", name: "平湖五厂" }
     ];
-    const robots = [
-      { id: "rbt-001", name: "财务通知群", group: "SAP 自动化执行通知", events: "执行完成、执行失败", enabled: true, lastPush: "2026/06/07 08:05" },
-      { id: "rbt-002", name: "IT 运维告警群", group: "SAP 运维告警", events: "系统异常、脚本失败", enabled: true, lastPush: "2026/06/07 14:30" }
+    let robots = [
+      { id: "rbt-001", name: "财务通知群", group: "SAP 自动化执行通知", events: ["执行完成", "执行失败"], enabled: true, lastPush: "2026/06/07 08:05", hasWebhook: true, hasSecret: true },
+      { id: "rbt-002", name: "IT 运维告警群", group: "SAP 运维告警", events: ["系统异常", "脚本失败"], enabled: true, lastPush: "2026/06/07 14:30", hasWebhook: true, hasSecret: true }
     ];
     const scheduleTasks = [
       { id: "SCH-001", name: "周一 ZFI019NL 周损益链路", tCode: "ZFI019NL", factoryGroup: "PINGHU_ALL", plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"], time: "08:00", frequency: "每周一", status: "启用", next: "2026/06/15 08:00" }
@@ -718,28 +932,190 @@
       config: "基础配置",
       schedule: "定时任务"
     };
+    const fallbackConfig = JSON.parse(JSON.stringify({
+      tCodes,
+      plants,
+      factoryGroups,
+      robots
+    }));
 
     const icon = (name, cls = "icon") => `<i class="${cls}" data-lucide="${name}"></i>`;
     const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
     const app = document.getElementById("app");
 
+    function clonePlain(value) {
+      return JSON.parse(JSON.stringify(value));
+    }
+
+    function toArray(value) {
+      if (Array.isArray(value)) return value.map(item => String(item).trim()).filter(Boolean);
+      if (typeof value === "string") return value.split(/[,\n，、;]/).map(item => item.trim()).filter(Boolean);
+      return [];
+    }
+
+    function boolValue(value, fallback = true) {
+      if (typeof value === "boolean") return value;
+      if (typeof value === "number") return value !== 0;
+      if (typeof value === "string") return !["false", "0", "停用", "disabled"].includes(value.toLowerCase());
+      return fallback;
+    }
+
+    function restoreFallbackConfig({ includeTransactions = true } = {}) {
+      if (includeTransactions) tCodes = clonePlain(fallbackConfig.tCodes);
+      plants = clonePlain(fallbackConfig.plants);
+      factoryGroups = clonePlain(fallbackConfig.factoryGroups);
+      robots = clonePlain(fallbackConfig.robots);
+      Object.keys(plantCatalog).forEach(code => delete plantCatalog[code]);
+      plants.forEach(plant => { plantCatalog[plant.code] = plant; });
+    }
+
     function normalizeTransactionFromApi(item) {
+      const code = String(item.code || item.tcode || item.tCode || item.transactionCode || "").trim().toUpperCase();
       return {
-        code: item.code,
-        name: item.name || item.code,
+        code,
+        name: item.name || item.transactionName || code,
         module: item.module || "",
         stage: item.stage || "未分组",
-        script: item.script || item.scriptFile || (item.code + ".vbs"),
+        script: item.script || item.scriptFile || (code + ".vbs"),
         icon: item.icon || "terminal",
         params: item.paramsList || item.params || [],
         factoryRule: item.factoryRule || "",
         fixedPlants: item.fixedPlants || [],
+        plants: toArray(item.plants || item.defaultPlants || item.allowedPlants),
         defaultPlantGroup: item.defaultPlantGroup || "PINGHU_30",
         automation: item.automation || "openOnly",
+        selectableGroupIds: toArray(item.selectableGroupIds || item.selectableGroups),
+        businessAreaMode: item.businessAreaMode || "byPlant",
+        businessAreas: toArray(item.businessAreas),
         scriptVersion: item.scriptVersion || "",
         scriptHash: item.scriptHash || "",
-        enabled: item.enabled !== false
+        timeout: Number(item.timeoutSeconds || item.timeout || 180),
+        retry: Number(item.retryCount || item.retry || item.maxAttempts || 2),
+        enabled: boolValue(item.enabled ?? item.isActive, true)
       };
+    }
+
+    function normalizePlantFromApi(item) {
+      const code = String(item.code || item.plantCode || item.id || "").trim().toUpperCase();
+      return {
+        code,
+        name: item.name || item.plantName || code,
+        area: item.area || item.businessArea || "",
+        groups: toArray(item.groups || item.groupIds || item.plantGroups),
+        sortOrder: Number(item.sortOrder || item.sort_order || item.order || item.displayOrder || 0),
+        enabled: boolValue(item.enabled ?? item.isActive, true)
+      };
+    }
+
+    function normalizePlantGroupFromApi(item) {
+      const id = String(item.id || item.code || item.groupId || "").trim();
+      const plantsInGroup = toArray(item.plants || item.plantCodes || item.members);
+      const rawName = item.name || item.groupName || id;
+      const displayName = legacyBusinessRangeNames[rawName] || businessRangeLabels[id] || rawName || id;
+      return {
+        id,
+        name: displayName,
+        shortName: legacyBusinessRangeNames[item.shortName] || businessRangeLabels[id] || item.shortName || displayName,
+        plants: plantsInGroup,
+        zfi019nlAreas: toArray(item.zfi019nlAreas || item.zfi019nlBusinessAreas || item.businessAreas),
+        zfi080Areas: toArray(item.zfi080Areas || item.zfi080BusinessAreas || item.businessAreas),
+        zfi072Plants: toArray(item.zfi072Plants || item.zfi072PlantCodes || plantsInGroup),
+        zco019Plants: toArray(item.zco019Plants || item.zco019PlantCodes || plantsInGroup),
+        enabled: boolValue(item.enabled ?? item.isActive, true)
+      };
+    }
+
+    function normalizeTransactionRuleFromApi(item) {
+      const code = String(item.code || item.tcode || item.tCode || item.transactionCode || "").trim().toUpperCase();
+      const base = getTCode(code) || {};
+      return {
+        ...base,
+        code,
+        name: item.name || base.name || code,
+        module: item.module || base.module || "",
+        stage: item.stage || base.stage || "未分组",
+        script: item.script || item.scriptFile || base.script || (code + ".vbs"),
+        icon: item.icon || base.icon || "terminal",
+        params: toArray(item.paramsList || item.params || base.params),
+        factoryRule: item.factoryRule || item.ruleName || base.factoryRule || "",
+        fixedPlants: toArray(item.fixedPlants || item.fixedPlantCodes || item.plants || item.defaultPlants || item.allowedPlants || item.plantCodes),
+        plants: toArray(item.plants || item.defaultPlants || item.allowedPlants || item.plantCodes || item.fixedPlants || item.fixedPlantCodes),
+        selectableGroupIds: toArray(item.selectableGroupIds || item.selectableGroups || base.selectableGroupIds),
+        businessAreaMode: item.businessAreaMode || base.businessAreaMode || "byPlant",
+        businessAreas: toArray(item.businessAreas || item.businessAreaCodes || base.businessAreas),
+        defaultPlantGroup: item.defaultPlantGroup || item.plantGroupId || item.groupId || base.defaultPlantGroup || "PINGHU_30",
+        automation: item.automation || base.automation || "openOnly",
+        timeout: Number(item.timeoutSeconds || item.timeout || base.timeout || 180),
+        retry: Number(item.retryCount || item.retry || item.maxAttempts || base.retry || 2),
+        enabled: boolValue(item.enabled ?? item.isActive, true),
+        configSource: "api-config"
+      };
+    }
+
+    function normalizeRobotFromApi(item) {
+      const id = String(item.id || item.robotId || item.code || "").trim();
+      const bindings = Array.isArray(item.bindings) ? item.bindings : [];
+      return {
+        id,
+        name: item.name || item.robotName || id,
+        robotType: item.robotType || item.type || "dingtalk",
+        group: item.group || item.groupName || item.targetName || item.targetLabel || "",
+        events: toArray(item.events || item.eventTypes || item.subscriptions || bindings.map(binding => binding.eventName || binding.event || binding.tcode || binding.code)),
+        bindings,
+        enabled: boolValue(item.enabled ?? item.isActive, true),
+        lastPush: item.lastPush || item.lastSentAt || "",
+        hasWebhook: !!(item.hasWebhook || item.webhookConfigured || item.webhookMasked),
+        hasSecret: !!(item.hasSecret || item.secretConfigured || item.secretMasked)
+      };
+    }
+
+    function applyConfigData(data) {
+      const hasPlants = Array.isArray(data.plants);
+      const hasGroups = Array.isArray(data.plantGroups);
+      const hasRules = Array.isArray(data.transactionRules);
+      const hasRobots = Array.isArray(data.notificationRobots);
+      const nextPlants = hasPlants ? data.plants.map(normalizePlantFromApi).filter(item => item.code) : [];
+      const nextGroups = hasGroups ? data.plantGroups.map(normalizePlantGroupFromApi).filter(item => item.id) : [];
+      const nextRules = hasRules ? data.transactionRules.map(normalizeTransactionRuleFromApi).filter(item => item.code) : [];
+      const nextRobots = hasRobots ? data.notificationRobots.map(normalizeRobotFromApi).filter(item => item.id) : [];
+
+      if (hasPlants) {
+        plants = nextPlants;
+        Object.keys(plantCatalog).forEach(code => delete plantCatalog[code]);
+        plants.forEach(plant => { plantCatalog[plant.code] = plant; });
+      }
+      if (hasGroups) factoryGroups = nextGroups;
+      if (hasRules) {
+        const byCode = new Map(tCodes.map(item => [item.code, item]));
+        nextRules.forEach(rule => byCode.set(rule.code, rule));
+        tCodes = nextRules.length ? Array.from(byCode.values()) : tCodes;
+      }
+      if (hasRobots) robots = nextRobots;
+
+      state.config = {
+        online: true,
+        source: "api",
+        lastLoaded: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+        error: ""
+      };
+      syncExecutionDefaults(false);
+    }
+
+    async function refreshConfigData({ silent = true } = {}) {
+      try {
+        const data = await bridgeFetch(CONFIG_API_PATHS.root);
+        applyConfigData(data || {});
+        if (!silent) toast("基础配置已从 API 刷新", "ok");
+      } catch (err) {
+        state.config = {
+          online: false,
+          source: "fallback",
+          lastLoaded: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+          error: err.message || "基础配置 API 不可用"
+        };
+        restoreFallbackConfig({ includeTransactions: false });
+        if (!silent) toast("基础配置 API 未接通，当前显示只读静态默认值", "warn");
+      }
     }
 
     function normalizeRunFromApi(run) {
@@ -808,6 +1184,8 @@
           tCodes = txData.transactions.map(normalizeTransactionFromApi);
         }
 
+        await refreshConfigData({ silent: true });
+
         const runData = await bridgeFetch("/api/runs?limit=20");
         if (Array.isArray(runData.runs)) {
           history = runData.runs.map(normalizeRunFromApi);
@@ -819,6 +1197,8 @@
         state.bridge.online = false;
         state.bridge.queueMode = "";
         state.bridge.lastChecked = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+        state.config = { online: false, source: "fallback", lastLoaded: state.bridge.lastChecked, error: err.message || "本机 API 不可用" };
+        restoreFallbackConfig();
         if (!silent) toast("本机执行器未启动，继续使用协议唤醒模式", "warn");
         render();
       }
@@ -876,6 +1256,7 @@
             <nav class="nav">
               ${navButton("dashboard", "layout-dashboard", "工作台")}
               ${navButton("execute", "play-circle", "执行任务")}
+              ${navButton("reports", "bar-chart-3", "统计报表")}
               ${navButton("schedule", "calendar-clock", "定时任务")}
               ${navButton("config", "sliders-horizontal", "基础配置")}
             </nav>
@@ -911,10 +1292,11 @@
 
     function renderPageSubTitle() {
       const subtitles = {
-        dashboard: "快速发起 ZFI019NL 周损益链路，并检查本机执行器状态。",
+        dashboard: "",
         execute: "选择事务码和工厂参数，提交给本机 SapWebLauncher。",
+        reports: "",
         schedule: "只保留核心周损益任务，后续由常驻服务或后台调度承接。",
-        config: "维护工厂、事务码和通知参数，后续接入后台保存。"
+        config: "维护工厂、业务范围、事务码、工厂规则和通知机器人参数。"
       };
       return subtitles[state.page] || "";
     }
@@ -923,6 +1305,7 @@
       const map = {
         dashboard: renderDashboard,
         execute: renderExecute,
+        reports: renderReports,
         schedule: renderSchedule,
         config: renderConfig
       };
@@ -932,26 +1315,85 @@
     function renderDashboard() {
       return `
         <section class="panel">
-          <div class="panel-header">
-            <div><div class="panel-title">${icon("zap")}快速操作</div><div class="panel-sub">先按需求链路跑通事务码登录、默认工厂参数和脚本保存导出。</div></div>
-            <button class="btn small" data-action="go-execute" data-tcode="ZFI019NL">${icon("play")}进入执行</button>
-          </div>
           <div class="panel-body">
             ${renderTransactionGroups()}
-            <div style="height:16px"></div>
-              <div class="grid cols-3">
-              ${metric("本机执行器", bridgeStatusText(), bridgeStatusSubtext())}
-              ${metric("SAP 登录配置", "本机保存", "系统、客户端、账号和密码不放在网页里")}
-              ${metric("执行历史", state.bridge.online ? "SQLite" : "静态示例", state.bridge.online ? "最近刷新 " + state.bridge.lastChecked : "启动本机 Bridge 后自动切换")}
-            </div>
           </div>
         </section>
-        ${renderHistoryPanel()}
+      `;
+    }
+
+    function renderReports() {
+      const stats = buildReportStats(history);
+      return `
         <section class="panel">
-          <div class="panel-header"><div><div class="panel-title">${icon("route")}周损益自动化逻辑</div><div class="panel-sub">按需求文档的执行先后顺序展示，重点放在事务码、保存点和验证点。</div></div></div>
-          <div class="panel-body"><div class="workflow-map">${workflow.map(renderWorkflowStage).join("")}</div></div>
+          <div class="panel-header"><div><div class="panel-title">${icon("bar-chart-3")}任务执行统计报表</div></div></div>
+          <div class="panel-body">
+            <div class="report-toolbar">
+              <div class="field"><label>统计周期</label><input id="reportStart" type="date"></div>
+              <div class="field"><label>至</label><input id="reportEnd" type="date"></div>
+              <button class="btn primary" data-action="refresh-bridge">${icon("search")}查询</button>
+              <button class="btn" data-action="export-history">${icon("download")}导出报表</button>
+            </div>
+            <div class="report-metrics">
+              ${reportMetric("执行总次数", stats.total)}
+              ${reportMetric("成功率", stats.successRate + "%")}
+              ${reportMetric("平均耗时", stats.avgDuration)}
+              ${reportMetric("节省工时", stats.savedHours)}
+            </div>
+            ${renderTCodeRankTable(stats.tcodes)}
+          </div>
         </section>
       `;
+    }
+
+    function reportMetric(label, value) {
+      return `<div class="report-metric"><div class="report-metric-value">${esc(value)}</div><div class="report-metric-label">${esc(label)}</div></div>`;
+    }
+
+    function buildReportStats(rows) {
+      const list = rows || [];
+      const total = list.length;
+      const success = list.filter(row => row.status === "成功").length;
+      const durations = list.map(row => parseDurationSeconds(row.duration)).filter(value => value > 0);
+      const avgSeconds = durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0;
+      const byTCode = new Map();
+      const byPlant = new Map();
+      list.forEach(row => {
+        const t = byTCode.get(row.tCode) || { code: row.tCode || "-", total: 0, success: 0, failed: 0, seconds: [] };
+        t.total += 1;
+        if (row.status === "成功") t.success += 1;
+        if (row.status === "失败") t.failed += 1;
+        const seconds = parseDurationSeconds(row.duration);
+        if (seconds) t.seconds.push(seconds);
+        byTCode.set(t.code, t);
+        toArray(row.plant).forEach(plant => {
+          const p = byPlant.get(plant) || { plant, total: 0, success: 0, failed: 0, latest: "" };
+          p.total += 1;
+          if (row.status === "成功") p.success += 1;
+          if (row.status === "失败") p.failed += 1;
+          p.latest = row.time || p.latest;
+          byPlant.set(plant, p);
+        });
+      });
+      return {
+        total,
+        successRate: total ? Math.round(success * 1000 / total) / 10 : 0,
+        avgDuration: avgSeconds ? avgSeconds + "s" : "-",
+        savedHours: Math.round(total * 0.15 * 10) / 10,
+        tcodes: Array.from(byTCode.values()).sort((a, b) => b.total - a.total),
+        plants: Array.from(byPlant.values()).sort((a, b) => b.total - a.total)
+      };
+    }
+
+    function parseDurationSeconds(text) {
+      const value = String(text || "");
+      const min = Number((value.match(/(\d+)\s*分/) || [])[1] || 0);
+      const sec = Number((value.match(/(\d+)\s*秒/) || [])[1] || 0);
+      return min * 60 + sec;
+    }
+
+    function renderTCodeRankTable(rows) {
+      return `<section class="panel"><div class="panel-header"><div class="panel-title">${icon("trophy")}事务码执行排行</div></div><div class="panel-body table-wrap"><table><thead><tr><th>排名</th><th>事务码</th><th>执行次数</th><th>成功</th><th>失败</th><th>成功率</th><th>平均耗时</th></tr></thead><tbody>${rows.length ? rows.map((row, i) => `<tr><td>${i + 1}</td><td><span class="area-chip">${esc(row.code)}</span></td><td>${row.total}</td><td>${row.success}</td><td>${row.failed}</td><td>${row.total ? Math.round(row.success * 1000 / row.total) / 10 : 0}%</td><td>${row.seconds.length ? Math.round(row.seconds.reduce((s, v) => s + v, 0) / row.seconds.length) + "s" : "-"}</td></tr>`).join("") : `<tr><td colspan="7" class="empty-cell">暂无数据</td></tr>`}</tbody></table></div></section>`;
     }
 
     function metric(label, value, hint) {
@@ -996,7 +1438,7 @@
         if (!items.length) return "";
         return `
           <div class="transaction-group">
-            <div class="transaction-group-head"><span>${esc(stage)}</span><span class="tag info">${items.length} 个事务码</span></div>
+            <div class="transaction-group-head"><span>${esc(stage)}（${items.length}个事务码）</span></div>
             <div class="transaction-grid">${items.map(renderTransactionCard).join("")}</div>
           </div>
         `;
@@ -1011,9 +1453,13 @@
             <div class="transaction-meta">
               <div class="transaction-code">${esc(item.code)}</div>
               <div class="transaction-name">${esc(item.name)}</div>
+              <div class="transaction-tags">
+                <span class="tag info">${esc(item.stage || "-")}</span>
+                <span class="tag ${item.automation === "script" ? "ok" : "info"}">${item.automation === "script" ? "脚本" : "打开"}</span>
+              </div>
             </div>
           </div>
-          <button class="btn primary" data-action="go-execute" data-tcode="${esc(item.code)}">${icon("play")}执行</button>
+          <button class="btn primary small" data-action="go-execute" data-tcode="${esc(item.code)}">${icon("play")}执行</button>
         </div>
       `;
     }
@@ -1023,10 +1469,12 @@
         <div class="action-card">
           <div class="action-top">
             <div class="action-icon">${icon(iconName)}</div>
-            <div class="action-name">${esc(code)}</div>
-            <div class="action-desc">${esc(desc)}</div>
+            <div class="action-copy">
+              <div class="action-name">${esc(code)}</div>
+              <div class="action-desc">${esc(desc)}</div>
+            </div>
           </div>
-          <button class="btn primary" data-action="go-execute" data-tcode="${esc(code)}">${icon("play")}执行</button>
+          <button class="btn primary small" data-action="go-execute" data-tcode="${esc(code)}">${icon("play")}执行</button>
         </div>
       `;
     }
@@ -1054,41 +1502,22 @@
         <section class="grid cols-2">
           <div class="panel">
             <div class="panel-header">
-              <div><div class="panel-title">${icon("play-circle")}${esc(state.form.tCode)} 执行任务</div><div class="panel-sub">网页只传事务码和业务参数，本机程序负责 SAP 登录和脚本执行。</div></div>
+              <div><div class="panel-title">${icon("play-circle")}执行任务</div><div class="panel-sub">选择事务码后，按后台配置自动带入对应工厂。</div></div>
               <span class="tag ${state.role === "executor" ? "ok" : "warn"}">${state.role === "executor" ? "可执行" : "只读"}</span>
             </div>
             <div class="panel-body">
-              ${state.role === "viewer" ? `<div class="notice warn">当前是查询员角色，不能发起 SAP 执行。切换为执行员后再提交任务。</div><div style="height:14px"></div>` : ""}
-              <div class="form-grid">
-                <div class="field">
-                  <label for="tCode">事务码</label>
-                  <select id="tCode" data-bind="tCode">${tCodes.map(x => `<option value="${x.code}" ${state.form.tCode === x.code ? "selected" : ""}>${x.code} - ${x.name}</option>`).join("")}</select>
+              <div class="execute-shell">
+                ${state.role === "viewer" ? `<div class="notice warn">当前是查询员角色，不能发起 SAP 执行。切换为执行员后再提交任务。</div>` : ""}
+                <div class="execute-form-grid">
+                  <div class="field">
+                    <label for="tCode">事务码</label>
+                    <select id="tCode" data-bind="tCode">${tCodes.map(x => `<option value="${x.code}" ${state.form.tCode === x.code ? "selected" : ""}>${x.code} - ${x.name}</option>`).join("")}</select>
+                  </div>
                 </div>
-                <div class="field">
-                  <label for="factoryGroup">厂区组</label>
-                  <select id="factoryGroup" data-bind="factoryGroup">${factoryGroups.map(x => `<option value="${x.id}" ${state.form.factoryGroup === x.id ? "selected" : ""}>${x.name}</option>`).join("")}</select>
+                ${renderExecutePlants()}
+                <div class="execute-actions">
+                  <button class="btn primary" data-action="start-run" ${state.role !== "executor" || state.executing ? "disabled" : ""}>${icon("play")}开始执行</button>
                 </div>
-                <div class="field span-3">
-                  <label>工厂参数</label>
-                  ${renderPlantSelector()}
-                </div>
-                <div class="field span-2">
-                  <label for="remark">备注</label>
-                  <input id="remark" data-bind="remark" value="${esc(state.form.remark)}" placeholder="可填写本次执行说明">
-                </div>
-                <div class="field">
-                  <label>通知</label>
-                  <label class="radio-chip"><input type="checkbox" id="notify" ${state.form.notify ? "checked" : ""}>完成后推送钉钉</label>
-                </div>
-              </div>
-              <div style="height:14px"></div>
-              ${renderScriptPreview()}
-              <div style="height:14px"></div>
-              ${renderRunSummary()}
-              <div style="height:16px"></div>
-              <div class="top-actions" style="justify-content:flex-start">
-                <button class="btn primary" data-action="start-run" ${state.role !== "executor" || state.executing ? "disabled" : ""}>${icon("play")}开始执行</button>
-                <button class="btn" data-action="wake-protocol">${icon("radio")}只唤醒本机执行器</button>
               </div>
             </div>
           </div>
@@ -1104,81 +1533,17 @@
       `;
     }
 
-    function renderPlantSelector() {
-      const group = getFactoryGroup(state.form.factoryGroup);
-      const visiblePlants = group.plants.map(code => plantCatalog[code]).filter(Boolean);
-      const extraPlants = state.form.plants.filter(code => !group.plants.includes(code));
-      const extraPlantObjects = extraPlants.map(code => plantCatalog[code] || { code, name: "自动追加工厂", area: "", enabled: true });
-      const plantCards = [...visiblePlants, ...extraPlantObjects];
-      return `
-        <div class="select-grid">
-          <div class="factory-list">
-            ${factoryGroups.map(item => `
-              <button class="factory-button ${state.form.factoryGroup === item.id ? "active" : ""}" data-action="select-factory-group" data-group="${esc(item.id)}">
-                <span>${esc(item.name)}</span><span class="tag info">${item.plants.length}</span>
-              </button>
-            `).join("")}
-          </div>
-          <div>
-            <div class="notice ok">当前事务码会默认带入下方工厂参数。后续接入数据库后，这里改成可维护配置；SAP Script 只读取参数，不写死工厂。</div>
-            <div style="height:10px"></div>
-            <div class="plant-picker">
-              ${plantCards.map(plant => `
-                <label class="checkbox-card">
-                  <input type="checkbox" data-plant-code="${esc(plant.code)}" ${state.form.plants.includes(plant.code) ? "checked" : ""}>
-                  <span><strong>${esc(plant.code)} - ${esc(plant.name)}</strong><span>${plant.area ? "业务范围 " + esc(plant.area) : "无业务范围"}，用于 ${esc(state.form.tCode)} 参数</span></span>
-                </label>
-              `).join("")}
-            </div>
-            <div style="height:10px"></div>
-            <div class="top-actions" style="justify-content:flex-start">
-              <button class="btn small" data-action="select-all-plants">${icon("check-square")}全选当前组</button>
-              <button class="btn small" data-action="clear-plants">${icon("square")}清空</button>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    function renderRunSummary() {
+    function renderExecutePlants() {
       const payload = buildRunPayload();
       return `
-        <div class="run-summary">
-          <div class="summary-row"><span>厂区组</span><strong>${esc(payload.factoryGroupName)}</strong></div>
-          <div class="summary-row"><span>工厂</span><div class="area-chips">${payload.plants.map(x => `<span class="area-chip">${esc(x)}</span>`).join("") || `<span class="area-chip">未选择</span>`}</div></div>
-        </div>
-      `;
-    }
-
-    function renderScriptPreview() {
-      const payload = buildRunPayload();
-      const t = getTCode(payload.tcode);
-      const paramLabels = {
-        year: "脚本内年度",
-        week: "脚本内周别",
-        plants: "工厂",
-        businessAreas: "脚本内业务范围",
-        weekEnd: "脚本内日期"
-      };
-      const previewItems = [
-        ["事务码", payload.tcode + " - " + t.name],
-        ["脚本文件", t.script],
-        ["脚本状态", t.automation === "script" ? "已接独立 VBS" : "未录制完整脚本，先打开事务码"],
-        ["页面传参", "只传事务码、脚本文件、厂区组和工厂"],
-        ["其他条件", "年度、周别、日期等查询条件由对应 VBS 内部处理"],
-        ["工厂规则", t.factoryRule],
-        ["脚本说明", (t.params || []).map(p => paramLabels[p] || p).join("、") || "无"]
-      ];
-      return `
-        <div class="param-preview">
-          <div class="notice ok">公共页面只维护工厂参数；各事务码不同的查询条件放在 VBS 顶部参数区或录制脚本内部。</div>
-          <div class="param-grid">
-            ${previewItems.map(([label, value]) => `<div class="param-item"><div class="param-label">${esc(label)}</div><div class="param-value">${esc(value)}</div></div>`).join("")}
+        <div class="execute-range">
+          <div class="execute-range-row">
+            <div class="execute-range-label">执行工厂</div>
+            <div class="area-chips">${payload.plants.map(code => `<span class="area-chip">${esc(code)}</span>`).join("") || `<span class="area-chip">未配置</span>`}</div>
           </div>
         </div>
       `;
     }
-
     function unique(list) {
       return [...new Set((list || []).filter(Boolean))];
     }
@@ -1188,22 +1553,65 @@
     }
 
     function getFactoryGroup(id) {
-      return factoryGroups.find(group => group.id === id) || factoryGroups[0];
+      const group = factoryGroups.find(group => group.id === id);
+      if (group) {
+        const displayName = legacyBusinessRangeNames[group.name] || businessRangeLabels[group.id] || group.name;
+        return { ...group, name: displayName, shortName: legacyBusinessRangeNames[group.shortName] || businessRangeLabels[group.id] || group.shortName || displayName };
+      }
+      return factoryGroups[0] ? {
+        ...factoryGroups[0],
+        name: legacyBusinessRangeNames[factoryGroups[0].name] || businessRangeLabels[factoryGroups[0].id] || factoryGroups[0].name,
+        shortName: legacyBusinessRangeNames[factoryGroups[0].shortName] || businessRangeLabels[factoryGroups[0].id] || factoryGroups[0].shortName || factoryGroups[0].name
+      } : {
+        id: "",
+        name: "未配置业务范围",
+        shortName: "未配置",
+        plants: [],
+        zfi019nlAreas: [],
+        zfi080Areas: [],
+        zfi072Plants: [],
+        zco019Plants: []
+      };
     }
 
     function getBusinessAreaName(code) {
       return (businessAreaCatalog.find(item => item.code === code) || {}).name || "";
     }
 
+    function getRulePlantList(t, group) {
+      const explicitPlants = toArray(t?.plants);
+      if (explicitPlants.length) return explicitPlants;
+      const fixedPlants = toArray(t?.fixedPlants);
+      if (state.config.online && t?.configSource === "api-config") {
+        if (fixedPlants.length) return fixedPlants;
+        if (t?.code === "ZFI072A" || t?.code === "ZFI072" || t?.code === "ZFI072N") return toArray(group?.zfi072Plants || group?.plants);
+        if (t?.code === "ZCO019") return toArray(group?.zco019Plants || group?.plants);
+        return toArray(group?.plants);
+      }
+      return fixedPlants;
+    }
+
     function getDefaultPlantsForTCode(tCode, groupId = state.form.factoryGroup) {
+      const t = getTCode(tCode);
       const group = getFactoryGroup(groupId);
-      if (tCode === "ZFI072A") return unique(zfi072PlantRule);
+      const rulePlants = getRulePlantList(t, group);
+      if (rulePlants.length) return unique(rulePlants);
+      if (tCode === "ZFI072A") return unique(toArray(group.zfi072Plants).length ? group.zfi072Plants : (state.config.online ? group.plants : zfi072PlantRule));
       if (tCode === "ZFI072" || tCode === "ZFI072N") return unique([...procurementPlants, ...group.zfi072Plants]);
       if (tCode === "ZCO019") return unique(group.zco019Plants);
       return unique(group.plants);
     }
 
+    function getResolvedPlantsForRule(t, groupId = t?.defaultPlantGroup) {
+      return getDefaultPlantsForTCode(t?.code || "", groupId);
+    }
+
     function getRunPlantsForTCode(tCode, selectedPlants) {
+      const t = getTCode(tCode);
+      if (state.config.online && t?.configSource === "api-config") {
+        const selected = unique(selectedPlants);
+        return selected.length ? selected : getDefaultPlantsForTCode(tCode);
+      }
       if (tCode === "ZFI072A") return [...zfi072PlantRule];
       return unique(selectedPlants);
     }
@@ -1211,8 +1619,8 @@
     function getBusinessAreasForSelection(tCode, selectedPlants = state.form.plants, groupId = state.form.factoryGroup) {
       const group = getFactoryGroup(groupId);
       if (!selectedPlants.length) return [];
-      if (tCode === "ZFI019NL") return unique(group.zfi019nlAreas);
-      if (tCode === "ZFI080") return unique(group.zfi080Areas);
+      if (tCode === "ZFI019NL") return unique(toArray(group.zfi019nlAreas).length ? group.zfi019nlAreas : selectedPlants.map(code => plantCatalog[code]?.area));
+      if (tCode === "ZFI080") return unique(toArray(group.zfi080Areas).length ? group.zfi080Areas : selectedPlants.map(code => plantCatalog[code]?.area));
       if (tCode === "ZCO019" || tCode === "ZFI057") {
         return unique(selectedPlants.map(code => plantCatalog[code]?.area));
       }
@@ -1272,12 +1680,18 @@
       return `
         <section class="panel">
           <div class="panel-header">
-            <div><div class="panel-title">${icon("sliders-horizontal")}基础配置</div><div class="panel-sub">维护执行参数来源，后续接入后台保存。</div></div>
+            <div><div class="panel-title">${icon("sliders-horizontal")}基础配置</div></div>
+            <div class="top-actions">
+              <a class="btn small" href="db-viewer.html" target="_blank" rel="noopener">${icon("database")}数据库查看</a>
+              <button class="btn small" data-action="refresh-config">${icon("refresh-cw")}刷新配置</button>
+            </div>
           </div>
           <div class="panel-body">
             <div class="tabs">
               ${tabButton("plant", "factory", "工厂配置")}
+              ${tabButton("group", "layers", "业务范围配置")}
               ${tabButton("tcode", "terminal", "事务码配置")}
+              ${tabButton("rule", "git-branch", "事务码与工厂/业务范围规则")}
               ${tabButton("robot", "message-circle", "通知机器人")}
             </div>
             ${renderConfigTab()}
@@ -1290,21 +1704,213 @@
       return `<button class="tab ${state.activeConfigTab === tab ? "active" : ""}" data-config-tab="${tab}">${icon(iconName)}${text}</button>`;
     }
 
+    function renderConfigStatus() {
+      const online = state.bridge.online && state.config.online;
+      const title = online ? "API 配置源已连接" : "离线只读模式";
+      const sub = online
+        ? `基础配置保存到本地 SQLite，经 API 写入数据库。数据来自 ${BRIDGE_API}${CONFIG_API_PATHS.root}，最近刷新 ${state.config.lastLoaded || state.bridge.lastChecked || "-"}`
+        : `当前显示页面内置静态默认值，新增/编辑/删除已禁用。${state.config.error ? "原因：" + state.config.error : "请启动本机 Bridge 后刷新。"}`;
+      return `
+        <div class="config-status">
+          <div class="config-status-main">
+            <div class="config-status-title">${icon(online ? "database" : "wifi-off")}<span>${esc(title)}</span><span class="tag ${online ? "ok" : "warn"}">${online ? "可保存" : "只读"}</span></div>
+            <div class="config-status-sub">${esc(sub)}</div>
+          </div>
+          <button class="btn small" data-action="refresh-config">${icon("refresh-cw")}刷新</button>
+        </div>
+      `;
+    }
+
     function renderConfigTab() {
       if (state.activeConfigTab === "plant") {
-        return `
-          <div class="table-wrap"><table><thead><tr><th>厂区组</th><th>工厂范围</th><th>ZFI019NL 业务范围</th><th>ZFI080 业务范围</th><th>ZFI072 工厂</th><th>ZCO019 工厂</th></tr></thead><tbody>${factoryGroups.map(group => `<tr><td><strong>${group.name}</strong></td><td>${group.plants.join(",")}</td><td>${group.zfi019nlAreas.join(",")}</td><td>${group.zfi080Areas.join(",")}</td><td>${group.zfi072Plants.join(",")}</td><td>${group.zco019Plants.join(",")}</td></tr>`).join("")}</tbody></table></div>
-          <div style="height:14px"></div>
-          <div class="table-wrap"><table><thead><tr><th>工厂代码</th><th>工厂名称</th><th>业务范围</th><th>所属组</th><th>状态</th><th>操作</th></tr></thead><tbody>${plants.map(p => `<tr><td><strong>${p.code}</strong></td><td>${p.name}</td><td>${p.area || "-"}</td><td>${p.groups.map(id => getFactoryGroup(id).shortName || id).join(",")}</td><td><span class="tag ${p.enabled ? "ok" : "warn"}">${p.enabled ? "启用" : "停用"}</span></td><td><button class="btn small" data-action="toast-edit">${icon("pencil")}编辑</button></td></tr>`).join("")}</tbody></table></div>
-        `;
+        return renderPlantConfigTab();
+      }
+      if (state.activeConfigTab === "group") {
+        return renderPlantGroupConfigTab();
       }
       if (state.activeConfigTab === "tcode") {
-        return `<div class="table-wrap"><table><thead><tr><th>阶段</th><th>事务码</th><th>名称</th><th>脚本文件</th><th>参数</th><th>工厂规则</th><th>状态</th></tr></thead><tbody>${tCodes.map(t => `<tr><td>${t.stage}</td><td><strong>${t.code}</strong></td><td>${t.name}</td><td>${t.script}</td><td>${(t.params || []).join(",")}</td><td>${t.factoryRule}</td><td><span class="tag ${t.automation === "script" ? "ok" : "warn"}">${t.automation === "script" ? "已接脚本" : "待录制"}</span></td></tr>`).join("")}</tbody></table></div>`;
+        return renderTransactionConfigTab();
+      }
+      if (state.activeConfigTab === "rule") {
+        return renderTransactionRuleConfigTab();
       }
       if (state.activeConfigTab === "robot") {
-        return `<div class="table-wrap"><table><thead><tr><th>机器人</th><th>钉钉群</th><th>事件</th><th>状态</th><th>操作</th></tr></thead><tbody>${robots.map(r => `<tr><td>${r.name}</td><td>${r.group}</td><td>${r.events}</td><td><span class="tag ok">启用</span></td><td><button class="btn small" data-action="test-robot">${icon("send")}测试推送</button></td></tr>`).join("")}</tbody></table></div>`;
+        return renderRobotConfigTab();
       }
       return `<div class="notice">请选择上方配置页签。</div>`;
+    }
+
+    function configWriteDisabledAttr() {
+      return state.bridge.online && state.config.online ? "" : "disabled";
+    }
+
+    function renderPlantConfigTab() {
+      const disabled = configWriteDisabledAttr();
+      return `
+        <div class="config-section">
+          <div class="config-section-head">
+            <div><div class="config-section-title">${icon("factory")}工厂主数据</div><div class="table-hint">普通维护只看工厂代码、名称/说明、所属业务范围、启用和排序；页面不保存 SAP 账号或密码。</div></div>
+            <button class="btn primary small" data-action="open-config-modal" data-kind="plant" data-mode="add" ${disabled}>${icon("plus")}新增工厂</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>工厂代码</th><th>名称/说明</th><th>所属业务范围</th><th>排序</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>${plants.length ? plants.map(p => `
+                <tr>
+                  <td><strong>${esc(p.code)}</strong></td>
+                  <td>${esc(p.name)}</td>
+                  <td>${renderGroupNames(p.groups)}</td>
+                  <td>${esc(p.sortOrder ?? 0)}</td>
+                  <td><span class="tag ${p.enabled ? "ok" : "warn"}">${p.enabled ? "启用" : "停用"}</span></td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="plant" data-mode="edit" data-id="${esc(p.code)}" ${disabled}>${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="plant" data-id="${esc(p.code)}" ${disabled}>${icon("trash-2")}删除</button></span></td>
+                </tr>`).join("") : `<tr><td colspan="6" class="empty-cell">暂无工厂配置</td></tr>`}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderPlantGroupConfigTab() {
+      const disabled = configWriteDisabledAttr();
+      return `
+        <div class="config-section">
+          <div class="config-section-head">
+            <div><div class="config-section-title">${icon("layers")}业务范围</div><div class="table-hint">执行页对应工厂和业务范围优先使用这里的 API 配置。</div></div>
+            <button class="btn primary small" data-action="open-config-modal" data-kind="group" data-mode="add" ${disabled}>${icon("plus")}新增业务范围</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>业务范围</th><th>包含工厂</th><th>ZFI019NL 业务范围</th><th>ZFI080 业务范围</th><th>ZFI072 工厂</th><th>ZCO019 工厂</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>${factoryGroups.length ? factoryGroups.map(group => `
+                <tr>
+                  <td><strong>${esc(getFactoryGroup(group.id).name)}</strong><div class="table-hint">${esc(group.id)}</div></td>
+                  <td>${renderCodeChips(group.plants)}</td>
+                  <td>${renderCodeChips(group.zfi019nlAreas)}</td>
+                  <td>${renderCodeChips(group.zfi080Areas)}</td>
+                  <td>${renderCodeChips(group.zfi072Plants)}</td>
+                  <td>${renderCodeChips(group.zco019Plants)}</td>
+                  <td><span class="tag ${group.enabled === false ? "warn" : "ok"}">${group.enabled === false ? "停用" : "启用"}</span></td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="group" data-mode="edit" data-id="${esc(group.id)}" ${disabled}>${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="group" data-id="${esc(group.id)}" ${disabled}>${icon("trash-2")}删除</button></span></td>
+                </tr>`).join("") : `<tr><td colspan="8" class="empty-cell">暂无业务范围配置</td></tr>`}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderTransactionConfigTab() {
+      const disabled = configWriteDisabledAttr();
+      return `
+        <div class="config-section">
+          <div class="config-section-head">
+            <div><div class="config-section-title">${icon("terminal")}事务码配置</div><div class="table-hint">维护事务码名称、模块、阶段、参数、超时、重试和启停。</div></div>
+            <button class="btn primary small" data-action="open-config-modal" data-kind="tcode" data-mode="add" ${disabled}>${icon("plus")}新增事务码</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>阶段</th><th>事务码</th><th>名称</th><th>模块</th><th>参数</th><th>超时（秒）</th><th>重试次数</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>${tCodes.length ? tCodes.map(t => `
+                <tr>
+                  <td>${esc(t.stage)}</td>
+                  <td><strong>${esc(t.code)}</strong></td>
+                  <td>${esc(t.name)}</td>
+                  <td>${esc(t.module || "-")}</td>
+                  <td>${renderCodeChips(t.params)}</td>
+                  <td>${esc(String(t.timeoutSeconds ?? t.timeout ?? "-"))}</td>
+                  <td>${esc(String(t.retryCount ?? t.retry ?? "-"))}</td>
+                  <td><span class="tag ${t.enabled === false ? "warn" : t.automation === "script" ? "ok" : "info"}">${t.enabled === false ? "停用" : t.automation === "script" ? "已接脚本" : "打开事务码"}</span></td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="tcode" data-mode="edit" data-id="${esc(t.code)}" ${disabled}>${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="tcode" data-id="${esc(t.code)}" ${disabled}>${icon("trash-2")}停用</button></span></td>
+                </tr>`).join("") : `<tr><td colspan="9" class="empty-cell">暂无事务码配置</td></tr>`}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderTransactionRuleConfigTab() {
+      const disabled = configWriteDisabledAttr();
+      return `
+        <div class="config-section">
+          <div class="config-section-head">
+            <div><div class="config-section-title">${icon("git-branch")}事务码与工厂/业务范围规则</div><div class="table-hint">维护事务码默认业务范围、对应工厂、规则说明和启停。</div></div>
+            <button class="btn primary small" data-action="open-config-modal" data-kind="rule" data-mode="add" ${disabled}>${icon("plus")}新增规则</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>事务码</th><th>默认业务范围</th><th>对应工厂</th><th>规则说明</th><th>状态</th><th>操作</th></tr></thead>
+              <tbody>${tCodes.length ? tCodes.map(t => `
+                <tr>
+                  <td><strong>${esc(t.code)}</strong><div class="table-hint">${esc(t.name)}</div></td>
+                  <td>${esc(getFactoryGroup(t.defaultPlantGroup)?.name || t.defaultPlantGroup || "-")}</td>
+                  <td>${renderCodeChips(getResolvedPlantsForRule(t))}</td>
+                  <td>${esc(t.factoryRule || "-")}</td>
+                  <td><span class="tag ${t.enabled === false ? "warn" : "ok"}">${t.enabled === false ? "停用" : "启用"}</span></td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="rule" data-mode="edit" data-id="${esc(t.code)}" ${disabled}>${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="rule" data-id="${esc(t.code)}" ${disabled}>${icon("trash-2")}停用</button></span></td>
+                </tr>`).join("") : `<tr><td colspan="6" class="empty-cell">暂无事务码与工厂/业务范围规则</td></tr>`}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderRobotConfigTab() {
+      const disabled = configWriteDisabledAttr();
+      return `
+        <div class="config-section">
+          <div class="config-section-head">
+            <div><div class="config-section-title">${icon("message-circle")}通知机器人</div><div class="table-hint">前端只显示是否已配置密钥。Webhook URL、secret、token 不展示、不缓存；保存时可输入替换值。</div></div>
+            <button class="btn primary small" data-action="open-config-modal" data-kind="robot" data-mode="add" ${disabled}>${icon("plus")}新增机器人</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>机器人</th><th>通知群/别名</th><th>事件</th><th>Webhook 状态</th><th>Secret 状态</th><th>状态</th><th>最近推送</th><th>操作</th></tr></thead>
+              <tbody>${robots.length ? robots.map(r => `
+                <tr>
+                  <td><strong>${esc(r.name)}</strong><div class="table-hint">${esc(r.id)}</div></td>
+                  <td>${esc(r.group || "-")}</td>
+                  <td>${renderCodeChips(r.events)}</td>
+                  <td>${renderSecretState(r.hasWebhook)}</td>
+                  <td>${renderSecretState(r.hasSecret)}</td>
+                  <td><span class="tag ${r.enabled ? "ok" : "warn"}">${r.enabled ? "启用" : "停用"}</span></td>
+                  <td>${esc(r.lastPush || "-")}</td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="robot" data-mode="edit" data-id="${esc(r.id)}" ${disabled}>${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="robot" data-id="${esc(r.id)}" ${disabled}>${icon("trash-2")}删除</button><button class="btn small" data-action="test-robot" data-id="${esc(r.id)}" ${disabled}>${icon("send")}测试</button></span></td>
+                </tr>`).join("") : `<tr><td colspan="8" class="empty-cell">暂无通知机器人</td></tr>`}</tbody>
+            </table>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderCodeChips(values) {
+      const items = toArray(values);
+      if (!items.length) return `<span class="table-hint">-</span>`;
+      return `<div class="area-chips">${items.map(item => `<span class="area-chip">${esc(item)}</span>`).join("")}</div>`;
+    }
+
+    function renderGroupNames(groupIds) {
+      const names = toArray(groupIds).map(id => getFactoryGroup(id)?.shortName || getFactoryGroup(id)?.name || id);
+      return names.length ? esc(names.join(",")) : `<span class="table-hint">-</span>`;
+    }
+
+    function renderSecretState(value) {
+      return `<span class="secret-state">${value ? "已配置（已隐藏）" : "未配置"}</span>`;
+    }
+
+    function renderBusinessAreaModeText(value) {
+      const map = {
+        byPlant: "按工厂业务范围",
+        fixed: "固定业务范围",
+        byGroup: "按业务范围配置",
+        none: "不传业务范围"
+      };
+      return map[value] || value || "-";
+    }
+
+    function getConfiguredPlantsForRule(rule) {
+      if (toArray(rule.plants).length) return toArray(rule.plants);
+      if (toArray(rule.fixedPlants).length) return toArray(rule.fixedPlants);
+      const group = getFactoryGroup(rule.defaultPlantGroup);
+      return group ? group.plants : [];
     }
 
     function renderModal() {
@@ -1324,17 +1930,22 @@
         `;
       }
       if (state.modal === "schedule") {
+        const schedulePlants = getDefaultPlantsForTCode(state.scheduleForm.tCode, state.scheduleForm.factoryGroup);
         return `
           <div class="modal-backdrop">
             <div class="modal">
               <div class="modal-header"><strong>新建定时任务</strong><button class="btn small" data-action="close-modal">${icon("x")}关闭</button></div>
               <div class="modal-body">
                 <div class="form-grid">
-                  <div class="field span-2"><label>任务名称</label><input id="scheduleName" value="${esc(state.scheduleForm.name)}"></div>
                   <div class="field"><label>事务码</label><select id="scheduleTCode">${tCodes.map(t => `<option value="${t.code}" ${state.scheduleForm.tCode === t.code ? "selected" : ""}>${t.code} - ${t.name}</option>`).join("")}</select></div>
-                  <div class="field"><label>厂区组</label><select id="scheduleFactoryGroup">${factoryGroups.map(group => `<option value="${group.id}" ${state.scheduleForm.factoryGroup === group.id ? "selected" : ""}>${group.name}</option>`).join("")}</select></div>
+                  <div class="field span-2"><label>任务名称</label><input id="scheduleName" value="${esc(state.scheduleForm.name)}" placeholder="选择事务码后自动带出，可继续补充"></div>
+                  <div class="field"><label>业务范围</label><select id="scheduleFactoryGroup">${factoryGroups.map(group => `<option value="${group.id}" ${state.scheduleForm.factoryGroup === group.id ? "selected" : ""}>${getFactoryGroup(group.id).name}</option>`).join("")}</select></div>
                   <div class="field"><label>执行时间</label><input id="scheduleTime" type="time" value="${esc(state.scheduleForm.execTime)}"></div>
                   <div class="field"><label>执行频率</label><select id="scheduleFrequency"><option value="daily">每天</option><option value="weekly" selected>每周</option><option value="monthly">每月</option></select></div>
+                  <div class="schedule-plant-preview">
+                    <div class="schedule-plant-title">对应工厂</div>
+                    ${renderCodeChips(schedulePlants)}
+                  </div>
                   <div class="field span-2"><label>通知规则</label><div class="check-row"><label class="radio-chip"><input type="checkbox" checked>执行前提醒</label><label class="radio-chip"><input type="checkbox" checked>成功通知</label><label class="radio-chip"><input type="checkbox" checked>失败告警</label></div></div>
                 </div>
               </div>
@@ -1342,6 +1953,9 @@
             </div>
           </div>
         `;
+      }
+      if (state.modal && state.modal.startsWith("config:")) {
+        return renderConfigModal();
       }
       if (state.modal && state.modal.startsWith("log:")) {
         const id = state.modal.slice(4);
@@ -1386,6 +2000,141 @@
       return "";
     }
 
+    function renderConfigModal() {
+      const [, kind, mode, rawId = ""] = state.modal.split(":");
+      const id = decodeURIComponent(rawId);
+      const isEdit = mode === "edit";
+      const titleMap = {
+        plant: isEdit ? "编辑工厂" : "新增工厂",
+        group: isEdit ? "编辑业务范围" : "新增业务范围",
+        tcode: isEdit ? "编辑事务码" : "新增事务码",
+        rule: isEdit ? "编辑事务码规则" : "新增事务码规则",
+        robot: isEdit ? "编辑通知机器人" : "新增通知机器人"
+      };
+      return `
+        <div class="modal-backdrop">
+          <div class="modal">
+            <div class="modal-header"><strong>${esc(titleMap[kind] || "配置")}</strong><button class="btn small" data-action="close-modal">${icon("x")}关闭</button></div>
+            <div class="modal-body">${renderConfigModalBody(kind, mode, id)}</div>
+            <div class="modal-footer">
+              <button class="btn" data-action="close-modal">取消</button>
+              <button class="btn primary" data-action="save-config" data-kind="${esc(kind)}" data-mode="${esc(mode)}" data-id="${esc(id)}">${icon("save")}保存</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderConfigModalBody(kind, mode, id) {
+      if (kind === "plant") return renderPlantModalBody(mode, id);
+      if (kind === "group") return renderGroupModalBody(mode, id);
+      if (kind === "tcode") return renderTCodeModalBody(mode, id);
+      if (kind === "rule") return renderRuleModalBody(mode, id);
+      if (kind === "robot") return renderRobotModalBody(mode, id);
+      return `<div class="notice warn">未知配置类型。</div>`;
+    }
+
+    function renderPlantModalBody(mode, id) {
+      const item = mode === "edit" ? plants.find(p => p.code === id) : null;
+      const data = item || { code: "", name: "", area: "", groups: [], sortOrder: 0, enabled: true };
+      return `
+        <div class="form-grid">
+          <div class="field"><label>工厂代码</label><input id="cfgPlantCode" value="${esc(data.code)}" ${mode === "edit" ? "disabled" : ""} placeholder="例如 1022"></div>
+          <div class="field"><label>名称/说明</label><input id="cfgPlantName" value="${esc(data.name)}" placeholder="例如 平湖九厂"></div>
+          <div class="field"><label>所属业务范围</label><input id="cfgPlantGroups" value="${esc(toArray(data.groups).join(","))}" placeholder="例如 PINGHU_30"></div>
+          <div class="field"><label>业务范围</label><input id="cfgPlantArea" value="${esc(data.area)}" placeholder="例如 2800"></div>
+          <div class="field"><label>排序</label><input id="cfgPlantSortOrder" type="number" min="0" value="${esc(data.sortOrder ?? 0)}"></div>
+          <div class="field"><label>状态</label><label class="radio-chip"><input id="cfgPlantEnabled" type="checkbox" ${data.enabled !== false ? "checked" : ""}>启用</label></div>
+        </div>
+      `;
+    }
+
+    function renderGroupModalBody(mode, id) {
+      const item = mode === "edit" ? factoryGroups.find(group => group.id === id) : null;
+      const data = item || { id: "", name: "", shortName: "", plants: [], zfi019nlAreas: [], zfi080Areas: [], zfi072Plants: [], zco019Plants: [], enabled: true };
+      return `
+        <div class="form-grid">
+          <div class="field"><label>业务范围 ID</label><input id="cfgGroupId" value="${esc(data.id)}" ${mode === "edit" ? "disabled" : ""} placeholder="例如 PINGHU_30"></div>
+          <div class="field"><label>名称</label><input id="cfgGroupName" value="${esc(data.name)}" placeholder="例如 平湖二厂 / 平湖五厂"></div>
+          <div class="field"><label>短名称</label><input id="cfgGroupShortName" value="${esc(data.shortName)}" placeholder="例如 二厂/五厂"></div>
+          <div class="field span-3"><label>包含工厂</label><input id="cfgGroupPlants" value="${esc(toArray(data.plants).join(","))}" placeholder="多个用逗号分隔"></div>
+          <div class="field span-3"><label>ZFI019NL 业务范围</label><input id="cfgGroupZfi019nlAreas" value="${esc(toArray(data.zfi019nlAreas).join(","))}" placeholder="多个用逗号分隔"></div>
+          <div class="field span-3"><label>ZFI080 业务范围</label><input id="cfgGroupZfi080Areas" value="${esc(toArray(data.zfi080Areas).join(","))}" placeholder="多个用逗号分隔"></div>
+          <div class="field span-3"><label>ZFI072 工厂</label><input id="cfgGroupZfi072Plants" value="${esc(toArray(data.zfi072Plants).join(","))}" placeholder="留空则按包含工厂"></div>
+          <div class="field span-3"><label>ZCO019 工厂</label><input id="cfgGroupZco019Plants" value="${esc(toArray(data.zco019Plants).join(","))}" placeholder="留空则按包含工厂"></div>
+          <div class="field"><label>状态</label><label class="radio-chip"><input id="cfgGroupEnabled" type="checkbox" ${data.enabled !== false ? "checked" : ""}>启用</label></div>
+        </div>
+      `;
+    }
+
+    function renderTCodeModalBody(mode, id) {
+      const item = mode === "edit" ? getTCode(id) : null;
+      const data = item || { code: "", name: "", module: "", stage: "并行启动", script: "", params: ["year", "week", "plants"], icon: "terminal", automation: "openOnly", timeout: 180, retry: 2, enabled: true };
+      return `
+        <div class="form-grid">
+          <div class="field"><label>事务码</label><input id="cfgTCodeCode" value="${esc(data.code)}" ${mode === "edit" ? "disabled" : ""} placeholder="例如 ZFI072A"></div>
+          <div class="field"><label>名称</label><input id="cfgTCodeName" value="${esc(data.name)}"></div>
+          <div class="field"><label>模块</label><input id="cfgTCodeModule" value="${esc(data.module || "")}" placeholder="FI/CO/PP"></div>
+          <div class="field"><label>阶段</label><input id="cfgTCodeStage" value="${esc(data.stage || "")}" placeholder="例如 并行启动"></div>
+          <div class="field span-3"><label>参数</label><input id="cfgTCodeParams" value="${esc(toArray(data.params).join(","))}" placeholder="例如 year,week,plants"></div>
+          <div class="field"><label>超时秒数</label><input id="cfgTCodeTimeout" type="number" min="1" value="${esc(data.timeoutSeconds ?? data.timeout ?? 180)}"></div>
+          <div class="field"><label>重试次数</label><input id="cfgTCodeRetry" type="number" min="0" value="${esc(data.retryCount ?? data.retry ?? 0)}"></div>
+          <div class="field"><label>状态</label><label class="radio-chip"><input id="cfgTCodeEnabled" type="checkbox" ${data.enabled !== false ? "checked" : ""}>启用</label></div>
+        </div>
+      `;
+    }
+
+    function renderRuleModalBody(mode, id) {
+      const item = mode === "edit" ? getTCode(id) : null;
+      const data = item || { code: "", name: "", module: "", stage: "并行启动", script: "", params: ["year", "week", "plants"], factoryRule: "", defaultPlantGroup: factoryGroups[0]?.id || "", plants: [], fixedPlants: [], selectableGroupIds: [], businessAreaMode: "byPlant", businessAreas: [], automation: "openOnly", timeout: 180, retry: 2, enabled: true };
+      const selectedGroupId = data.defaultPlantGroup || factoryGroups[0]?.id || "";
+      const defaultPlants = getDefaultPlantsForTCode(data.code, selectedGroupId);
+      const customPlants = unique(toArray(data.plants).length ? data.plants : data.fixedPlants);
+      const resolvedPlants = customPlants.length ? customPlants : defaultPlants;
+      return `
+        <div class="form-grid">
+          <div class="field"><label>事务码</label><input id="cfgRuleCode" value="${esc(data.code)}" ${mode === "edit" ? "disabled" : ""} placeholder="例如 ZFI072A"></div>
+          <div class="field"><label>名称</label><input id="cfgRuleName" value="${esc(data.name)}"></div>
+          <div class="field"><label>默认业务范围</label><select id="cfgRuleDefaultGroup">${factoryGroups.map(group => `<option value="${esc(group.id)}" ${data.defaultPlantGroup === group.id ? "selected" : ""}>${esc(getFactoryGroup(group.id).name)}</option>`).join("")}</select></div>
+          <div class="field span-3"><label>规则说明</label><input id="cfgRuleFactoryRule" value="${esc(data.factoryRule || "")}" placeholder="例如 按配置工厂执行"></div>
+          <div class="rule-plant-editor">
+            <div class="rule-plant-head">
+              <div class="rule-plant-title">事务码执行工厂</div>
+              <button type="button" class="btn small" data-action="reset-rule-plants">${icon("rotate-ccw")}恢复默认</button>
+            </div>
+            <input type="hidden" id="cfgRulePlants" value="${esc(resolvedPlants.join(","))}">
+            <div id="cfgRulePlantChips" class="area-chips">${resolvedPlants.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-rule-plant" data-plant="${esc(code)}">${icon("x")}</button></span>`).join("") || `<span class="table-hint">未配置工厂</span>`}</div>
+            <div class="rule-plant-add">
+              <input id="cfgRulePlantAdd" placeholder="新增工厂代码">
+              <button type="button" class="btn small" data-action="add-rule-plant">${icon("plus")}新增</button>
+            </div>
+          </div>
+          <div class="field"><label>状态</label><label class="radio-chip"><input id="cfgRuleEnabled" type="checkbox" ${data.enabled !== false ? "checked" : ""}>启用</label></div>
+        </div>
+      `;
+    }
+
+    function renderRobotModalBody(mode, id) {
+      const item = mode === "edit" ? robots.find(robot => robot.id === id) : null;
+      const data = item || { id: "", name: "", robotType: "dingtalk", group: "", events: ["执行成功", "执行失败"], enabled: true, hasWebhook: false, hasSecret: false };
+      return `
+        <div class="notice warn">不会显示已有 webhook URL、secret 或 token。下方替换字段只在保存请求中发送，留空表示不变，前端不缓存输入值。</div>
+        <div style="height:14px"></div>
+        <div class="form-grid">
+          <div class="field"><label>机器人 ID</label><input id="cfgRobotId" value="${esc(data.id)}" ${mode === "edit" ? "disabled" : ""} placeholder="例如 dingtalk-finance"></div>
+          <div class="field"><label>机器人名称</label><input id="cfgRobotName" value="${esc(data.name)}"></div>
+          <div class="field"><label>机器人类型</label><select id="cfgRobotType"><option value="dingtalk" ${data.robotType !== "webhook" ? "selected" : ""}>钉钉</option><option value="webhook" ${data.robotType === "webhook" ? "selected" : ""}>通用 Webhook</option></select></div>
+          <div class="field"><label>通知群/别名</label><input id="cfgRobotGroup" value="${esc(data.group || "")}"></div>
+          <div class="field span-2"><label>事件</label><input id="cfgRobotEvents" value="${esc(toArray(data.events).join(","))}" placeholder="多个用逗号分隔"></div>
+          <div class="field"><label>Webhook 状态</label><input value="${data.hasWebhook ? "已配置（已隐藏）" : "未配置"}" disabled></div>
+          <div class="field"><label>Secret 状态</label><input value="${data.hasSecret ? "已配置（已隐藏）" : "未配置"}" disabled></div>
+          <div class="field span-2"><label>替换 Webhook URL</label><input id="cfgRobotWebhookReplacement" type="password" autocomplete="new-password" value="" placeholder="留空则保持不变"></div>
+          <div class="field"><label>替换 Secret</label><input id="cfgRobotSecretReplacement" type="password" autocomplete="new-password" value="" placeholder="留空则保持不变"></div>
+          <div class="field"><label>状态</label><label class="radio-chip"><input id="cfgRobotEnabled" type="checkbox" ${data.enabled !== false ? "checked" : ""}>启用</label></div>
+        </div>
+      `;
+    }
+
     function bindEvents() {
       document.querySelectorAll("[data-page]").forEach(btn => btn.addEventListener("click", () => { state.page = btn.dataset.page; render(); }));
       document.querySelectorAll("[data-config-tab]").forEach(btn => btn.addEventListener("click", () => { state.activeConfigTab = btn.dataset.configTab; render(); }));
@@ -1408,7 +2157,38 @@
       }));
       const notify = document.getElementById("notify");
       if (notify) notify.addEventListener("change", () => { state.form.notify = notify.checked; });
+      const scheduleTCode = document.getElementById("scheduleTCode");
+      if (scheduleTCode) scheduleTCode.addEventListener("change", () => updateScheduleTCode(scheduleTCode.value));
+      const scheduleFactoryGroup = document.getElementById("scheduleFactoryGroup");
+      if (scheduleFactoryGroup) scheduleFactoryGroup.addEventListener("change", () => updateScheduleFactoryGroup(scheduleFactoryGroup.value));
+      const scheduleName = document.getElementById("scheduleName");
+      if (scheduleName) scheduleName.addEventListener("input", () => {
+        state.scheduleForm.name = scheduleName.value;
+        state.scheduleForm.nameEdited = scheduleName.value.trim() !== defaultScheduleName(state.scheduleForm.tCode);
+      });
+      const ruleGroup = document.getElementById("cfgRuleDefaultGroup");
+      if (ruleGroup) ruleGroup.addEventListener("change", () => setRulePlantInput(getDefaultPlantsForTCode(readInputValue("cfgRuleCode"), ruleGroup.value)));
       document.querySelectorAll("[data-action]").forEach(el => el.addEventListener("click", () => handleAction(el)));
+    }
+
+    function defaultScheduleName(tCode) {
+      const t = getTCode(tCode);
+      return `${t.code} - ${t.name}`;
+    }
+
+    function updateScheduleTCode(tCode) {
+      state.scheduleForm.tCode = tCode;
+      state.scheduleForm.plants = getDefaultPlantsForTCode(tCode, state.scheduleForm.factoryGroup);
+      if (!state.scheduleForm.nameEdited) {
+        state.scheduleForm.name = defaultScheduleName(tCode);
+      }
+      render();
+    }
+
+    function updateScheduleFactoryGroup(groupId) {
+      state.scheduleForm.factoryGroup = groupId;
+      state.scheduleForm.plants = getDefaultPlantsForTCode(state.scheduleForm.tCode, groupId);
+      render();
     }
 
     function handleAction(el) {
@@ -1435,14 +2215,290 @@
         return render();
       }
       if (action === "open-register-help") { state.modal = "register"; return render(); }
-      if (action === "open-schedule-modal") { state.modal = "schedule"; return render(); }
+      if (action === "open-schedule-modal") { openScheduleModal(); return render(); }
       if (action === "close-modal") { state.modal = null; return render(); }
       if (action === "save-schedule") { state.modal = null; toast("定时任务已保存到本地示例配置", "ok"); return render(); }
-      if (action === "test-robot") return toast("已模拟发送钉钉测试消息", "ok");
+      if (action === "open-config-modal") return openConfigModal(el.dataset.kind, el.dataset.mode, el.dataset.id || "");
+      if (action === "save-config") return saveConfigFromModal(el.dataset.kind, el.dataset.mode, el.dataset.id || "");
+      if (action === "delete-config") return deleteConfigItem(el.dataset.kind, el.dataset.id || "");
+      if (action === "add-rule-plant") return addRulePlant();
+      if (action === "remove-rule-plant") return removeRulePlant(el.dataset.plant || "");
+      if (action === "reset-rule-plants") return setRulePlantInput(getDefaultPlantsForTCode(readInputValue("cfgRuleCode"), readInputValue("cfgRuleDefaultGroup")));
+      if (action === "test-robot") return testRobot(el.dataset.id || "");
       if (action === "toast-edit") return toast("编辑弹窗后续接入后台保存", "info");
+      if (action === "refresh-config") return refreshConfigWithRender();
       if (action === "refresh-bridge") return refreshBridgeData({ silent: false });
       if (action === "export-history") return exportHistory();
       if (action === "view-log") return openRunLog(el.dataset.run);
+    }
+
+    function openScheduleModal() {
+      if (!state.scheduleForm.tCode) state.scheduleForm.tCode = tCodes[0]?.code || "";
+      state.scheduleForm.plants = getDefaultPlantsForTCode(state.scheduleForm.tCode, state.scheduleForm.factoryGroup);
+      const currentDefault = defaultScheduleName(state.scheduleForm.tCode);
+      if (!state.scheduleForm.nameEdited || !state.scheduleForm.name || state.scheduleForm.name.includes("周损益链路")) {
+        state.scheduleForm.name = currentDefault;
+        state.scheduleForm.nameEdited = false;
+      }
+      state.modal = "schedule";
+    }
+
+    function openConfigModal(kind, mode, id = "") {
+      if (!state.bridge.online || !state.config.online) {
+        toast("当前为离线只读模式，不能修改基础配置", "warn");
+        return;
+      }
+      state.modal = `config:${kind}:${mode}:${encodeURIComponent(id)}`;
+      render();
+    }
+
+    async function refreshConfigWithRender() {
+      if (!state.bridge.online) {
+        await refreshBridgeData({ silent: false });
+        return;
+      }
+      await refreshConfigData({ silent: false });
+      render();
+    }
+
+    function readInputValue(id) {
+      return document.getElementById(id)?.value?.trim() || "";
+    }
+
+    function readInputChecked(id) {
+      return !!document.getElementById(id)?.checked;
+    }
+
+    function getRulePlantInput() {
+      return toArray(readInputValue("cfgRulePlants"));
+    }
+
+    function setRulePlantInput(plantsValue) {
+      const input = document.getElementById("cfgRulePlants");
+      const chips = document.getElementById("cfgRulePlantChips");
+      if (!input || !chips) return;
+      const plantsList = unique(toArray(plantsValue).map(item => item.toUpperCase()));
+      input.value = plantsList.join(",");
+      chips.innerHTML = plantsList.length
+        ? plantsList.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-rule-plant" data-plant="${esc(code)}">${icon("x")}</button></span>`).join("")
+        : `<span class="table-hint">未配置工厂</span>`;
+      chips.querySelectorAll("[data-action='remove-rule-plant']").forEach(btn => btn.addEventListener("click", () => removeRulePlant(btn.dataset.plant || "")));
+    }
+
+    function addRulePlant() {
+      const input = document.getElementById("cfgRulePlantAdd");
+      const code = (input?.value || "").trim().toUpperCase();
+      if (!code) return;
+      setRulePlantInput([...getRulePlantInput(), code]);
+      input.value = "";
+    }
+
+    function removeRulePlant(code) {
+      setRulePlantInput(getRulePlantInput().filter(item => item !== code));
+    }
+
+    function buildPlantConfigPayload(mode, id) {
+      const code = (mode === "edit" ? id : readInputValue("cfgPlantCode")).toUpperCase();
+      return {
+        code,
+        name: readInputValue("cfgPlantName"),
+        area: readInputValue("cfgPlantArea"),
+        businessArea: readInputValue("cfgPlantArea"),
+        groups: toArray(readInputValue("cfgPlantGroups")),
+        groupsCsv: toArray(readInputValue("cfgPlantGroups")).join(","),
+        sortOrder: Number(readInputValue("cfgPlantSortOrder") || 0),
+        enabled: readInputChecked("cfgPlantEnabled")
+      };
+    }
+
+    function buildGroupConfigPayload(mode, id) {
+      const groupId = mode === "edit" ? id : readInputValue("cfgGroupId");
+      const plantsValue = toArray(readInputValue("cfgGroupPlants"));
+      return {
+        id: groupId,
+        name: readInputValue("cfgGroupName"),
+        shortName: readInputValue("cfgGroupShortName"),
+        plants: plantsValue,
+        zfi019nlAreas: toArray(readInputValue("cfgGroupZfi019nlAreas")),
+        zfi019nlAreasCsv: toArray(readInputValue("cfgGroupZfi019nlAreas")).join(","),
+        zfi080Areas: toArray(readInputValue("cfgGroupZfi080Areas")),
+        zfi080AreasCsv: toArray(readInputValue("cfgGroupZfi080Areas")).join(","),
+        zfi072Plants: toArray(readInputValue("cfgGroupZfi072Plants")),
+        zfi072PlantsCsv: toArray(readInputValue("cfgGroupZfi072Plants")).join(","),
+        zco019Plants: toArray(readInputValue("cfgGroupZco019Plants")),
+        zco019PlantsCsv: toArray(readInputValue("cfgGroupZco019Plants")).join(","),
+        enabled: readInputChecked("cfgGroupEnabled")
+      };
+    }
+
+    function buildExistingTransactionPayload(code) {
+      const existing = tCodes.find(item => item.code === code) || {};
+      const plantsValue = toArray(existing.plants).length ? toArray(existing.plants) : toArray(existing.fixedPlants);
+      return {
+        code,
+        tcode: code,
+        name: existing.name || code,
+        module: existing.module || "",
+        stage: existing.stage || "",
+        script: existing.script || (code + ".vbs"),
+        scriptFile: existing.script || (code + ".vbs"),
+        icon: existing.icon || "terminal",
+        params: toArray(existing.params),
+        factoryRule: existing.factoryRule || "",
+        defaultPlantGroup: existing.defaultPlantGroup || "",
+        defaultGroup: existing.defaultPlantGroup || "",
+        plants: plantsValue,
+        plantsCsv: plantsValue.join(","),
+        fixedPlants: plantsValue,
+        fixedPlantsCsv: plantsValue.join(","),
+        selectableGroupIds: toArray(existing.selectableGroupIds),
+        selectableGroupIdsCsv: toArray(existing.selectableGroupIds).join(","),
+        businessAreaMode: existing.businessAreaMode || "byPlant",
+        businessAreas: toArray(existing.businessAreas),
+        businessAreasCsv: toArray(existing.businessAreas).join(","),
+        automation: existing.automation || "openOnly",
+        timeout: Number(existing.timeoutSeconds || existing.timeout || 180),
+        timeoutSeconds: Number(existing.timeoutSeconds || existing.timeout || 180),
+        retry: Number(existing.retryCount || existing.retry || 0),
+        retryCount: Number(existing.retryCount || existing.retry || 0),
+        enabled: existing.enabled !== false
+      };
+    }
+
+    function buildTCodeConfigPayload(mode, id) {
+      const code = (mode === "edit" ? id : readInputValue("cfgTCodeCode")).toUpperCase();
+      const payload = buildExistingTransactionPayload(code);
+      payload.name = readInputValue("cfgTCodeName");
+      payload.module = readInputValue("cfgTCodeModule");
+      payload.stage = readInputValue("cfgTCodeStage");
+      payload.script = readInputValue("cfgTCodeScript") || payload.script || (code + ".vbs");
+      payload.scriptFile = payload.script;
+      payload.icon = readInputValue("cfgTCodeIcon") || payload.icon || "terminal";
+      payload.params = toArray(readInputValue("cfgTCodeParams"));
+      payload.automation = readInputValue("cfgTCodeAutomation") || payload.automation || "openOnly";
+      payload.timeout = Number(readInputValue("cfgTCodeTimeout") || 180);
+      payload.timeoutSeconds = payload.timeout;
+      payload.retry = Number(readInputValue("cfgTCodeRetry") || 0);
+      payload.retryCount = payload.retry;
+      payload.enabled = readInputChecked("cfgTCodeEnabled");
+      return payload;
+    }
+
+    function buildRuleConfigPayload(mode, id) {
+      const code = (mode === "edit" ? id : readInputValue("cfgRuleCode")).toUpperCase();
+      const payload = buildExistingTransactionPayload(code);
+      const plantsValue = toArray(readInputValue("cfgRulePlants"));
+      const selectableInput = readInputValue("cfgRuleSelectableGroups");
+      const businessAreasInput = readInputValue("cfgRuleBusinessAreas");
+      const selectableGroupIds = selectableInput ? toArray(selectableInput) : toArray(payload.selectableGroupIds);
+      const businessAreas = businessAreasInput ? toArray(businessAreasInput) : toArray(payload.businessAreas);
+      payload.name = readInputValue("cfgRuleName") || payload.name || code;
+      payload.script = readInputValue("cfgRuleScript") || payload.script || (code + ".vbs");
+      payload.scriptFile = payload.script;
+      payload.factoryRule = readInputValue("cfgRuleFactoryRule");
+      payload.defaultPlantGroup = readInputValue("cfgRuleDefaultGroup");
+      payload.defaultGroup = payload.defaultPlantGroup;
+      payload.plants = plantsValue;
+      payload.plantsCsv = plantsValue.join(",");
+      payload.fixedPlants = plantsValue;
+      payload.fixedPlantsCsv = plantsValue.join(",");
+      payload.selectableGroupIds = selectableGroupIds;
+      payload.selectableGroupIdsCsv = selectableGroupIds.join(",");
+      payload.businessAreaMode = readInputValue("cfgRuleBusinessAreaMode") || payload.businessAreaMode || "byPlant";
+      payload.businessAreas = businessAreas;
+      payload.businessAreasCsv = businessAreas.join(",");
+      payload.enabled = readInputChecked("cfgRuleEnabled");
+      return payload;
+    }
+
+    function buildRobotConfigPayload(mode, id) {
+      const robotId = mode === "edit" ? id : readInputValue("cfgRobotId");
+      const events = toArray(readInputValue("cfgRobotEvents"));
+      const payload = {
+        id: robotId,
+        name: readInputValue("cfgRobotName"),
+        robotType: readInputValue("cfgRobotType") || "dingtalk",
+        type: readInputValue("cfgRobotType") || "dingtalk",
+        group: readInputValue("cfgRobotGroup"),
+        targetLabel: readInputValue("cfgRobotGroup"),
+        events,
+        bindings: events.map(eventName => ({ eventName, enabled: true })),
+        enabled: readInputChecked("cfgRobotEnabled")
+      };
+      const webhookReplacement = document.getElementById("cfgRobotWebhookReplacement")?.value || "";
+      const secretReplacement = document.getElementById("cfgRobotSecretReplacement")?.value || "";
+      if (webhookReplacement) {
+        payload.webhookReplacement = webhookReplacement;
+      }
+      if (secretReplacement) {
+        payload.secretReplacement = secretReplacement;
+      }
+      return payload;
+    }
+
+    function buildConfigPayload(kind, mode, id) {
+      if (kind === "plant") return buildPlantConfigPayload(mode, id);
+      if (kind === "group") return buildGroupConfigPayload(mode, id);
+      if (kind === "tcode") return buildTCodeConfigPayload(mode, id);
+      if (kind === "rule") return buildRuleConfigPayload(mode, id);
+      if (kind === "robot") return buildRobotConfigPayload(mode, id);
+      throw new Error("未知配置类型：" + kind);
+    }
+
+    function getConfigResourceId(kind, payload, fallbackId = "") {
+      if (kind === "plant") return payload.code || fallbackId;
+      if (kind === "group") return payload.id || fallbackId;
+      if (kind === "tcode") return payload.code || payload.tcode || fallbackId;
+      if (kind === "rule") return payload.code || payload.tcode || fallbackId;
+      if (kind === "robot") return payload.id || fallbackId;
+      return fallbackId;
+    }
+
+    function getConfigResourcePath(kind, id) {
+      if (kind === "plant") return CONFIG_API_PATHS.plants(id);
+      if (kind === "group") return CONFIG_API_PATHS.plantGroups(id);
+      if (kind === "tcode") return CONFIG_API_PATHS.transactionRules(id);
+      if (kind === "rule") return CONFIG_API_PATHS.transactionRules(id);
+      if (kind === "robot") return CONFIG_API_PATHS.notificationRobots(id);
+      throw new Error("未知配置类型：" + kind);
+    }
+
+    async function saveConfigFromModal(kind, mode, id = "") {
+      if (!state.bridge.online || !state.config.online) return toast("当前为离线只读模式，不能保存基础配置", "warn");
+      try {
+        const payload = buildConfigPayload(kind, mode, id);
+        const resourceId = getConfigResourceId(kind, payload, id);
+        if (!resourceId) throw new Error("缺少配置主键");
+        await bridgeFetch(getConfigResourcePath(kind, resourceId), {
+          method: "PUT",
+          body: JSON.stringify(payload)
+        });
+        state.modal = null;
+        await refreshConfigData({ silent: true });
+        toast("基础配置已保存", "ok");
+        render();
+      } catch (err) {
+        toast("保存失败：" + err.message, "err");
+      }
+    }
+
+    async function deleteConfigItem(kind, id) {
+      if (!state.bridge.online || !state.config.online) return toast("当前为离线只读模式，不能删除基础配置", "warn");
+      if (!id) return toast("缺少配置主键，无法删除", "warn");
+      try {
+        await bridgeFetch(getConfigResourcePath(kind, id), { method: "DELETE" });
+        await refreshConfigData({ silent: true });
+        toast("基础配置已删除", "ok");
+        render();
+      } catch (err) {
+        toast("删除失败：" + err.message, "err");
+      }
+    }
+
+    function testRobot(id) {
+      const robot = robots.find(item => item.id === id);
+      if (!state.bridge.online || !state.config.online) return toast("当前离线，只显示机器人配置状态，不能测试推送", "warn");
+      toast("已请求测试通知：" + (robot?.name || id || "通知机器人"), "ok");
     }
 
     function login() {
