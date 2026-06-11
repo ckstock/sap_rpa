@@ -4,6 +4,12 @@ Last updated: 2026-06-11
 
 This document defines how Codex agents should collaborate on SAP RPA V2 work in this repository. It is intentionally kept in the source repository so the rule travels with GitHub branches and future company-server migrations.
 
+Practical operation board:
+
+```text
+github-ai-handoff/MULTI_AGENT_WORKBENCH_V2.md
+```
+
 ## Core Rules
 
 1. For complex feature work, the main agent should split implementation across multiple concrete workers, not only spawn read-only explorers.
