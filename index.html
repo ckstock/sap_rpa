@@ -575,6 +575,19 @@
     .secret-state { color: #102a43; font-weight: 700; }
     .table-hint { color: var(--muted); font-size: 12px; line-height: 1.5; }
     .steps { display: grid; gap: 10px; }
+    .queue-strip {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #f8fbff;
+      padding: 10px 12px;
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+    }
+    .queue-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .queue-main { color: #102a43; font-weight: 700; }
+    .queue-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 12px; }
+    .queue-meta span { white-space: nowrap; }
     .step {
       display: grid;
       grid-template-columns: 28px minmax(0, 1fr) auto;
@@ -762,6 +775,7 @@
       executing: false,
       currentRun: null,
       bridge: { online: false, lastChecked: "", database: "", queueMode: "" },
+      queue: { online: false, runningRunId: "", queuedCount: null, queuePosition: null, runsAhead: null, workItemsAhead: null, lastChecked: "" },
       config: { online: false, source: "fallback", lastLoaded: "", error: "" },
       modal: null,
       form: {
@@ -774,9 +788,9 @@
         remark: ""
       },
       steps: [
-        { text: "创建执行任务", status: "pending", time: "" },
-        { text: "唤醒本机执行器", status: "pending", time: "" },
-        { text: "SAP 登录与事务码跳转", status: "pending", time: "" },
+        { text: "提交任务入队", status: "pending", time: "" },
+        { text: "等待串行执行器领取", status: "pending", time: "" },
+        { text: "SAP 会话与事务码跳转", status: "pending", time: "" },
         { text: "执行脚本并保存/导出", status: "pending", time: "" },
         { text: "记录日志并推送通知", status: "pending", time: "" }
       ],
@@ -1152,6 +1166,124 @@
       return Math.floor(ms / 60000) + " 分 " + Math.round((ms % 60000) / 1000) + " 秒";
     }
 
+    function toQueueNumber(value) {
+      if (value === undefined || value === null || value === "") return null;
+      const num = Number(value);
+      return Number.isFinite(num) ? num : null;
+    }
+
+    function pickQueueField(source, ...keys) {
+      for (const key of keys) {
+        if (source && source[key] !== undefined && source[key] !== null && source[key] !== "") return source[key];
+      }
+      return null;
+    }
+
+    function normalizeRunStatus(status) {
+      const value = String(status || "").toLowerCase();
+      if (value === "succeeded" || value === "completed") return "success";
+      if (value === "error") return "failed";
+      if (value === "cancelled") return "canceled";
+      if (value === "pending" || value === "created") return "queued";
+      if (value === "in_progress" || value === "processing" || value === "executing") return "running";
+      return value || "queued";
+    }
+
+    function mergeQueueInfo(data = {}, runId = "") {
+      const source = data.queue || data.queueStatus || data;
+      const queuedRuns = source.queuedRuns || source.queued || source.items || data.queuedRuns || data.queued || data.items;
+      let queuePosition = toQueueNumber(pickQueueField(source, "queuePosition", "position") ?? pickQueueField(data, "queuePosition", "position"));
+      let runsAhead = toQueueNumber(pickQueueField(source, "runsAhead", "ahead") ?? pickQueueField(data, "runsAhead", "ahead"));
+      let workItemsAhead = toQueueNumber(pickQueueField(source, "workItemsAhead") ?? pickQueueField(data, "workItemsAhead"));
+      let queuedCount = toQueueNumber(pickQueueField(source, "queuedCount", "queueCount", "pendingCount", "waitingCount") ?? pickQueueField(data, "queuedCount", "queueCount", "pendingCount", "waitingCount"));
+      const runningRunId = String(
+        pickQueueField(source, "runningRunId", "currentRunId") ??
+        pickQueueField(data, "runningRunId", "currentRunId") ??
+        source.running?.runId ??
+        source.running?.id ??
+        data.running?.runId ??
+        data.running?.id ??
+        ""
+      );
+      if (runsAhead === null && queuePosition !== null) runsAhead = Math.max(queuePosition - 1, 0);
+      if (workItemsAhead === null) {
+        const hasOtherRunning = !!runningRunId && (!runId || runningRunId !== runId);
+        workItemsAhead = runsAhead !== null ? runsAhead + (hasOtherRunning ? 1 : 0) : null;
+      }
+      if (queuedCount === null && Array.isArray(queuedRuns)) queuedCount = queuedRuns.length;
+
+      const hasRunningField = (source && ("runningRunId" in source || "currentRunId" in source || "running" in source)) ||
+        (data && ("runningRunId" in data || "currentRunId" in data || "running" in data));
+
+      state.queue = {
+        online: true,
+        runningRunId: hasRunningField ? runningRunId : (runningRunId || state.queue.runningRunId || ""),
+        queuedCount: queuedCount !== null ? queuedCount : state.queue.queuedCount,
+        queuePosition: queuePosition !== null ? queuePosition : state.queue.queuePosition,
+        runsAhead: runsAhead !== null ? runsAhead : state.queue.runsAhead,
+        workItemsAhead: workItemsAhead !== null ? workItemsAhead : state.queue.workItemsAhead,
+        lastChecked: nowTime()
+      };
+
+      if (state.currentRun && runId && state.currentRun.id === runId) {
+        state.currentRun.queuePosition = queuePosition !== null ? queuePosition : state.currentRun.queuePosition;
+        state.currentRun.runsAhead = runsAhead !== null ? runsAhead : state.currentRun.runsAhead;
+        state.currentRun.workItemsAhead = workItemsAhead !== null ? workItemsAhead : state.currentRun.workItemsAhead;
+        state.currentRun.queuedCount = queuedCount !== null ? queuedCount : state.currentRun.queuedCount;
+        state.currentRun.runningRunId = state.queue.runningRunId;
+        state.currentRun.status = normalizeRunStatus(data.status || state.currentRun.status);
+      }
+    }
+
+    function queueAheadText(run = state.currentRun) {
+      const status = normalizeRunStatus(run?.status);
+      if (status === "running") return "正在执行";
+      if (status === "success") return "已完成";
+      if (status === "failed") return "执行失败";
+      if (status === "canceled") return "已取消";
+      const workItemsAhead = toQueueNumber(run?.workItemsAhead ?? state.queue.workItemsAhead);
+      if (workItemsAhead !== null) return "前方 " + workItemsAhead + " 个任务";
+      const runsAhead = toQueueNumber(run?.runsAhead ?? state.queue.runsAhead);
+      if (runsAhead !== null) return "前方 " + runsAhead + " 个任务";
+      const queuePosition = toQueueNumber(run?.queuePosition ?? state.queue.queuePosition);
+      if (queuePosition !== null) return "排队位置 " + queuePosition;
+      return "等待执行器领取";
+    }
+
+    function addRunStatusLog(type, key, message) {
+      if (state.currentRun && state.currentRun.lastStatusLogKey === key) return;
+      if (state.currentRun) state.currentRun.lastStatusLogKey = key;
+      addLog(type, message);
+    }
+
+    function mergeRunLogs(run) {
+      const lines = Array.isArray(run?.logs) ? run.logs : [];
+      if (!state.currentRun) return;
+      state.currentRun.seenBackendLogs ||= new Set();
+      lines.forEach(line => {
+        const message = line.message || "";
+        if (!message) return;
+        const key = (line.createdAt || "") + "|" + (line.level || "") + "|" + message;
+        if (state.currentRun.seenBackendLogs.has(key)) return;
+        state.currentRun.seenBackendLogs.add(key);
+        const level = String(line.level || "INFO").toUpperCase();
+        addLog(level === "ERROR" || level === "ERR" ? "ERR" : level === "WARN" ? "WARN" : "INFO", message);
+      });
+    }
+
+    async function refreshQueueStatus({ silent = true, runId = "" } = {}) {
+      if (!state.bridge.online || state.bridge.queueMode === "disabled") return null;
+      try {
+        const data = await bridgeFetch("/api/queue/status");
+        mergeQueueInfo(data, runId);
+        return data;
+      } catch (err) {
+        state.queue.online = false;
+        if (!silent) toast("队列状态接口暂不可用", "warn");
+        return null;
+      }
+    }
+
     function bridgeStatusText() {
       if (!state.bridge.online) return "sap-rpa://";
       return state.bridge.queueMode === "disabled" ? "API 已连接 / 队列禁用" : "API 已连接 / 串行队列";
@@ -1160,7 +1292,7 @@
     function bridgeStatusSubtext() {
       if (!state.bridge.online) return "点击执行时由浏览器唤醒 SapWebLauncher";
       if (state.bridge.queueMode === "disabled") return "当前只创建 SQLite 任务，不会启动 SAP";
-      return "本机 API 会创建任务并由后台队列执行 SAP";
+      return "本机 API 会提交任务，SAP GUI 由后台串行执行";
     }
 
     function render() {
@@ -1185,6 +1317,7 @@
         }
 
         await refreshConfigData({ silent: true });
+        await refreshQueueStatus({ silent: true });
 
         const runData = await bridgeFetch("/api/runs?limit=20");
         if (Array.isArray(runData.runs)) {
@@ -1197,6 +1330,7 @@
         state.bridge.online = false;
         state.bridge.queueMode = "";
         state.bridge.lastChecked = new Date().toLocaleTimeString("zh-CN", { hour12: false });
+        state.queue = { online: false, runningRunId: "", queuedCount: null, queuePosition: null, runsAhead: null, workItemsAhead: null, lastChecked: state.bridge.lastChecked };
         state.config = { online: false, source: "fallback", lastLoaded: state.bridge.lastChecked, error: err.message || "本机 API 不可用" };
         restoreFallbackConfig();
         if (!silent) toast("本机执行器未启动，继续使用协议唤醒模式", "warn");
@@ -1293,7 +1427,7 @@
     function renderPageSubTitle() {
       const subtitles = {
         dashboard: "",
-        execute: "选择事务码和工厂参数，提交给本机 SapWebLauncher。",
+        execute: "选择事务码和工厂参数，提交到后台串行队列。",
         reports: "",
         schedule: "只保留核心周损益任务，后续由常驻服务或后台调度承接。",
         config: "维护工厂、业务范围、事务码、工厂规则和通知机器人参数。"
@@ -1459,7 +1593,7 @@
               </div>
             </div>
           </div>
-          <button class="btn primary small" data-action="go-execute" data-tcode="${esc(item.code)}">${icon("play")}执行</button>
+          <button class="btn primary small" data-action="go-execute" data-tcode="${esc(item.code)}">${icon("send")}提交</button>
         </div>
       `;
     }
@@ -1474,7 +1608,7 @@
               <div class="action-desc">${esc(desc)}</div>
             </div>
           </div>
-          <button class="btn primary small" data-action="go-execute" data-tcode="${esc(code)}">${icon("play")}执行</button>
+          <button class="btn primary small" data-action="go-execute" data-tcode="${esc(code)}">${icon("send")}提交</button>
         </div>
       `;
     }
@@ -1516,7 +1650,7 @@
                 </div>
                 ${renderExecutePlants()}
                 <div class="execute-actions">
-                  <button class="btn primary" data-action="start-run" ${state.role !== "executor" || state.executing ? "disabled" : ""}>${icon("play")}开始执行</button>
+                  <button class="btn primary" data-action="start-run" ${state.role !== "executor" || state.executing ? "disabled" : ""}>${icon("send")}提交入队</button>
                 </div>
               </div>
             </div>
@@ -1524,12 +1658,34 @@
           <div class="panel">
             <div class="panel-header"><div><div class="panel-title">${icon("list-checks")}执行进度与日志</div><div class="panel-sub">${state.currentRun ? esc(state.currentRun.id) : "尚未提交任务"}</div></div></div>
             <div class="panel-body">
+              ${renderQueueStrip()}
               <div class="steps">${state.steps.map((step, i) => renderStep(step, i)).join("")}</div>
               <div style="height:14px"></div>
               <div class="log" id="logBox">${state.logs.length ? state.logs.map(renderLog).join("") : `<div class="log-line"><span class="log-time">[--:--:--]</span><span class="INFO">等待执行。</span></div>`}</div>
             </div>
           </div>
         </section>
+      `;
+    }
+
+    function renderQueueStrip() {
+      const activeRun = state.currentRun;
+      const queuedCount = toQueueNumber(activeRun?.queuedCount ?? state.queue.queuedCount);
+      const runningRunId = activeRun?.runningRunId || state.queue.runningRunId || "";
+      const status = activeRun ? queueAheadText(activeRun) : (state.queue.online ? "队列可查" : "等待提交");
+      return `
+        <div class="queue-strip">
+          <div class="queue-line">
+            <div class="queue-main">${esc(status)}</div>
+            <span class="tag ${runningRunId ? "info" : "ok"}">${runningRunId ? "SAP 正在执行" : "SAP 空闲/待领取"}</span>
+          </div>
+          <div class="queue-meta">
+            <span>等待任务：${queuedCount === null ? "-" : queuedCount}</span>
+            <span>运行中：${runningRunId ? esc(runningRunId) : "-"}</span>
+            <span>更新：${esc(state.queue.lastChecked || "--:--:--")}</span>
+          </div>
+        </div>
+        <div style="height:12px"></div>
       `;
     }
 
@@ -2562,25 +2718,25 @@
       resetRun();
       const payload = buildRunPayload();
       state.currentRun = { id: "RUN-" + new Date().toISOString().replace(/\D/g, "").slice(0, 14), payload };
-      setStep(0, "done");
-      addLog("INFO", "创建任务：" + state.currentRun.id);
+      setStep(0, "run");
+      addLog("INFO", "提交任务：" + state.currentRun.id);
       addLog("INFO", "执行范围：" + payload.factoryGroupName + " / 工厂 " + payload.plantsCsv);
       render();
 
-      setStep(1, "run");
-      render();
       try {
         const created = await createBridgeRun(payload);
         state.currentRun.id = created.runId;
-        addLog("INFO", "SQLite 已创建 runId：" + created.runId);
-        setStep(1, "done");
+        mergeQueueInfo(created, created.runId);
+        setStep(0, "done");
+        setStep(1, "run");
+        addLog("INFO", "任务已入队 runId：" + created.runId);
         if (state.bridge.queueMode === "disabled") {
-          setStep(2, "pending");
+          setStep(1, "pending");
           addLog("WARN", "当前后台队列已禁用，只写入 SQLite，不会启动 SAP。请重启执行器并取消 SAP_RPA_DISABLE_QUEUE 后再执行。");
           toast("已创建任务，但队列禁用：只入库不执行", "warn");
         } else {
-          setStep(2, "run");
-          addLog("INFO", "任务已进入服务器串行队列，后台执行器会在 Windows Server 桌面会话中执行 SAP。");
+          addRunStatusLog("INFO", "queued-" + created.runId, "已进入串行队列，" + queueAheadText(state.currentRun));
+          toast("已提交入队，" + queueAheadText(state.currentRun), "ok");
         }
         render();
         pollRunStatus(created.runId, 0);
@@ -2636,26 +2792,40 @@
         return;
       }
 
-      if (!runId || count > 30) {
+      if (!runId || count > 1200) {
         state.executing = false;
         await refreshBridgeData({ silent: true });
         return;
       }
 
       try {
+        if (count % 5 === 0) await refreshQueueStatus({ silent: true, runId });
         const run = await bridgeFetch("/api/runs/" + encodeURIComponent(runId));
-        if (run.status === "running") {
+        const status = normalizeRunStatus(run.status);
+        mergeQueueInfo(run, runId);
+        mergeRunLogs(run);
+        if (status === "queued") {
+          setStep(0, "done");
+          setStep(1, "run");
+          addRunStatusLog("INFO", "queued-" + queueAheadText(state.currentRun), "排队中，" + queueAheadText(state.currentRun));
+        }
+        if (status === "running") {
+          setStep(1, "done");
           setStep(2, "done");
           setStep(3, "run");
+          addRunStatusLog("INFO", "running-" + runId, "执行器已领取任务，开始占用 SAP GUI 桌面会话");
         }
-        if (run.status === "success" || run.status === "failed" || run.status === "canceled") {
+        if (status === "success" || status === "failed" || status === "canceled") {
+          setStep(1, "done");
           setStep(2, "done");
-          setStep(3, run.status === "success" ? "done" : "fail");
-          setStep(4, run.status === "success" ? "done" : "fail");
-          addLog(run.status === "success" ? "OK" : "ERR", run.message || run.sapStatusText || run.status);
+          setStep(3, status === "success" ? "done" : "fail");
+          setStep(4, status === "success" ? "done" : "fail");
+          if (!Array.isArray(run.logs) || run.logs.length === 0) {
+            addLog(status === "success" ? "OK" : "ERR", run.message || run.sapStatusText || status);
+          }
           state.executing = false;
           await refreshBridgeData({ silent: true });
-          toast(run.status === "success" ? "执行成功，结果已写入 SQLite" : "执行失败，结果已写入 SQLite", run.status === "success" ? "ok" : "warn");
+          toast(status === "success" ? "执行成功，结果已写入 SQLite" : "执行失败，结果已写入 SQLite", status === "success" ? "ok" : "warn");
           return;
         }
         render();
@@ -2669,7 +2839,7 @@
     function simulateRun() {
       const payload = buildRunPayload();
       const flow = [
-        () => { setStep(1, "done"); setStep(2, "run"); addLog("INFO", "启动 SAP GUI 并注入登录/事务码参数"); },
+        () => { setStep(1, "done"); setStep(2, "run"); addLog("INFO", "准备 SAP GUI 会话并注入事务码参数"); },
         () => { setStep(2, "done"); setStep(3, "run"); addLog("INFO", "执行 " + payload.tcode + "，工厂参数：" + payload.plantsCsv); },
         () => { setStep(3, "done"); setStep(4, "run"); addLog("OK", "工厂参数：" + payload.plantsCsv); },
         () => finishLocalSimulation("执行完成，已模拟推送钉钉通知", "OK")
