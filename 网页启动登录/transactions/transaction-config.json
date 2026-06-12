@@ -10,7 +10,6 @@
       "icon": "circle-dollar-sign",
       "params": ["year", "week", "plants"],
       "factoryRule": "先四个集采工厂，再其他工厂",
-      "fixedPlants": ["5021", "9301", "1101", "207M", "1024", "1032", "6041", "1022", "103C", "103D", "1031", "1033", "103C", "103D", "1035", "1036"],
       "defaultPlantGroup": "PINGHU_ALL",
       "automation": "script"
     },

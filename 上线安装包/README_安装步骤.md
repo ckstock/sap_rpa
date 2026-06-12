@@ -1,5 +1,13 @@
 # SAP RPA 本机执行器安装步骤
 
+如果是 SAP RPA V2 公司 Windows Server 上线，请优先阅读：
+
+```text
+最终上线部署步骤\README_V2_Windows_Server_上线部署.md
+```
+
+本文仍保留，用于说明执行器发布、`sap-rpa://` 协议注册、SAP 登录配置和本机环境检测。
+
 这个文件夹用于上线发给执行电脑。目标是让新电脑不需要打开源码、不需要手工改注册表，按顺序点击即可完成 `sap-rpa://` 协议安装和 SAP 登录配置。
 
 ## 文件说明
@@ -17,7 +25,7 @@
 
 1. 把整个 `SapRpa上线安装包` 文件夹复制到目标电脑。
 2. 双击 `01_安装到本机.bat`。
-3. 双击 `04_配置SAP登录信息.bat`，按提示输入 SAP system、client、user、password、language、sysnr。密码不会写成明文。system/client/sysnr 必须按这台电脑实际 SAP Logon 配置填写，例如当前开发测试可填 `dev300`、`300`、`10`，正式电脑以实际为准。
+3. 双击 `04_配置SAP登录信息.bat`，按提示输入 SAP system、client、user、password、language、sysnr。密码不会写成明文。system/client/sysnr 必须按这台电脑实际 SAP Logon 配置填写，不要沿用其他电脑的示例值。
 4. 双击 `02_检测环境.bat`，确认协议、自测、SAP GUI、SAP 登录配置检测通过。
 5. 打开 Netlify 网页，点击“只唤醒 SapWebLauncher”或“开始执行”测试。
 6. 如果检测提示没有 SAP GUI，先安装 SAP GUI，并确认 SAP GUI Scripting 已启用。
