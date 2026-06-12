@@ -47,6 +47,69 @@ setx SAP_RPA_HOME "D:\sap_ai"
 
 设置后重新打开终端或重新登录，确保执行器读取到新的环境变量。
 
+### 2.1 Git 拉取和运行目录边界
+
+公司服务器上线时，源码和 VBS 可以直接从 GitHub 拉取当前 V2 分支：
+
+```powershell
+git clone https://github.com/ckstock/sap_rpa.git "D:\工作\sap_rpa"
+cd /d "D:\工作\sap_rpa"
+git checkout codex/v2-local-api-sqlite
+git pull
+```
+
+已有仓库时只需要：
+
+```powershell
+cd /d "D:\工作\sap_rpa"
+git pull
+```
+
+Git 只负责同步源码、页面、部署脚本和 VBS，例如：
+
+```text
+D:\工作\sap_rpa\index.html
+D:\工作\sap_rpa\网页启动登录\SapWebLauncher\Program.cs
+D:\工作\sap_rpa\网页启动登录\transactions\ZFI072A.vbs
+```
+
+以下运行产物不要从 Git 复制，也不要提交到 Git：
+
+```text
+D:\sap_ai\data\sap-rpa-config.db
+D:\sap_ai\logs\
+D:\sap_ai\outputs\
+%LOCALAPPDATA%\SapWebLauncher\config.json
+```
+
+SQLite 的表结构和迁移逻辑在 `SapWebLauncher` 代码中，第一次执行 `--init-db` 或 `--serve` 时自动创建/升级。`sap-rpa-config.db` 只保存目标服务器本机配置、运行历史和运行日志，迁移到公司服务器时应在服务器上重新初始化，然后通过基础配置页面维护业务数据。
+
+SAP 登录配置必须在目标服务器固定 Windows 执行账号下重新生成，不能从开发电脑复制。密码由 DPAPI 绑定当前 Windows 用户保护。
+
+### 2.2 从 Git 更新到运行目录
+
+每次从 Git 拉取新版本后，按以下顺序同步到运行目录：
+
+```powershell
+cd /d "D:\工作\sap_rpa"
+git pull
+
+dotnet build "D:\工作\sap_rpa\网页启动登录\SapWebLauncher\SapWebLauncher.csproj"
+
+Copy-Item "D:\工作\sap_rpa\index.html" "D:\sap_ai\index.html" -Force
+Copy-Item "D:\工作\sap_rpa\网页启动登录\SapWebLauncher\bin\Debug\net8.0-windows\*" "D:\sap_ai\bin" -Recurse -Force
+Copy-Item "D:\工作\sap_rpa\网页启动登录\transactions\*.vbs" "D:\sap_ai\transactions\" -Force
+```
+
+如果只改了 VBS，也仍建议从 Git 拉取后复制 `transactions\*.vbs` 到 `D:\sap_ai\transactions\`，确保运行脚本和源码一致。
+
+同步后重启本地 API：
+
+```powershell
+Get-Process SapWebLauncher -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Process -FilePath "D:\sap_ai\bin\SapWebLauncher.exe" -ArgumentList "--serve" -WorkingDirectory "D:\sap_ai\bin"
+```
+
 ## 3. 生成上线包
 
 在开发/打包机执行：
@@ -207,7 +270,51 @@ ERROR=
 6. 通知机器人 webhook/secret 不明文返回前端。
 7. 如 API 要给局域网访问，需要 IT 确认端口、防火墙、认证和反向代理策略。
 
-## 11. 当前仍需保留的安装文件
+## 11. 钉钉通知和 SAP 现成推送程序
+
+执行成功、失败或开始执行后的通知由本地 API 负责，不由 VBS 负责。VBS 只执行 SAP GUI 自动化并返回标准结果：
+
+```text
+STATUS_TYPE=
+STATUS_TEXT=
+OUTPUT_FILE=
+ERROR=
+```
+
+推荐通知链路：
+
+1. 页面提交任务时带上操作人信息和钉钉用户标识，例如 `operatorId`、`operatorName`、`operatorDept`、`dingTalkUserId`。
+2. API 创建 `runs` 记录并进入串行队列。
+3. 队列开始执行时写入 `run_logs`，可推送“任务开始执行”。
+4. `ZFI072A.vbs` 执行结束后，API 更新 `runs.status`、`sap_status_type`、`sap_status_text`、`message`。
+5. API 根据运行结果调用通知适配器。
+6. 如果公司已有 SAP 程序可按钉钉 ID 推送消息，优先由 API 调用该 SAP 程序的 HTTP/RFC 接口。
+
+不建议用 VBS 再打开一个 SAP 事务码去做通知推送。原因是 SAP GUI 桌面是串行资源，通知如果也占用 SAP GUI，会拖慢后续任务，并且高并发时更容易产生多登录窗口。
+
+推荐让 SAP 提供以下任一接口：
+
+```text
+HTTP API：POST /sap/bc/.../z_rpa_dingtalk_notify
+RFC 函数：Z_RPA_DINGTALK_NOTIFY
+```
+
+建议入参：
+
+```text
+dingTalkUserId
+runId
+tcode
+status
+message
+startedAt
+finishedAt
+durationMs
+```
+
+建议后续新增 `notification_outbox` 表，执行任务完成后先把通知写入 outbox，再由后台异步发送和重试。这样即使钉钉或 SAP 通知接口临时失败，也不会阻塞 SAP GUI 串行队列。
+
+## 12. 当前仍需保留的安装文件
 
 本目录现有安装文件仍然需要保留。它们负责“生成发布包、安装执行器、注册协议、配置 SAP 登录、检测环境”。V2 新增的是服务器运行目录、SQLite/API 启动和上线验收步骤，不替代这些脚本。
 

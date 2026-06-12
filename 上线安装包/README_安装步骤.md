@@ -8,6 +8,15 @@
 
 本文仍保留，用于说明执行器发布、`sap-rpa://` 协议注册、SAP 登录配置和本机环境检测。
 
+V2 正式部署时，源码、页面、部署脚本和 VBS 从 GitHub 当前分支拉取即可；但运行数据库、SAP 登录配置、日志和输出文件不从 Git 带到服务器。SQLite 表结构和迁移逻辑在 `SapWebLauncher` 代码里，目标服务器第一次运行 `--init-db` 或 `--serve` 时自动创建。
+
+上线边界：
+
+- VBS 在 Git 中维护，部署时复制到 `D:\sap_ai\transactions\`。
+- `D:\sap_ai\data\sap-rpa-config.db` 是服务器运行库，不提交 Git。
+- `%LOCALAPPDATA%\SapWebLauncher\config.json` 是服务器本机 SAP 登录配置，密码用 DPAPI 保护，不提交 Git，也不要从其他电脑复制。
+- 执行成功/失败后的钉钉通知由本地 API 负责；如果公司 SAP 已有按钉钉 ID 推送的程序，应由 API 调用 SAP 提供的 HTTP/RFC 接口，不要让 VBS 再打开 SAP 事务码做通知推送。
+
 这个文件夹用于上线发给执行电脑。目标是让新电脑不需要打开源码、不需要手工改注册表，按顺序点击即可完成 `sap-rpa://` 协议安装和 SAP 登录配置。
 
 ## 文件说明
