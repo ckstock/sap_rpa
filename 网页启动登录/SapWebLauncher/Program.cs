@@ -7,6 +7,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Net;
+using System.Net.Http;
 using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
@@ -22,6 +23,9 @@ static class Program
     private const string MutexId = "SapWebLauncher-SingleInstance-Mutex";
     private const int BridgePort = 17890;
     private const int DefaultRunListLimit = 50;
+    private const int DefaultQueueStatusLimit = 5;
+    private const int MaxQueueStatusLimit = 20;
+    private const int StaleRunningTimeoutHours = 6;
     private static readonly string ExeDirectory = AppContext.BaseDirectory;
     private static readonly string LocalConfigDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -37,6 +41,11 @@ static class Program
     private static readonly string LegacyDatabaseFilePath = Path.Combine(LocalConfigDirectory, "sap-rpa-config.db");
     private static readonly string ExecutorId = $"{Environment.MachineName}\\{Environment.UserName}";
     private static readonly object DatabaseInitLock = new();
+    private static bool DatabaseInitialized;
+    private static readonly HttpClient NotificationHttpClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(8)
+    };
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -686,6 +695,13 @@ WHERE tcode=$tcode AND enabled=1;
                 return;
             }
 
+            if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                path.Equals("/api/queue/status", StringComparison.OrdinalIgnoreCase))
+            {
+                WriteJson(context.Response, LoadQueueStatus(context.Request));
+                return;
+            }
+
             Match tablePreviewMatch = Regex.Match(path, @"^/api/schema/tables/([A-Za-z0-9_]+)$", RegexOptions.IgnoreCase);
             if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && tablePreviewMatch.Success)
             {
@@ -858,7 +874,18 @@ WHERE tcode=$tcode AND enabled=1;
             {
                 var request = ReadJson<CreateRunRequest>(context.Request);
                 var run = CreateRun(request);
-                WriteJson(context.Response, new { runId = run.RunId, status = run.Status, queuedAt = run.QueuedAt });
+                var position = LoadQueuePosition(run.RunId);
+                WriteJson(context.Response, new
+                {
+                    runId = run.RunId,
+                    status = run.Status,
+                    queuedAt = run.QueuedAt,
+                    queuePosition = position.QueuePosition,
+                    runsAhead = position.RunsAhead,
+                    workItemsAhead = position.WorkItemsAhead,
+                    runningRunId = position.RunningRunId,
+                    queuedCount = position.QueuedCount
+                });
                 return;
             }
 
@@ -961,11 +988,27 @@ WHERE tcode=$tcode AND enabled=1;
 
     static void InitializeDatabase(bool seedFromScripts)
     {
+        if (DatabaseInitialized)
+            return;
+
         lock (DatabaseInitLock)
         {
+            if (DatabaseInitialized)
+                return;
+
             EnsureRuntimeDirectories();
             MigrateLegacyDatabaseIfNeeded();
             using var connection = OpenDatabaseConnection();
+            using (var pragma = connection.CreateCommand())
+            {
+                pragma.CommandText = """
+PRAGMA journal_mode=WAL;
+PRAGMA synchronous=NORMAL;
+PRAGMA busy_timeout=10000;
+""";
+                pragma.ExecuteNonQuery();
+            }
+
             using var command = connection.CreateCommand();
             command.CommandText = """
 CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -1213,14 +1256,18 @@ VALUES
             }
 
             Log($"SQLite 数据库初始化完成: {DatabaseFilePath}");
+            DatabaseInitialized = true;
         }
     }
 
     static SqliteConnection OpenDatabaseConnection()
     {
         EnsureRuntimeDirectories();
-        var connection = new SqliteConnection($"Data Source={DatabaseFilePath}");
+        var connection = new SqliteConnection($"Data Source={DatabaseFilePath};Cache=Shared;Default Timeout=10");
         connection.Open();
+        using var command = connection.CreateCommand();
+        command.CommandText = "PRAGMA busy_timeout=10000;";
+        command.ExecuteNonQuery();
         return connection;
     }
 
@@ -3062,6 +3109,7 @@ WHERE id=$id;
     static RunRecordView CreateRun(CreateRunRequest request)
     {
         InitializeDatabase(seedFromScripts: true);
+        MarkStaleRunningRuns();
         string tcode = SanitizeTCode(FirstNonEmpty(request.TransactionCode, request.TCode, request.Code)).ToUpperInvariant();
         var script = LoadScriptInfo(tcode);
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -3119,6 +3167,7 @@ ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
         tx.Commit();
 
         AppendRunLog(runId, "INFO", $"queued {tcode}");
+        AppendRunLog(runId, "INFO", "任务已提交到 SAP 串行队列");
 
         return new RunRecordView
         {
@@ -3178,6 +3227,9 @@ LIMIT $limit;
         while (reader.Read())
             runs.Add(ReadRunRecord(reader));
 
+        foreach (var run in runs)
+            ApplyQueuePosition(run);
+
         return new
         {
             version = 2,
@@ -3185,6 +3237,252 @@ LIMIT $limit;
             database = DatabaseFilePath,
             runs
         };
+    }
+
+    static object LoadQueueStatus(HttpListenerRequest request)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        MarkStaleRunningRuns();
+
+        int limit = DefaultQueueStatusLimit;
+        if (int.TryParse(request.QueryString["limit"], out int parsedLimit))
+            limit = Math.Clamp(parsedLimit, 1, MaxQueueStatusLimit);
+
+        using var connection = OpenDatabaseConnection();
+        var running = LoadRunningRunSummary(connection);
+        long queuedCount = CountQueuedRuns(connection);
+        var nextRuns = LoadNextRunSummaries(connection, limit);
+        bool queueDisabled = IsQueueDisabled();
+        string mode = queueDisabled ? "disabled" : "serial";
+
+        return new
+        {
+            mode,
+            queueMode = mode,
+            serial = !queueDisabled,
+            running,
+            runningRunId = running?.RunId ?? "",
+            queuedCount,
+            nextRuns,
+            executor = ExecutorId,
+            staleRunningTimeoutHours = StaleRunningTimeoutHours,
+            message = queueDisabled
+                ? "Queue worker is disabled; runs can be queued but will not execute until the worker is enabled."
+                : "SAP GUI execution is serial: one running task owns the desktop session, while later submissions wait in priority and queued time order."
+        };
+    }
+
+    static QueuePositionInfo LoadQueuePosition(string runId)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        using var connection = OpenDatabaseConnection();
+        return LoadQueuePosition(connection, runId);
+    }
+
+    static QueuePositionInfo LoadQueuePosition(SqliteConnection connection, string runId)
+    {
+        var info = new QueuePositionInfo
+        {
+            RunningRunId = GetRunningRunId(connection),
+            QueuedCount = CountQueuedRuns(connection)
+        };
+
+        string status;
+        int priority;
+        string queuedAt;
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = """
+SELECT status, priority, queued_at
+FROM runs
+WHERE run_id=$runId;
+""";
+            command.Parameters.AddWithValue("$runId", runId);
+            using var reader = command.ExecuteReader();
+            if (!reader.Read())
+                return info;
+
+            status = reader.GetString(0);
+            priority = reader.GetInt32(1);
+            queuedAt = reader.GetString(2);
+        }
+
+        if (status.Equals("queued", StringComparison.OrdinalIgnoreCase))
+        {
+            info.RunsAhead = CountQueuedRunsAhead(connection, priority, queuedAt, runId);
+            info.WorkItemsAhead = info.RunsAhead + (string.IsNullOrWhiteSpace(info.RunningRunId) ? 0 : 1);
+            info.QueuePosition = info.RunsAhead + 1;
+        }
+        else if (status.Equals("running", StringComparison.OrdinalIgnoreCase))
+        {
+            info.RunsAhead = 0;
+            info.WorkItemsAhead = 0;
+            info.QueuePosition = 0;
+        }
+
+        return info;
+    }
+
+    static void ApplyQueuePosition(RunRecordView run)
+    {
+        var position = LoadQueuePosition(run.RunId);
+        run.QueuePosition = position.QueuePosition;
+        run.RunsAhead = position.RunsAhead;
+        run.WorkItemsAhead = position.WorkItemsAhead;
+        run.RunningRunId = position.RunningRunId;
+        run.QueuedCount = position.QueuedCount;
+    }
+
+    static long CountQueuedRuns(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM runs WHERE status='queued';";
+        return (long)(command.ExecuteScalar() ?? 0L);
+    }
+
+    static int CountQueuedRunsAhead(SqliteConnection connection, int priority, string queuedAt, string runId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT COUNT(*)
+FROM runs
+WHERE status='queued'
+  AND (
+      priority > $priority
+      OR (priority = $priority AND queued_at < $queuedAt)
+      OR (priority = $priority AND queued_at = $queuedAt AND run_id < $runId)
+  );
+""";
+        command.Parameters.AddWithValue("$priority", priority);
+        command.Parameters.AddWithValue("$queuedAt", queuedAt);
+        command.Parameters.AddWithValue("$runId", runId);
+        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
+    }
+
+    static string GetRunningRunId(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT run_id
+FROM runs
+WHERE status='running'
+ORDER BY started_at DESC, locked_at DESC
+LIMIT 1;
+""";
+        return command.ExecuteScalar() as string ?? "";
+    }
+
+    static QueueRunSummary? LoadRunningRunSummary(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT run_id, transaction_code, operator_id, operator_name, operator_dept,
+       status, queued_at, started_at, priority, attempt, max_attempts, locked_by, locked_at
+FROM runs
+WHERE status='running'
+ORDER BY started_at DESC, locked_at DESC
+LIMIT 1;
+""";
+        using var reader = command.ExecuteReader();
+        return reader.Read() ? ReadQueueRunSummary(reader, queuePosition: 0, runsAhead: 0) : null;
+    }
+
+    static List<QueueRunSummary> LoadNextRunSummaries(SqliteConnection connection, int limit)
+    {
+        var runs = new List<QueueRunSummary>();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT run_id, transaction_code, operator_id, operator_name, operator_dept,
+       status, queued_at, started_at, priority, attempt, max_attempts, locked_by, locked_at
+FROM runs
+WHERE status='queued'
+ORDER BY priority DESC, queued_at, run_id
+LIMIT $limit;
+""";
+        command.Parameters.AddWithValue("$limit", limit);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            int runsAhead = runs.Count;
+            runs.Add(ReadQueueRunSummary(reader, queuePosition: runsAhead + 1, runsAhead));
+        }
+
+        return runs;
+    }
+
+    static QueueRunSummary ReadQueueRunSummary(SqliteDataReader reader, int queuePosition, int runsAhead)
+    {
+        return new QueueRunSummary
+        {
+            RunId = reader.GetString(0),
+            TransactionCode = reader.GetString(1),
+            OperatorId = reader.GetString(2),
+            OperatorName = reader.GetString(3),
+            OperatorDept = reader.GetString(4),
+            Status = reader.GetString(5),
+            QueuedAt = reader.GetString(6),
+            StartedAt = reader.GetString(7),
+            Priority = reader.GetInt32(8),
+            Attempt = reader.GetInt32(9),
+            MaxAttempts = reader.GetInt32(10),
+            LockedBy = reader.GetString(11),
+            LockedAt = reader.GetString(12),
+            QueuePosition = queuePosition,
+            RunsAhead = runsAhead
+        };
+    }
+
+    static void MarkStaleRunningRuns()
+    {
+        InitializeDatabase(seedFromScripts: false);
+        string threshold = DateTime.Now.AddHours(-StaleRunningTimeoutHours).ToString("yyyy-MM-dd HH:mm:ss");
+        var staleRunIds = new List<string>();
+
+        using (var connection = OpenDatabaseConnection())
+        {
+            using (var select = connection.CreateCommand())
+            {
+                select.CommandText = """
+SELECT run_id
+FROM runs
+WHERE status='running'
+  AND COALESCE(NULLIF(locked_at, ''), NULLIF(started_at, ''), queued_at) < $threshold;
+""";
+                select.Parameters.AddWithValue("$threshold", threshold);
+                using var reader = select.ExecuteReader();
+                while (reader.Read())
+                    staleRunIds.Add(reader.GetString(0));
+            }
+
+            if (staleRunIds.Count == 0)
+                return;
+
+            using var tx = connection.BeginTransaction();
+            foreach (string runId in staleRunIds)
+            {
+                using var update = connection.CreateCommand();
+                update.Transaction = tx;
+                update.CommandText = """
+UPDATE runs
+SET status='failed',
+    message=$message,
+    finished_at=$finishedAt
+WHERE run_id=$runId AND status='running';
+""";
+                update.Parameters.AddWithValue("$runId", runId);
+                update.Parameters.AddWithValue("$message", $"运行状态超过 {StaleRunningTimeoutHours} 小时未结束，已由队列守护进程标记失败");
+                update.Parameters.AddWithValue("$finishedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                update.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+
+        foreach (string runId in staleRunIds)
+        {
+            AppendRunLog(runId, "ERR", $"stale running timeout after {StaleRunningTimeoutHours} hours");
+            NotifyRunEvent(runId, "finish", "任务运行超时，已释放 SAP 串行队列");
+        }
     }
 
     static RunRecordView? LoadRun(string runId, bool includeDetails)
@@ -3201,11 +3499,16 @@ FROM runs
 WHERE run_id=$runId;
 """;
         command.Parameters.AddWithValue("$runId", runId);
-        using var reader = command.ExecuteReader();
-        if (!reader.Read())
-            return null;
+        RunRecordView run;
+        using (var reader = command.ExecuteReader())
+        {
+            if (!reader.Read())
+                return null;
 
-        var run = ReadRunRecord(reader);
+            run = ReadRunRecord(reader);
+        }
+
+        ApplyQueuePosition(run);
         if (includeDetails)
         {
             run.Logs = LoadRunLogs(runId);
@@ -3217,10 +3520,12 @@ WHERE run_id=$runId;
 
     static void ProcessRunQueueLoop()
     {
+        MarkStaleRunningRuns();
         while (true)
         {
             try
             {
+                MarkStaleRunningRuns();
                 var item = ClaimNextQueuedRun();
                 if (item == null)
                 {
@@ -3312,7 +3617,7 @@ WHERE run_id=$runId;
 
         tx.Commit();
         if (item != null)
-            AppendRunLog(item.RunId, "INFO", "queue worker claimed run");
+            NotifyRunEvent(item.RunId, "start", "任务开始执行，SAP GUI 桌面会话已被当前任务占用");
         return item;
     }
 
@@ -3375,7 +3680,7 @@ WHERE run_id=$runId AND status IN ('queued', 'running');
         command.Parameters.AddWithValue("$runId", runId);
         command.Parameters.AddWithValue("$startedAt", now);
         command.ExecuteNonQuery();
-        AppendRunLog(runId, "INFO", "executor started");
+        NotifyRunEvent(runId, "start", "执行器已开始处理任务");
     }
 
     static void CompleteRun(string runId, RunResultRequest result)
@@ -3457,6 +3762,10 @@ VALUES($runId, $type, $name, $path, $size);
 
         tx.Commit();
         Log($"run result updated: {runId}, status={status}, sap={result.SapStatusType}");
+        string notifyMessage = status == "success"
+            ? "任务执行完成"
+            : $"任务执行失败：{FirstNonEmpty(result.Message ?? "", result.SapStatusText ?? "", status)}";
+        NotifyRunEvent(runId, status == "success" ? "success" : "failure", notifyMessage);
     }
 
     static TransactionScriptInfo LoadScriptInfo(string tcode)
@@ -3578,6 +3887,173 @@ ORDER BY id;
         {
             Log($"append run log failed: {runId}, {ex.Message}");
         }
+    }
+
+    static void NotifyRunEvent(string runId, string eventName, string message)
+    {
+        if (string.IsNullOrWhiteSpace(runId))
+            return;
+
+        var targets = LoadNotificationTargetsForRun(runId, eventName);
+        string targetText = targets.Count == 0 ? "local" : string.Join(",", targets.Select(t => t.Label));
+        AppendRunLog(runId, "INFO", $"notify {eventName} target={targetText}: {message}");
+        foreach (var target in targets.Where(t => !string.IsNullOrWhiteSpace(t.Webhook)))
+            SendNotification(runId, eventName, message, target);
+    }
+
+    static List<NotificationTarget> LoadNotificationTargetsForRun(string runId, string eventName)
+    {
+        var targets = new List<NotificationTarget>();
+        try
+        {
+            using var connection = OpenDatabaseConnection();
+            string tcode = "";
+            string notifyTarget = "";
+            using (var runCommand = connection.CreateCommand())
+            {
+                runCommand.CommandText = "SELECT transaction_code, notify_target FROM runs WHERE run_id=$runId";
+                runCommand.Parameters.AddWithValue("$runId", runId);
+                using var reader = runCommand.ExecuteReader();
+                if (reader.Read())
+                {
+                    tcode = reader.GetString(0);
+                    notifyTarget = reader.GetString(1);
+                }
+            }
+
+            if (!string.IsNullOrWhiteSpace(notifyTarget))
+                targets.Add(new NotificationTarget { Label = notifyTarget });
+
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+SELECT DISTINCT r.id, r.name, r.robot_type, COALESCE(NULLIF(r.target_label, ''), r.name, r.id),
+       r.webhook_protected, r.secret_protected
+FROM notification_robots r
+LEFT JOIN notification_robot_bindings b ON b.robot_id = r.id
+WHERE r.enabled=1
+  AND (
+      b.robot_id IS NULL
+      OR (
+          b.enabled=1
+          AND (
+              b.event_name=''
+              OR b.event_name=$eventName
+              OR b.event_name='all'
+              OR b.event_name=$eventAlias1
+              OR b.event_name=$eventAlias2
+              OR b.event_name=$eventAlias3
+          )
+          AND (b.tcode='' OR b.tcode=$tcode)
+      )
+  )
+ORDER BY 1;
+""";
+            command.Parameters.AddWithValue("$eventName", eventName);
+            string[] aliases = NotificationEventAliases(eventName);
+            command.Parameters.AddWithValue("$eventAlias1", aliases.ElementAtOrDefault(0) ?? "");
+            command.Parameters.AddWithValue("$eventAlias2", aliases.ElementAtOrDefault(1) ?? "");
+            command.Parameters.AddWithValue("$eventAlias3", aliases.ElementAtOrDefault(2) ?? "");
+            command.Parameters.AddWithValue("$tcode", tcode);
+            using var robotReader = command.ExecuteReader();
+            while (robotReader.Read())
+            {
+                string label = robotReader.GetString(3);
+                if (string.IsNullOrWhiteSpace(label) ||
+                    targets.Any(t => t.Label.Equals(label, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                targets.Add(new NotificationTarget
+                {
+                    Id = robotReader.GetString(0),
+                    Name = robotReader.GetString(1),
+                    RobotType = robotReader.GetString(2),
+                    Label = label,
+                    Webhook = UnprotectSecretIfPresent(robotReader.GetString(4)),
+                    Secret = UnprotectSecretIfPresent(robotReader.GetString(5))
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"load notification targets failed: {runId}, {eventName}, {ex.Message}");
+        }
+
+        return targets;
+    }
+
+    static string[] NotificationEventAliases(string eventName)
+    {
+        return eventName.ToLowerInvariant() switch
+        {
+            "start" => new[] { "执行开始", "开始执行", "started" },
+            "success" => new[] { "执行成功", "成功", "completed" },
+            "failure" or "failed" => new[] { "执行失败", "失败", "finish" },
+            "finish" => new[] { "执行结束", "执行完成", "failure" },
+            _ => Array.Empty<string>()
+        };
+    }
+
+    static void SendNotification(string runId, string eventName, string message, NotificationTarget target)
+    {
+        try
+        {
+            var run = LoadRun(runId, includeDetails: false);
+            string title = eventName.Equals("success", StringComparison.OrdinalIgnoreCase) ? "SAP RPA 执行成功" :
+                eventName.Equals("start", StringComparison.OrdinalIgnoreCase) ? "SAP RPA 开始执行" :
+                "SAP RPA 执行结束";
+            string text = $"{title}\n\n" +
+                          $"- RunId: {runId}\n" +
+                          $"- 事务码: {run?.TransactionCode ?? ""}\n" +
+                          $"- 状态: {run?.Status ?? eventName}\n" +
+                          $"- 操作人: {run?.OperatorName ?? ""}\n" +
+                          $"- 时间: {DateTime.Now:yyyy-MM-dd HH:mm:ss}\n" +
+                          $"- 摘要: {message}";
+
+            string payload = BuildNotificationPayload(target, title, text);
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var response = NotificationHttpClient.PostAsync(BuildNotificationUrl(target), content).GetAwaiter().GetResult();
+            string responseText = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            if (response.IsSuccessStatusCode)
+                AppendRunLog(runId, "INFO", $"notify sent target={target.Label}");
+            else
+                AppendRunLog(runId, "WARN", $"notify failed target={target.Label}, status={(int)response.StatusCode}, body={Truncate(responseText, 200)}");
+        }
+        catch (Exception ex)
+        {
+            AppendRunLog(runId, "WARN", $"notify failed target={target.Label}: {ex.Message}");
+        }
+    }
+
+    static string BuildNotificationPayload(NotificationTarget target, string title, string text)
+    {
+        if (target.RobotType.Equals("dingtalk", StringComparison.OrdinalIgnoreCase))
+        {
+            return JsonSerializer.Serialize(new
+            {
+                msgtype = "markdown",
+                markdown = new { title, text }
+            }, JsonOptions);
+        }
+
+        return JsonSerializer.Serialize(new { title, text }, JsonOptions);
+    }
+
+    static string BuildNotificationUrl(NotificationTarget target)
+    {
+        if (string.IsNullOrWhiteSpace(target.Secret) ||
+            !target.RobotType.Equals("dingtalk", StringComparison.OrdinalIgnoreCase))
+        {
+            return target.Webhook;
+        }
+
+        long timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        string stringToSign = $"{timestamp}\n{target.Secret}";
+        using var hmac = new HMACSHA256(Encoding.UTF8.GetBytes(target.Secret));
+        string sign = WebUtility.UrlEncode(Convert.ToBase64String(hmac.ComputeHash(Encoding.UTF8.GetBytes(stringToSign))));
+        string separator = target.Webhook.Contains('?') ? "&" : "?";
+        return $"{target.Webhook}{separator}timestamp={timestamp}&sign={sign}";
     }
 
     static string TransactionParamsToJson(JsonElement value)
@@ -3758,6 +4234,32 @@ ORDER BY id;
         return Convert.ToBase64String(protectedBytes);
     }
 
+    static string UnprotectSecretIfPresent(string protectedValue)
+    {
+        if (string.IsNullOrWhiteSpace(protectedValue))
+            return "";
+
+        try
+        {
+            byte[] protectedBytes = Convert.FromBase64String(protectedValue);
+            byte[] plainBytes = ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser);
+            return Encoding.UTF8.GetString(plainBytes);
+        }
+        catch (Exception ex)
+        {
+            Log($"unprotect notification secret failed: {ex.Message}");
+            return "";
+        }
+    }
+
+    static string Truncate(string value, int maxLength)
+    {
+        if (string.IsNullOrEmpty(value) || value.Length <= maxLength)
+            return value ?? "";
+
+        return value[..maxLength] + "...";
+    }
+
     static string Sha256Hex(string value)
     {
         byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value));
@@ -3776,12 +4278,23 @@ ORDER BY id;
             return FailedRunResult(message, started);
         }
 
-        if (HasReadySapSession())
+        var initialProbe = ProbeSapSession();
+        if (initialProbe.Ready)
         {
-            Log("检测到已登录 SAP GUI 会话，跳过 sapshcut 登录，直接执行事务码脚本");
+            Log($"Detected ready SAP GUI session; skip sapshcut login. {initialProbe.Details}");
         }
         else
         {
+            if (initialProbe.HasSapGui)
+            {
+                string message = "SAP GUI has open windows but no logged-in scripting session is ready. " +
+                    "Close SAP login or multi-logon dialogs before submitting another queued run. " +
+                    $"Probe: {initialProbe.Details}";
+                Console.Error.WriteLine(message);
+                Log(message);
+                return FailedRunResult(message, started);
+            }
+
             string? sapshcut = FindSapshcut();
             if (string.IsNullOrEmpty(sapshcut))
             {
@@ -3811,6 +4324,19 @@ ORDER BY id;
 
             Log($"未检测到可用 SAP GUI 会话，启动 SAP GUI: path={sapshcut}, args={MaskSapArgs(string.Join(" ", args))}");
             Process.Start(startInfo);
+            Log("SAP GUI started; waiting for logged-in scripting session before running VBS");
+            var loginProbe = WaitForReadySapSession(TimeSpan.FromSeconds(35), TimeSpan.FromSeconds(2));
+            if (!loginProbe.Ready)
+            {
+                string message = "SAP login did not produce a ready scripting session. " +
+                    "Do not submit more runs until SAP login or multi-logon dialogs are cleared. " +
+                    $"Probe: {loginProbe.Details}";
+                Console.Error.WriteLine(message);
+                Log(message);
+                return FailedRunResult(message, started);
+            }
+
+            Log($"SAP GUI login is ready. {loginProbe.Details}");
 
             Log("SAP GUI 已启动，3 秒后开始执行 VBS 自动化");
             Thread.Sleep(3000);
@@ -3832,12 +4358,26 @@ ORDER BY id;
         }
     }
 
-    static bool HasReadySapSession()
+    static SapSessionProbeResult WaitForReadySapSession(TimeSpan timeout, TimeSpan interval)
+    {
+        var deadline = DateTime.UtcNow.Add(timeout);
+        SapSessionProbeResult last = ProbeSapSession();
+        while (!last.Ready && DateTime.UtcNow < deadline)
+        {
+            Thread.Sleep(interval);
+            last = ProbeSapSession();
+        }
+
+        return last;
+    }
+
+    static SapSessionProbeResult ProbeSapSession()
     {
         string probeFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_probe_{Guid.NewGuid():N}.vbs");
         string probeScript = """
 On Error Resume Next
-Dim SapGuiAuto, application, connection, session
+Dim SapGuiAuto, application, connection, session, i, j, detail, okcd
+detail = ""
 Set SapGuiAuto = GetObject("SAPGUI")
 If Err.Number <> 0 Then
    WScript.Echo "NO: SAPGUI object not found"
@@ -3848,14 +4388,119 @@ If Err.Number <> 0 Or Not IsObject(application) Or application.Children.Count = 
    WScript.Echo "NO: scripting engine or connection not ready"
    WScript.Quit 2
 End If
-Set connection = application.Children(0)
-If Err.Number <> 0 Or Not IsObject(connection) Or connection.Children.Count = 0 Then
-   WScript.Echo "NO: connection/session not ready"
-   WScript.Quit 3
+detail = "connections=" & application.Children.Count
+For i = 0 To application.Children.Count - 1
+   Err.Clear
+   Set connection = application.Children.Item(CInt(i))
+   If Err.Number = 0 And IsObject(connection) Then
+      detail = detail & "; conn[" & i & "].sessions=" & connection.Children.Count
+      For j = 0 To connection.Children.Count - 1
+         Err.Clear
+         Set session = connection.Children.Item(CInt(j))
+         If Err.Number = 0 And IsObject(session) Then
+            detail = detail & "; session[" & i & "," & j & "].user=" & session.Info.User & ",transaction=" & session.Info.Transaction & ",program=" & session.Info.Program & ",screen=" & session.Info.ScreenNumber
+            If Trim(CStr(session.Info.User)) <> "" Then
+               Err.Clear
+               Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
+               If Err.Number = 0 And IsObject(okcd) Then Exit For
+            End If
+         End If
+      Next
+      If IsObject(session) And Trim(CStr(session.Info.User)) <> "" Then
+         Err.Clear
+         Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
+         If Err.Number = 0 And IsObject(okcd) Then Exit For
+      End If
+   End If
+Next
+If Err.Number <> 0 Or Not IsObject(session) Or Trim(CStr(session.Info.User)) = "" Then
+   WScript.Echo "NO: logged-in SAP session not ready; " & detail
+   WScript.Quit 4
 End If
-Set session = connection.Children(0)
-If Err.Number <> 0 Or Not IsObject(session) Then
-   WScript.Echo "NO: session not ready"
+Err.Clear
+Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
+If Err.Number <> 0 Or Not IsObject(okcd) Then
+   WScript.Echo "NO: command field not ready; " & detail
+   WScript.Quit 5
+End If
+WScript.Echo "OK: user=" & session.Info.User & ", transaction=" & session.Info.Transaction & "; " & detail
+WScript.Quit 0
+""";
+
+        try
+        {
+            File.WriteAllText(probeFile, probeScript, Encoding.Default);
+            var psi = new ProcessStartInfo("cscript.exe", $"//T:8 //nologo \"{probeFile}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc == null)
+                return new SapSessionProbeResult(false, false, "failed to start cscript.exe");
+
+            proc.WaitForExit(10_000);
+            string output = proc.StandardOutput.ReadToEnd().Trim();
+            string error = proc.StandardError.ReadToEnd().Trim();
+            string merged = string.Join(" ", new[] { output, error }.Where(x => !string.IsNullOrWhiteSpace(x)));
+            Log($"SAP session probe: exit={proc.ExitCode}, {merged}");
+            bool hasSapGui = proc.ExitCode != 1 && proc.ExitCode != 2;
+            return new SapSessionProbeResult(
+                Ready: proc.ExitCode == 0 && output.StartsWith("OK:", StringComparison.OrdinalIgnoreCase),
+                HasSapGui: hasSapGui,
+                Details: merged);
+        }
+        catch (Exception ex)
+        {
+            Log($"SAP session probe failed: {ex.Message}");
+            return new SapSessionProbeResult(false, false, ex.Message);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(probeFile))
+                    File.Delete(probeFile);
+            }
+            catch { }
+        }
+    }
+
+    static bool HasReadySapSession()
+    {
+        string probeFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_probe_{Guid.NewGuid():N}.vbs");
+        string probeScript = """
+On Error Resume Next
+Dim SapGuiAuto, application, connection, session, i, j
+Set SapGuiAuto = GetObject("SAPGUI")
+If Err.Number <> 0 Then
+   WScript.Echo "NO: SAPGUI object not found"
+   WScript.Quit 1
+End If
+Set application = SapGuiAuto.GetScriptingEngine
+If Err.Number <> 0 Or Not IsObject(application) Or application.Children.Count = 0 Then
+   WScript.Echo "NO: scripting engine or connection not ready"
+   WScript.Quit 2
+End If
+For i = 0 To application.Children.Count - 1
+   Err.Clear
+   Set connection = application.Children(i)
+   If Err.Number = 0 And IsObject(connection) Then
+      For j = 0 To connection.Children.Count - 1
+         Err.Clear
+         Set session = connection.Children(j)
+         If Err.Number = 0 And IsObject(session) Then
+            If Trim(CStr(session.Info.User)) <> "" Then Exit For
+         End If
+      Next
+      If IsObject(session) And Trim(CStr(session.Info.User)) <> "" Then Exit For
+   End If
+Next
+If Err.Number <> 0 Or Not IsObject(session) Or Trim(CStr(session.Info.User)) = "" Then
+   WScript.Echo "NO: logged-in SAP session not ready"
    WScript.Quit 4
 End If
 Err.Clear
@@ -4001,7 +4646,30 @@ WScript.Quit 0
                 RedirectStandardError = true,
             };
             using var proc = Process.Start(psi);
-            proc?.WaitForExit(70_000);
+            if (proc == null)
+                return FailedRunResult("无法启动 cscript.exe 执行 VBS", started);
+
+            if (!proc.WaitForExit(45_000))
+            {
+                keepTempFile = true;
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch (Exception killEx)
+                {
+                    Log($"VBS 超时后终止失败: {killEx.Message}");
+                }
+
+                var timedOut = FailedRunResult($"VBS 执行超过 45 秒，已终止；脚本已保留: {tmpFile}", started);
+                timedOut.Logs.Add(new RunLogLine
+                {
+                    Level = "ERROR",
+                    Message = $"VBS timeout after 45 seconds; temp script retained: {tmpFile}"
+                });
+                return timedOut;
+            }
+
             string stdOut = proc?.StandardOutput.ReadToEnd() ?? string.Empty;
             string stdErr = proc?.StandardError.ReadToEnd() ?? string.Empty;
             string mergedOutput = string.Join(Environment.NewLine,
@@ -4584,6 +5252,8 @@ class SapLocalConfig
     public string? SysNr { get; set; }
 }
 
+readonly record struct SapSessionProbeResult(bool Ready, bool HasSapGui, string Details);
+
 class TransactionConfigRequest
 {
     public string Code { get; set; } = "";
@@ -4785,8 +5455,41 @@ class RunRecordView
     public int MaxAttempts { get; set; }
     public string LockedBy { get; set; } = "";
     public string LockedAt { get; set; } = "";
+    public int QueuePosition { get; set; }
+    public int RunsAhead { get; set; }
+    public int WorkItemsAhead { get; set; }
+    public string RunningRunId { get; set; } = "";
+    public long QueuedCount { get; set; }
     public List<RunLogLine> Logs { get; set; } = new();
     public List<RunFile> Files { get; set; } = new();
+}
+
+class QueuePositionInfo
+{
+    public int QueuePosition { get; set; }
+    public int RunsAhead { get; set; }
+    public int WorkItemsAhead { get; set; }
+    public string RunningRunId { get; set; } = "";
+    public long QueuedCount { get; set; }
+}
+
+class QueueRunSummary
+{
+    public string RunId { get; set; } = "";
+    public string TransactionCode { get; set; } = "";
+    public string OperatorId { get; set; } = "";
+    public string OperatorName { get; set; } = "";
+    public string OperatorDept { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string QueuedAt { get; set; } = "";
+    public string StartedAt { get; set; } = "";
+    public int Priority { get; set; }
+    public int Attempt { get; set; }
+    public int MaxAttempts { get; set; }
+    public string LockedBy { get; set; } = "";
+    public string LockedAt { get; set; } = "";
+    public int QueuePosition { get; set; }
+    public int RunsAhead { get; set; }
 }
 
 class RunLogLine
@@ -4803,6 +5506,16 @@ class RunFile
     public string Path { get; set; } = "";
     public long Size { get; set; }
     public string CreatedAt { get; set; } = "";
+}
+
+class NotificationTarget
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string RobotType { get; set; } = "";
+    public string Label { get; set; } = "";
+    public string Webhook { get; set; } = "";
+    public string Secret { get; set; } = "";
 }
 
 class TransactionScriptInfo

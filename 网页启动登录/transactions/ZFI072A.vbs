@@ -8,10 +8,10 @@
 
 On Error Resume Next
 
-Dim tcode, plantsCsv, businessAreasCsv, factoryGroup, unresolvedPlantsToken
+Dim tcode, plantsCsv, businessAreasCsv, factoryGroup, unresolvedPlantsToken, unresolvedOkCodeToken
 Dim targetDate, yearValue, weekValue, pageYear, pageWeek, periodValue, weekEndValue
 Dim plantValue, setOk
-Dim SapGuiAuto, application, connection, session
+Dim SapGuiAuto, application, connection, session, connIndex, sessIndex
 Dim retries, maxRetries, sleepMs, statusType, statusText, operationError
 
 tcode = "{OK_CODE}"
@@ -24,11 +24,26 @@ periodValue = "{PERIOD}"
 weekEndValue = "{WEEK_END}"
 maxRetries = 100
 unresolvedPlantsToken = "{" & "PLANTS" & "}"
+unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
+
+If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFI072A"
+If UCase(Trim(CStr(tcode))) <> "ZFI072A" Then
+   EmitError "ZFI072A script refuses non-ZFI072A tcode=" & CStr(tcode)
+   WScript.Quit 10
+End If
 
 Sub EmitError(message)
    WScript.Echo "ERROR=" & message
    WScript.Echo "ERROR: " & message
 End Sub
+
+Function BoolText(value)
+   If CBool(value) Then
+      BoolText = "true"
+   Else
+      BoolText = "false"
+   End If
+End Function
 
 If Trim(CStr(plantsCsv)) = "" Or Trim(CStr(plantsCsv)) = unresolvedPlantsToken Then
    EmitError "ZFI072A requires plants from launcher input/API selection"
@@ -52,6 +67,7 @@ End Function
 Function FirstCsvValue(value)
    Dim parts, item
    value = Replace(value, ";", ",")
+   value = Replace(value, "|", ",")
    parts = Split(value, ",")
    For Each item In parts
       item = Trim(CStr(item))
@@ -66,6 +82,7 @@ End Function
 Function CsvToClipboardText(value)
    Dim parts, item, result
    value = Replace(value, ";", ",")
+   value = Replace(value, "|", ",")
    parts = Split(value, ",")
    result = ""
    For Each item In parts
@@ -81,6 +98,7 @@ End Function
 Function CsvCount(value)
    Dim parts, item, count
    value = Replace(value, ";", ",")
+   value = Replace(value, "|", ",")
    parts = Split(value, ",")
    count = 0
    For Each item In parts
@@ -142,6 +160,214 @@ Function PressButtonByCandidates(label, ids)
    Next
    EmitError "SAP button not found for " & label
 End Function
+
+Function WaitForSessionReady(timeoutMs)
+   Dim waited, busyNow
+   WaitForSessionReady = False
+   waited = 0
+   Do While waited <= timeoutMs
+      Err.Clear
+      busyNow = session.Busy
+      If Err.Number = 0 Then
+         If Not CBool(busyNow) Then
+            WaitForSessionReady = True
+            Err.Clear
+            Exit Function
+         End If
+      End If
+      Err.Clear
+      WScript.Sleep 200
+      waited = waited + 200
+   Loop
+End Function
+
+Function WaitForAnyObject(label, ids, timeoutMs)
+   Dim waited, id, obj
+   WaitForAnyObject = False
+   waited = 0
+   Do While waited <= timeoutMs
+      For Each id In ids
+         Err.Clear
+         Set obj = session.findById(CStr(id))
+         If Err.Number = 0 And IsObject(obj) Then
+            WScript.Echo "INFO: ready " & label & " via " & id
+            WaitForAnyObject = True
+            Err.Clear
+            Exit Function
+         End If
+         Err.Clear
+      Next
+      WScript.Sleep 200
+      waited = waited + 200
+   Loop
+End Function
+
+Function SessionIsUsable(candidate)
+   Dim busyNow
+   SessionIsUsable = False
+   If Not IsObject(candidate) Then Exit Function
+   Err.Clear
+   busyNow = candidate.Busy
+   If Err.Number = 0 And CBool(busyNow) Then
+      Err.Clear
+      Exit Function
+   End If
+   Err.Clear
+   Err.Clear
+   If Trim(CStr(candidate.Info.User)) = "" Then
+      Err.Clear
+      Exit Function
+   End If
+   Err.Clear
+   Dim okcd
+   Set okcd = candidate.findById("wnd[0]/tbar[0]/okcd")
+   If Err.Number = 0 And IsObject(okcd) Then SessionIsUsable = True
+   Err.Clear
+End Function
+
+Function SafeSessionValue(candidate, valueName)
+   SafeSessionValue = ""
+   Err.Clear
+   Select Case valueName
+      Case "User"
+         SafeSessionValue = CStr(candidate.Info.User)
+      Case "Transaction"
+         SafeSessionValue = CStr(candidate.Info.Transaction)
+      Case "Program"
+         SafeSessionValue = CStr(candidate.Info.Program)
+      Case "ScreenNumber"
+         SafeSessionValue = CStr(candidate.Info.ScreenNumber)
+      Case "SystemName"
+         SafeSessionValue = CStr(candidate.Info.SystemName)
+      Case "Client"
+         SafeSessionValue = CStr(candidate.Info.Client)
+   End Select
+   If Err.Number <> 0 Then SafeSessionValue = "<error: " & Err.Description & ">"
+   Err.Clear
+End Function
+
+Function SafeObjectText(candidate, id, propertyName)
+   Dim obj
+   SafeObjectText = ""
+   Err.Clear
+   Set obj = candidate.findById(id)
+   If Err.Number = 0 And IsObject(obj) Then
+      Select Case propertyName
+         Case "Text"
+            SafeObjectText = CStr(obj.Text)
+         Case "MessageType"
+            SafeObjectText = CStr(obj.MessageType)
+      End Select
+   ElseIf Err.Number <> 0 Then
+      SafeObjectText = "<not found: " & id & ">"
+   End If
+   Err.Clear
+End Function
+
+Function CandidateHasObject(candidate, id)
+   Dim obj
+   CandidateHasObject = False
+   Err.Clear
+   Set obj = candidate.findById(id)
+   If Err.Number = 0 And IsObject(obj) Then CandidateHasObject = True
+   Err.Clear
+End Function
+
+Sub EchoSessionContext(prefix)
+   If Not IsObject(session) Then
+      WScript.Echo prefix & ": no active session object"
+      Exit Sub
+   End If
+   WScript.Echo prefix & ": transaction=" & SafeSessionValue(session, "Transaction") & _
+      ", title=" & SafeObjectText(session, "wnd[0]", "Text") & _
+      ", statusType=" & SafeObjectText(session, "wnd[0]/sbar", "MessageType") & _
+      ", statusText=" & SafeObjectText(session, "wnd[0]/sbar", "Text") & _
+      ", program=" & SafeSessionValue(session, "Program") & _
+      ", screen=" & SafeSessionValue(session, "ScreenNumber")
+End Sub
+
+Sub EmitSapGuiDiagnostics(reason)
+   Dim diagSapGuiAuto, diagApplication, diagConnection, diagSession
+   Dim diagConnIndex, diagSessIndex, connectionCount, sessionCount, busyText, okcdText
+   WScript.Echo "SAP_DIAG: " & reason
+   Err.Clear
+   Set diagSapGuiAuto = GetObject("SAPGUI")
+   If Err.Number <> 0 Or Not IsObject(diagSapGuiAuto) Then
+      WScript.Echo "SAP_DIAG: SAPGUI object not available - " & Err.Description
+      Err.Clear
+      Exit Sub
+   End If
+   Err.Clear
+   Set diagApplication = diagSapGuiAuto.GetScriptingEngine
+   If Err.Number <> 0 Or Not IsObject(diagApplication) Then
+      WScript.Echo "SAP_DIAG: scripting engine not available - " & Err.Description
+      Err.Clear
+      Exit Sub
+   End If
+   Err.Clear
+   connectionCount = diagApplication.Children.Count
+   If Err.Number <> 0 Then
+      WScript.Echo "SAP_DIAG: cannot read connection count - " & Err.Description
+      Err.Clear
+      Exit Sub
+   End If
+   WScript.Echo "SAP_DIAG: connections=" & CStr(connectionCount)
+   For diagConnIndex = 0 To connectionCount - 1
+      Err.Clear
+      Set diagConnection = diagApplication.Children.Item(CInt(diagConnIndex))
+      If Err.Number <> 0 Or Not IsObject(diagConnection) Then
+         WScript.Echo "SAP_DIAG: connection[" & CStr(diagConnIndex) & "] unavailable - " & Err.Description
+         Err.Clear
+      Else
+         Err.Clear
+         sessionCount = diagConnection.Children.Count
+         If Err.Number <> 0 Then
+            WScript.Echo "SAP_DIAG: connection[" & CStr(diagConnIndex) & "] sessions unavailable - " & Err.Description
+            Err.Clear
+         Else
+            WScript.Echo "SAP_DIAG: connection[" & CStr(diagConnIndex) & "] sessions=" & CStr(sessionCount)
+            For diagSessIndex = 0 To sessionCount - 1
+               Err.Clear
+               Set diagSession = diagConnection.Children.Item(CInt(diagSessIndex))
+               If Err.Number <> 0 Or Not IsObject(diagSession) Then
+                  WScript.Echo "SAP_DIAG: session[" & CStr(diagConnIndex) & "." & CStr(diagSessIndex) & "] unavailable - " & Err.Description
+                  Err.Clear
+               Else
+                  busyText = ""
+                  Err.Clear
+                  busyText = BoolText(diagSession.Busy)
+                  If Err.Number <> 0 Then busyText = "<error: " & Err.Description & ">"
+                  Err.Clear
+                  okcdText = BoolText(CandidateHasObject(diagSession, "wnd[0]/tbar[0]/okcd"))
+                  WScript.Echo "SAP_DIAG: session[" & CStr(diagConnIndex) & "." & CStr(diagSessIndex) & _
+                     "] user=" & SafeSessionValue(diagSession, "User") & _
+                     ", transaction=" & SafeSessionValue(diagSession, "Transaction") & _
+                     ", title=" & SafeObjectText(diagSession, "wnd[0]", "Text") & _
+                     ", statusType=" & SafeObjectText(diagSession, "wnd[0]/sbar", "MessageType") & _
+                     ", statusText=" & SafeObjectText(diagSession, "wnd[0]/sbar", "Text") & _
+                     ", program=" & SafeSessionValue(diagSession, "Program") & _
+                     ", screen=" & SafeSessionValue(diagSession, "ScreenNumber") & _
+                     ", busy=" & busyText & _
+                     ", okcd=" & okcdText & _
+                     ", usable=" & BoolText(SessionIsUsable(diagSession))
+               End If
+            Next
+         End If
+      End If
+   Next
+End Sub
+
+Sub CloseSapSession()
+   Err.Clear
+   session.findById("wnd[0]/tbar[0]/okcd").Text = "/nex"
+   session.findById("wnd[0]").sendVKey 0
+   If Err.Number = 0 Then
+      WScript.Echo "INFO: sent /nex to close SAP session"
+   Else
+      WScript.Echo "WARN: failed to send /nex - " & Err.Description
+   End If
+   Err.Clear
+End Sub
 
 Function FillPlantMultipleSelection(value)
    Dim clipboardText, firstPlant, plantCount, multipleButton
@@ -255,6 +481,7 @@ Function SetTextByCandidates(label, value, ids)
    Next
 
    EmitError "SAP field not found for " & label & ", value=" & value
+   EchoSessionContext "ERROR_CONTEXT"
 End Function
 
 Sub SetCheckboxIfExists(id, selectedValue)
@@ -278,6 +505,18 @@ Function RequireObject(label, id)
       RequireObject = True
    Else
       EmitError "required SAP field not ready for " & label & " via " & id & " - " & Err.Description
+      EchoSessionContext "ERROR_CONTEXT"
+   End If
+   Err.Clear
+End Function
+
+Function RequireObjectByCandidates(label, ids)
+   RequireObjectByCandidates = False
+   If WaitForAnyObject(label, ids, 8000) Then
+      RequireObjectByCandidates = True
+   Else
+      EmitError "required SAP field not ready for " & label
+      EchoSessionContext "ERROR_CONTEXT"
    End If
    Err.Clear
 End Function
@@ -288,12 +527,23 @@ For retries = 1 To maxRetries
    If Err.Number = 0 Then
       Set application = SapGuiAuto.GetScriptingEngine
       If Err.Number = 0 And IsObject(application) And application.Children.Count > 0 Then
-         Set connection = application.Children(0)
-         If Err.Number = 0 And IsObject(connection) And connection.Children.Count > 0 Then
-            Set session = connection.Children(0)
-            If Err.Number = 0 And IsObject(session) And ObjectExists("wnd[0]/tbar[0]/okcd") Then
-               Exit For
+         For connIndex = 0 To application.Children.Count - 1
+            Err.Clear
+            Set connection = application.Children.Item(CInt(connIndex))
+            If Err.Number = 0 And IsObject(connection) And connection.Children.Count > 0 Then
+               For sessIndex = 0 To connection.Children.Count - 1
+                  Err.Clear
+                  Set session = connection.Children.Item(CInt(sessIndex))
+                  If Err.Number = 0 And SessionIsUsable(session) Then
+                     Exit For
+                  End If
+               Next
+               If SessionIsUsable(session) Then Exit For
             End If
+         Next
+         If IsObject(session) And SessionIsUsable(session) Then
+            WScript.Echo "INFO: using SAP session user=" & session.Info.User & ", transaction=" & session.Info.Transaction
+            Exit For
          End If
       End If
    End If
@@ -307,8 +557,9 @@ For retries = 1 To maxRetries
    WScript.Sleep sleepMs
 Next
 
-If Not IsObject(session) Then
-   EmitError "SAP GUI session not ready after adaptive wait"
+If Not IsObject(session) Or Not SessionIsUsable(session) Then
+   EmitSapGuiDiagnostics "no logged-in usable SAP session after adaptive wait"
+   EmitError "logged-in SAP GUI session not ready after adaptive wait"
    WScript.Quit 2
 End If
 If Not ObjectExists("wnd[0]/tbar[0]/okcd") Then
@@ -331,11 +582,12 @@ If Err.Number <> 0 Then
    EmitError "open transaction failed - " & Err.Description
    WScript.Quit 3
 End If
-WScript.Sleep 1000
+If Not WaitForSessionReady(8000) Then WScript.Echo "WARN: SAP session still busy after /n" & tcode & " wait"
+WScript.Sleep 500
 
-If Not RequireObject("p_gjahr", "wnd[0]/usr/txtP_GJAHR") Then WScript.Quit 4
-If Not RequireObject("p_week", "wnd[0]/usr/txtP_WEEK") Then WScript.Quit 4
-If Not RequireObject("s_werks-low", "wnd[0]/usr/ctxtS_WERKS-LOW") Then WScript.Quit 4
+If Not RequireObjectByCandidates("p_gjahr", Array("wnd[0]/usr/txtP_GJAHR", "wnd[0]/usr/ctxtP_GJAHR")) Then WScript.Quit 4
+If Not RequireObjectByCandidates("p_week", Array("wnd[0]/usr/txtP_WEEK", "wnd[0]/usr/ctxtP_WEEK")) Then WScript.Quit 4
+If Not RequireObjectByCandidates("s_werks-low", Array("wnd[0]/usr/ctxtS_WERKS-LOW", "wnd[0]/usr/txtS_WERKS-LOW")) Then WScript.Quit 4
 
 Err.Clear
 statusType = session.findById("wnd[0]/sbar").MessageType
@@ -387,4 +639,5 @@ Err.Clear
 
 WScript.Echo "OUTPUT_FILE="
 WScript.Echo "INFO: transaction script executed"
+CloseSapSession
 WScript.Quit 0
