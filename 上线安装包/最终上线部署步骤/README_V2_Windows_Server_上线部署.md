@@ -288,29 +288,27 @@ ERROR=
 3. 队列开始执行时写入 `run_logs`，可推送“任务开始执行”。
 4. `ZFI072A.vbs` 执行结束后，API 更新 `runs.status`、`sap_status_type`、`sap_status_text`、`message`。
 5. API 根据运行结果调用通知适配器。
-6. 如果公司已有 SAP 程序可按钉钉 ID 推送消息，优先由 API 调用该 SAP 程序的 HTTP/RFC 接口。
+6. 如果公司已有 SAP 程序可按钉钉 ID 推送消息，优先由 API 调用该 SAP 程序封装出的 OData/HTTP 接口。
 
 不建议用 VBS 再打开一个 SAP 事务码去做通知推送。原因是 SAP GUI 桌面是串行资源，通知如果也占用 SAP GUI，会拖慢后续任务，并且高并发时更容易产生多登录窗口。
 
-推荐让 SAP 提供以下任一接口：
+当前推荐使用 SAP Gateway OData function import：
 
 ```text
-HTTP API：POST /sap/bc/.../z_rpa_dingtalk_notify
-RFC 函数：Z_RPA_DINGTALK_NOTIFY
+POST /sap/opu/odata/sap/ZFI_DD_MSG_SRV/zfi_send_msg_to_DD?WorkNo='...'&Ddid='...'&Content='...'
 ```
 
-建议入参：
+API 侧配置建议：
 
 ```text
-dingTalkUserId
-runId
-tcode
-status
-message
-startedAt
-finishedAt
-durationMs
+SAP_RPA_DINGTALK_PROVIDER=odata
+SAP_RPA_DINGTALK_ODATA_URL=http://<sap-host>:<port>/sap/opu/odata/sap/ZFI_DD_MSG_SRV/zfi_send_msg_to_DD
+SAP_RPA_DINGTALK_ODATA_USER=<SAP technical user if required>
+SAP_RPA_DINGTALK_ODATA_PASSWORD=<SAP password if required; use server-local secret storage>
+SAP_RPA_DINGTALK_ODATA_FETCH_CSRF=1
 ```
+
+当前临时阶段，API 会把 `runs.ding_talk_user_id` 默认写成 `11464769`；上线扫码登录后应由登录态写入真实钉钉 ID。通知时 API 从数据库 run 记录取 `Ddid`，并把事务码、工厂、运行状态、SAP 返回消息、runId、耗时等信息拼入 `Content`。
 
 建议后续新增 `notification_outbox` 表，执行任务完成后先把通知写入 outbox，再由后台异步发送和重试。这样即使钉钉或 SAP 通知接口临时失败，也不会阻塞 SAP GUI 串行队列。
 

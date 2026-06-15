@@ -4111,18 +4111,27 @@ ORDER BY 1;
         switch (provider)
         {
             case "http":
-            case "odata":
                 string endpoint = FirstNonEmpty(
-                    Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ODATA_URL") ?? "",
                     Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_NOTIFY_URL") ?? "",
                     Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_HTTP_URL") ?? "");
                 if (string.IsNullOrWhiteSpace(endpoint))
                 {
-                    AppendRunLog(runId, "INFO", $"sap dingtalk notify skipped: provider={provider} but no endpoint configured, function={request.SapFunction}, IV_DDID={request.DingTalkId}");
+                    AppendRunLog(runId, "INFO", $"sap dingtalk notify skipped: provider=http but no endpoint configured, function={request.SapFunction}, IV_DDID={request.DingTalkId}");
                     return;
                 }
 
                 SendSapDingTalkNotificationByHttp(runId, endpoint, request);
+                return;
+
+            case "odata":
+                string odataEndpoint = Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ODATA_URL") ?? "";
+                if (string.IsNullOrWhiteSpace(odataEndpoint))
+                {
+                    AppendRunLog(runId, "INFO", $"sap dingtalk notify skipped: provider=odata but no endpoint configured, function={request.SapFunction}, Ddid={request.DingTalkId}");
+                    return;
+                }
+
+                SendSapDingTalkNotificationByOData(runId, odataEndpoint, request);
                 return;
 
             case "rfc":
@@ -4277,6 +4286,118 @@ ORDER BY 1;
         AppendRunLog(runId, "WARN", $"sap dingtalk notify failed: status={(int)response.StatusCode}, EV_TYPE={sapResult.Type}, body={Truncate(responseText, 200)}");
     }
 
+    static void SendSapDingTalkNotificationByOData(string runId, string endpoint, SapDingTalkNotifyRequest request)
+    {
+        string url = BuildSapDingTalkODataUrl(endpoint, request);
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, url)
+        {
+            Content = new StringContent("", Encoding.UTF8, "application/json")
+        };
+        ApplySapODataAuth(httpRequest);
+
+        string csrfToken = FetchSapODataCsrfTokenIfNeeded(endpoint);
+        if (!string.IsNullOrWhiteSpace(csrfToken))
+            httpRequest.Headers.TryAddWithoutValidation("x-csrf-token", csrfToken);
+
+        using var response = NotificationHttpClient.SendAsync(httpRequest).GetAwaiter().GetResult();
+        string responseText = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        var sapResult = ParseSapDingTalkNotifyResponse(responseText);
+        if (!string.IsNullOrWhiteSpace(sapResult.Message))
+            AppendRunLog(runId, "INFO", $"sap dingtalk odata EV_TYPE={sapResult.Type}, EV_MSG={Truncate(sapResult.Message, 200)}");
+
+        if (response.IsSuccessStatusCode && !IsSapErrorType(sapResult.Type))
+        {
+            AppendRunLog(runId, "INFO", $"sap dingtalk odata sent: WorkNo={request.WorkNo}, Ddid={request.DingTalkId}, Content={Truncate(request.Content, 120)}");
+            return;
+        }
+
+        AppendRunLog(runId, "WARN", $"sap dingtalk odata failed: status={(int)response.StatusCode}, EV_TYPE={sapResult.Type}, body={Truncate(responseText, 200)}");
+    }
+
+    static string BuildSapDingTalkODataUrl(string endpoint, SapDingTalkNotifyRequest request)
+    {
+        string url = endpoint.Trim();
+        if (!Regex.IsMatch(url, @"(?:^|/)zfi_send_msg_to_DD(?:\?|$)", RegexOptions.IgnoreCase))
+            url = url.TrimEnd('/') + "/zfi_send_msg_to_DD";
+
+        string separator = url.Contains('?') ? "&" : "?";
+        string content = NormalizeODataContent(request.Content);
+        return url + separator +
+            "WorkNo=" + ODataStringLiteral(request.WorkNo) +
+            "&Ddid=" + ODataStringLiteral(request.DingTalkId) +
+            "&Content=" + ODataStringLiteral(content);
+    }
+
+    static string NormalizeODataContent(string value)
+    {
+        return (value ?? "")
+            .Replace("\r\n", "; ")
+            .Replace("\n", "; ")
+            .Replace("\r", "; ")
+            .Trim();
+    }
+
+    static string ODataStringLiteral(string value)
+    {
+        string escaped = (value ?? "").Replace("'", "''");
+        return Uri.EscapeDataString($"'{escaped}'");
+    }
+
+    static void ApplySapODataAuth(HttpRequestMessage request)
+    {
+        string user = Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ODATA_USER") ?? "";
+        string password = Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ODATA_PASSWORD") ?? "";
+        if (string.IsNullOrWhiteSpace(user) || string.IsNullOrWhiteSpace(password))
+            return;
+
+        string basic = Convert.ToBase64String(Encoding.UTF8.GetBytes($"{user}:{password}"));
+        request.Headers.TryAddWithoutValidation("Authorization", $"Basic {basic}");
+    }
+
+    static string FetchSapODataCsrfTokenIfNeeded(string endpoint)
+    {
+        string enabled = Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ODATA_FETCH_CSRF") ?? "";
+        if (!IsTruthy(enabled))
+            return "";
+
+        string tokenUrl = FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ODATA_CSRF_URL") ?? "",
+            ResolveSapODataServiceRoot(endpoint));
+        if (string.IsNullOrWhiteSpace(tokenUrl))
+            return "";
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, tokenUrl);
+        request.Headers.TryAddWithoutValidation("x-csrf-token", "Fetch");
+        ApplySapODataAuth(request);
+        using var response = NotificationHttpClient.SendAsync(request).GetAwaiter().GetResult();
+        if (response.Headers.TryGetValues("x-csrf-token", out var values))
+            return values.FirstOrDefault() ?? "";
+
+        return "";
+    }
+
+    static string ResolveSapODataServiceRoot(string endpoint)
+    {
+        string url = endpoint.Trim();
+        int index = url.IndexOf("/zfi_send_msg_to_DD", StringComparison.OrdinalIgnoreCase);
+        if (index >= 0)
+            return url[..index].TrimEnd('/');
+
+        int queryIndex = url.IndexOf('?');
+        if (queryIndex >= 0)
+            url = url[..queryIndex];
+
+        return url.TrimEnd('/');
+    }
+
+    static bool IsTruthy(string value)
+    {
+        return value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("on", StringComparison.OrdinalIgnoreCase);
+    }
+
     static void SendSapDingTalkNotificationByRfc(string runId, SapDingTalkNotifyRequest request)
     {
         string command = Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_RFC_COMMAND") ?? "";
@@ -4336,8 +4457,12 @@ ORDER BY 1;
         }
         catch
         {
-            string type = Regex.Match(responseText, @"EV_TYPE\s*[=:]\s*([A-Za-z])", RegexOptions.IgnoreCase).Groups[1].Value;
-            string message = Regex.Match(responseText, @"EV_MSG\s*[=:]\s*(.+)$", RegexOptions.IgnoreCase | RegexOptions.Multiline).Groups[1].Value.Trim();
+            string type = FirstNonEmpty(
+                Regex.Match(responseText, @"<[^>]*:?Type[^>]*>\s*([^<]+)\s*</[^>]*:?Type>", RegexOptions.IgnoreCase).Groups[1].Value.Trim(),
+                Regex.Match(responseText, @"EV_TYPE\s*[=:]\s*([A-Za-z])", RegexOptions.IgnoreCase).Groups[1].Value);
+            string message = FirstNonEmpty(
+                WebUtility.HtmlDecode(Regex.Match(responseText, @"<[^>]*:?Message[^>]*>\s*([^<]*)\s*</[^>]*:?Message>", RegexOptions.IgnoreCase).Groups[1].Value.Trim()),
+                Regex.Match(responseText, @"EV_MSG\s*[=:]\s*(.+)$", RegexOptions.IgnoreCase | RegexOptions.Multiline).Groups[1].Value.Trim());
             return new SapFunctionResult { Type = type, Message = message };
         }
     }
