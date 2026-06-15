@@ -365,7 +365,7 @@ Sub EmitSapGuiDiagnostics(reason)
 End Sub
 
 Sub CloseSapSession()
-   Dim closeTry
+   Dim closeTry, exitTry
    If Not IsObject(session) Then
       WScript.Echo "WARN: no SAP session object to close"
       Exit Sub
@@ -383,15 +383,57 @@ Sub CloseSapSession()
       End If
       Err.Clear
    Next
-   Err.Clear
-   session.findById("wnd[0]/tbar[0]/okcd").Text = "/nex"
-   session.findById("wnd[0]").sendVKey 0
-   If Err.Number = 0 Then
-      WScript.Echo "INFO: sent /nex to close SAP session"
-   Else
-      WScript.Echo "WARN: failed to send /nex - " & Err.Description
-   End If
-   Err.Clear
+   For exitTry = 1 To 2
+      Err.Clear
+      session.findById("wnd[0]/tbar[0]/okcd").Text = "/nex"
+      session.findById("wnd[0]").sendVKey 0
+      If Err.Number = 0 Then
+         WScript.Echo "INFO: sent /nex to close SAP session"
+      Else
+         WScript.Echo "WARN: failed to send /nex - " & Err.Description
+         Err.Clear
+         Exit For
+      End If
+      Err.Clear
+      ConfirmSapExitModal
+      WScript.Sleep 800
+      If Not ObjectExists("wnd[0]/tbar[0]/okcd") Then
+         WScript.Echo "INFO: SAP session closed after /nex"
+         Exit For
+      End If
+      If exitTry < 2 Then WScript.Echo "WARN: SAP session still open after /nex, retrying"
+   Next
+   If ObjectExists("wnd[0]/tbar[0]/okcd") Then WScript.Echo "WARN: SAP session still appears open after /nex"
+End Sub
+
+Sub ConfirmSapExitModal()
+   Dim confirmTry, obj
+   For confirmTry = 1 To 5
+      WScript.Sleep 300
+      If Not ObjectExists("wnd[1]") Then Exit For
+      Err.Clear
+      Set obj = session.findById("wnd[1]/usr/btnSPOP-OPTION1")
+      If Err.Number = 0 And IsObject(obj) Then
+         obj.press
+         WScript.Echo "INFO: confirmed SAP exit popup via OPTION1"
+      Else
+         Err.Clear
+         Set obj = session.findById("wnd[1]/tbar[0]/btn[0]")
+         If Err.Number = 0 And IsObject(obj) Then
+            obj.press
+            WScript.Echo "INFO: confirmed SAP exit popup via toolbar OK"
+         Else
+            Err.Clear
+            session.findById("wnd[1]").sendVKey 0
+            If Err.Number = 0 Then
+               WScript.Echo "INFO: confirmed SAP exit popup via Enter"
+            Else
+               WScript.Echo "WARN: failed to confirm SAP exit popup - " & Err.Description
+            End If
+         End If
+      End If
+      Err.Clear
+   Next
 End Sub
 
 Sub QuitWithCleanup(exitCode)

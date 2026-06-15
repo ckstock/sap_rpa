@@ -4111,12 +4111,14 @@ ORDER BY 1;
         switch (provider)
         {
             case "http":
+            case "odata":
                 string endpoint = FirstNonEmpty(
+                    Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ODATA_URL") ?? "",
                     Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_NOTIFY_URL") ?? "",
                     Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_HTTP_URL") ?? "");
                 if (string.IsNullOrWhiteSpace(endpoint))
                 {
-                    AppendRunLog(runId, "INFO", $"sap dingtalk notify skipped: provider=http but no endpoint configured, function={request.SapFunction}, IV_DDID={request.DingTalkId}");
+                    AppendRunLog(runId, "INFO", $"sap dingtalk notify skipped: provider={provider} but no endpoint configured, function={request.SapFunction}, IV_DDID={request.DingTalkId}");
                     return;
                 }
 
@@ -4197,6 +4199,7 @@ ORDER BY 1;
         {
             "0" or "false" or "off" or "disabled" or "none" => "none",
             "1" or "true" or "on" or "http" => "http",
+            "odata" or "o-data" => "odata",
             "rfc" => "rfc",
             "command" or "cmd" => "command",
             _ => provider
