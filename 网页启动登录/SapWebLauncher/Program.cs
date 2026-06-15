@@ -4091,8 +4091,7 @@ ORDER BY 1;
             DefaultDingTalkId);
         string workNo = FirstNonEmpty(
             Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_WORKNO") ?? "",
-            run?.OperatorId ?? "",
-            Environment.UserName);
+            "");
         string notifyMessage = BuildSapDingTalkMessage(run, message);
 
         var request = new SapDingTalkNotifyRequest

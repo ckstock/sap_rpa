@@ -295,7 +295,7 @@ ERROR=
 当前推荐使用 SAP Gateway OData function import：
 
 ```text
-POST /sap/opu/odata/sap/ZFI_DD_MSG_SRV/zfi_send_msg_to_DD?WorkNo='...'&Ddid='...'&Content='...'
+POST http(s)://SAP域名:端口/sap/opu/odata/sap/ZFI_DD_MSG_SRV/zfi_send_msg_to_DD?WorkNo=''&Ddid='11464769'&Content='test'
 ```
 
 API 侧配置建议：
@@ -308,7 +308,7 @@ SAP_RPA_DINGTALK_ODATA_PASSWORD=<SAP password if required; use server-local secr
 SAP_RPA_DINGTALK_ODATA_FETCH_CSRF=1
 ```
 
-当前临时阶段，API 会把 `runs.ding_talk_user_id` 默认写成 `11464769`；上线扫码登录后应由登录态写入真实钉钉 ID。通知时 API 从数据库 run 记录取 `Ddid`，并把事务码、工厂、运行状态、SAP 返回消息、runId、耗时等信息拼入 `Content`。
+注意：`SAP_RPA_DINGTALK_ODATA_URL` 必须是完整 URL，包含协议、SAP 域名/IP 和端口。本地 API 不在 SAP Gateway 上下文里，不能只配置 `/sap/opu/odata/...` 相对路径。当前临时阶段，API 会把 `runs.ding_talk_user_id` 默认写成 `11464769`；上线扫码登录后应由登录态写入真实钉钉 ID。通知时 API 从数据库 run 记录取 `Ddid`，`WorkNo` 默认传空字符串，并把事务码、工厂、运行状态、SAP 返回消息、runId、耗时等信息拼入 `Content`。
 
 建议后续新增 `notification_outbox` 表，执行任务完成后先把通知写入 outbox，再由后台异步发送和重试。这样即使钉钉或 SAP 通知接口临时失败，也不会阻塞 SAP GUI 串行队列。
 

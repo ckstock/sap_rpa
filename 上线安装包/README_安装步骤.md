@@ -15,7 +15,7 @@ V2 正式部署时，源码、页面、部署脚本和 VBS 从 GitHub 当前分�
 - VBS 在 Git 中维护，部署时复制到 `D:\sap_ai\transactions\`。
 - `D:\sap_ai\data\sap-rpa-config.db` 是服务器运行库，不提交 Git。
 - `%LOCALAPPDATA%\SapWebLauncher\config.json` 是服务器本机 SAP 登录配置，密码用 DPAPI 保护，不提交 Git，也不要从其他电脑复制。
-- 执行成功/失败后的钉钉通知由本地 API 负责；当前推荐调用 SAP 已封装的 OData：`/sap/opu/odata/sap/ZFI_DD_MSG_SRV/zfi_send_msg_to_DD`，传入 `WorkNo`、`Ddid`、`Content`，不要让 VBS 再打开 SAP 事务码做通知推送。
+- 执行成功/失败后的钉钉通知由本地 API 负责；当前推荐调用 SAP 已封装的 OData：`http(s)://SAP域名:端口/sap/opu/odata/sap/ZFI_DD_MSG_SRV/zfi_send_msg_to_DD`，传入且只传入 `WorkNo`、`Ddid`、`Content`，不要让 VBS 再打开 SAP 事务码做通知推送。服务器 API 不能只配置 `/sap/opu/...` 相对路径，必须配置完整域名和端口。
 
 这个文件夹用于上线发给执行电脑。目标是让新电脑不需要打开源码、不需要手工改注册表，按顺序点击即可完成 `sap-rpa://` 协议安装和 SAP 登录配置。
 
