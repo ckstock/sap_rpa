@@ -1,10 +1,10 @@
 ' @tcode=ZFI072A
-' @name=采购价月表
+' @name=ZFI072A purchase price monthly report
 ' @params=year,week,plants
 ' @dateRule=LAST_WEEK_ISO
-' @factoryRule=先四个集采工厂，再其他工厂
+' @factoryRule=plants are supplied by launcher/API
 '
-' Generated from SAP GUI Recorder output. Review SAP 操作区 before production use.
+' Generated from SAP GUI Recorder output. Review SAP operation block before production use.
 
 On Error Resume Next
 
@@ -33,10 +33,17 @@ If UCase(Trim(CStr(tcode))) <> "ZFI072A" Then
 End If
 
 Sub EmitError(message)
+   If Trim(CStr(statusType)) = "" Then statusType = "E"
+   If Trim(CStr(statusText)) = "" Then statusText = CStr(message)
+   WScript.Echo "STATUS_TYPE=" & statusType
+   WScript.Echo "STATUS_TEXT=" & statusText
    WScript.Echo "ERROR=" & message
    WScript.Echo "ERROR: " & message
 End Sub
 
+Function DoneStatusText()
+   DoneStatusText = ChrW(&H81EA) & ChrW(&H52A8) & ChrW(&H5316) & ChrW(&H5DF2) & ChrW(&H8DD1) & ChrW(&H5B8C)
+End Function
 Function BoolText(value)
    If CBool(value) Then
       BoolText = "true"
@@ -358,6 +365,24 @@ Sub EmitSapGuiDiagnostics(reason)
 End Sub
 
 Sub CloseSapSession()
+   Dim closeTry
+   If Not IsObject(session) Then
+      WScript.Echo "WARN: no SAP session object to close"
+      Exit Sub
+   End If
+   If Not WaitForSessionReady(8000) Then WScript.Echo "WARN: SAP session still busy before /nex close"
+   For closeTry = 1 To 3
+      If Not ObjectExists("wnd[1]") Then Exit For
+      Err.Clear
+      session.findById("wnd[1]").sendVKey 12
+      If Err.Number = 0 Then
+         WScript.Echo "INFO: closed modal window before /nex"
+         WScript.Sleep 500
+      Else
+         WScript.Echo "WARN: failed to close modal window before /nex - " & Err.Description
+      End If
+      Err.Clear
+   Next
    Err.Clear
    session.findById("wnd[0]/tbar[0]/okcd").Text = "/nex"
    session.findById("wnd[0]").sendVKey 0
@@ -367,6 +392,11 @@ Sub CloseSapSession()
       WScript.Echo "WARN: failed to send /nex - " & Err.Description
    End If
    Err.Clear
+End Sub
+
+Sub QuitWithCleanup(exitCode)
+   CloseSapSession
+   WScript.Quit exitCode
 End Sub
 
 Function FillPlantMultipleSelection(value)
@@ -580,14 +610,14 @@ session.findById("wnd[0]/tbar[0]/okcd").Text = "/n" & tcode
 session.findById("wnd[0]").sendVKey 0
 If Err.Number <> 0 Then
    EmitError "open transaction failed - " & Err.Description
-   WScript.Quit 3
+   QuitWithCleanup 3
 End If
 If Not WaitForSessionReady(8000) Then WScript.Echo "WARN: SAP session still busy after /n" & tcode & " wait"
 WScript.Sleep 500
 
-If Not RequireObjectByCandidates("p_gjahr", Array("wnd[0]/usr/txtP_GJAHR", "wnd[0]/usr/ctxtP_GJAHR")) Then WScript.Quit 4
-If Not RequireObjectByCandidates("p_week", Array("wnd[0]/usr/txtP_WEEK", "wnd[0]/usr/ctxtP_WEEK")) Then WScript.Quit 4
-If Not RequireObjectByCandidates("s_werks-low", Array("wnd[0]/usr/ctxtS_WERKS-LOW", "wnd[0]/usr/txtS_WERKS-LOW")) Then WScript.Quit 4
+If Not RequireObjectByCandidates("p_gjahr", Array("wnd[0]/usr/txtP_GJAHR", "wnd[0]/usr/ctxtP_GJAHR")) Then QuitWithCleanup 4
+If Not RequireObjectByCandidates("p_week", Array("wnd[0]/usr/txtP_WEEK", "wnd[0]/usr/ctxtP_WEEK")) Then QuitWithCleanup 4
+If Not RequireObjectByCandidates("s_werks-low", Array("wnd[0]/usr/ctxtS_WERKS-LOW", "wnd[0]/usr/txtS_WERKS-LOW")) Then QuitWithCleanup 4
 
 Err.Clear
 statusType = session.findById("wnd[0]/sbar").MessageType
@@ -597,18 +627,18 @@ If Err.Number = 0 And (statusType = "E" Or statusType = "A") Then
    WScript.Echo "STATUS_TYPE=" & statusType
    WScript.Echo "STATUS_TEXT=" & statusText
    EmitError "SAP rejected transaction " & tcode & " - " & statusText
-   WScript.Quit 6
+   QuitWithCleanup 6
 End If
 
-' === SAP 操作区 ===
+' === SAP operation block ===
 setOk = SetTextByCandidates("p_gjahr", CStr(yearValue), Array("wnd[0]/usr/txtP_GJAHR", "wnd[0]/usr/ctxtP_GJAHR"))
-If Not setOk Then WScript.Quit 9
+If Not setOk Then QuitWithCleanup 9
 
 setOk = SetTextByCandidates("p_week", CStr(weekValue), Array("wnd[0]/usr/txtP_WEEK", "wnd[0]/usr/ctxtP_WEEK"))
-If Not setOk Then WScript.Quit 9
+If Not setOk Then QuitWithCleanup 9
 
 setOk = FillPlantMultipleSelection(plantsCsv)
-If Not setOk Then WScript.Quit 9
+If Not setOk Then QuitWithCleanup 9
 
 SetCheckboxIfExists "wnd[0]/usr/chkP_SEL", False
 
@@ -625,13 +655,22 @@ If Err.Number <> 0 Then
    End If
    Err.Clear
    EmitError "SAP operation failed - " & operationError
-   WScript.Quit 8
+   QuitWithCleanup 8
 End If
 
 Err.Clear
 statusType = session.findById("wnd[0]/sbar").MessageType
 statusText = session.findById("wnd[0]/sbar").Text
 If Err.Number = 0 Then
+   If Trim(CStr(statusText)) = "" Then
+      statusType = "S"
+      statusText = DoneStatusText()
+   End If
+   WScript.Echo "STATUS_TYPE=" & statusType
+   WScript.Echo "STATUS_TEXT=" & statusText
+Else
+   statusType = "S"
+   statusText = DoneStatusText()
    WScript.Echo "STATUS_TYPE=" & statusType
    WScript.Echo "STATUS_TEXT=" & statusText
 End If
@@ -639,5 +678,4 @@ Err.Clear
 
 WScript.Echo "OUTPUT_FILE="
 WScript.Echo "INFO: transaction script executed"
-CloseSapSession
-WScript.Quit 0
+QuitWithCleanup 0

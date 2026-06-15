@@ -765,11 +765,17 @@
   <div id="toastWrap" class="toast-wrap"></div>
 
   <script>
+    const DEFAULT_DINGTALK_USER_ID = "11464769";
+
     const state = {
       loggedIn: localStorage.getItem("portalLoggedIn") === "1",
       page: "dashboard",
       role: localStorage.getItem("portalRole") || "executor",
-      user: { name: localStorage.getItem("portalUser") || "张三", dept: "财务共享中心" },
+      user: {
+        name: localStorage.getItem("portalUser") || "张三",
+        dept: "财务共享中心",
+        dingTalkUserId: localStorage.getItem("portalDingTalkUserId") || DEFAULT_DINGTALK_USER_ID
+      },
       activeConfigTab: "plant",
       selectedTCode: "ZFI019NL",
       executing: false,
@@ -2660,7 +2666,9 @@
     function login() {
       const account = document.getElementById("loginAccount")?.value || "张三";
       state.user.name = account.trim() || "张三";
+      state.user.dingTalkUserId = state.user.dingTalkUserId || DEFAULT_DINGTALK_USER_ID;
       localStorage.setItem("portalUser", state.user.name);
+      localStorage.setItem("portalDingTalkUserId", state.user.dingTalkUserId);
       localStorage.setItem("portalLoggedIn", "1");
       state.loggedIn = true;
       toast("登录成功", "ok");
@@ -2765,7 +2773,9 @@
           operator: {
             id: state.user.name,
             name: state.user.name,
-            dept: state.user.dept
+            dept: state.user.dept,
+            dingTalkUserId: state.user.dingTalkUserId || DEFAULT_DINGTALK_USER_ID,
+            ddid: state.user.dingTalkUserId || DEFAULT_DINGTALK_USER_ID
           },
           params: {
             plants: payload.plantsCsv,

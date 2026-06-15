@@ -26,6 +26,10 @@ static class Program
     private const int DefaultQueueStatusLimit = 5;
     private const int MaxQueueStatusLimit = 20;
     private const int StaleRunningTimeoutHours = 6;
+    // Temporary default until DingTalk scan login writes the real user id into runs.ding_talk_user_id.
+    private const string DefaultDingTalkId = "11464769";
+    private const string SapDingTalkFunctionName = "ZFI_SEND_MSG_TO_DD";
+    private const int NotificationWorkerTimeoutSeconds = 12;
     private static readonly string ExeDirectory = AppContext.BaseDirectory;
     private static readonly string LocalConfigDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -1057,6 +1061,7 @@ CREATE TABLE IF NOT EXISTS runs (
     operator_id TEXT NOT NULL DEFAULT '',
     operator_name TEXT NOT NULL DEFAULT '',
     operator_dept TEXT NOT NULL DEFAULT '',
+    ding_talk_user_id TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'queued',
     request_json TEXT NOT NULL DEFAULT '{}',
     sap_status_type TEXT NOT NULL DEFAULT '',
@@ -1237,6 +1242,7 @@ VALUES
 
             EnsureColumn(connection, "runs", "source", "TEXT NOT NULL DEFAULT ''");
             EnsureColumn(connection, "runs", "notify_target", "TEXT NOT NULL DEFAULT ''");
+            EnsureColumn(connection, "runs", "ding_talk_user_id", "TEXT NOT NULL DEFAULT ''");
             EnsureColumn(connection, "runs", "priority", "INTEGER NOT NULL DEFAULT 0");
             EnsureColumn(connection, "runs", "attempt", "INTEGER NOT NULL DEFAULT 0");
             EnsureColumn(connection, "runs", "max_attempts", "INTEGER NOT NULL DEFAULT 1");
@@ -3106,10 +3112,26 @@ WHERE id=$id;
         return values.TryGetValue(key, out string? value) ? value ?? "" : "";
     }
 
+    static string ResolveDingTalkUserId(OperatorIdentity? op)
+    {
+        return FirstNonEmpty(
+            op?.DingTalkUserId ?? "",
+            op?.Ddid ?? "",
+            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ID") ?? "",
+            DefaultDingTalkId);
+    }
+
+    static void EnsureCreateRunRequestDefaults(CreateRunRequest request)
+    {
+        request.Operator ??= new OperatorIdentity();
+        request.Params ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+    }
+
     static RunRecordView CreateRun(CreateRunRequest request)
     {
         InitializeDatabase(seedFromScripts: true);
         MarkStaleRunningRuns();
+        EnsureCreateRunRequestDefaults(request);
         string tcode = SanitizeTCode(FirstNonEmpty(request.TransactionCode, request.TCode, request.Code)).ToUpperInvariant();
         var script = LoadScriptInfo(tcode);
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -3120,6 +3142,10 @@ WHERE id=$id;
         request.TCode = tcode;
         request.Code = tcode;
         NormalizeCreateRunParams(request);
+        string dingTalkUserId = ResolveDingTalkUserId(request.Operator);
+        request.Operator.DingTalkUserId = dingTalkUserId;
+        if (string.IsNullOrWhiteSpace(request.Operator.Ddid))
+            request.Operator.Ddid = dingTalkUserId;
 
         using var connection = OpenDatabaseConnection();
         using var tx = connection.BeginTransaction();
@@ -3127,10 +3153,10 @@ WHERE id=$id;
         command.Transaction = tx;
         command.CommandText = """
 INSERT INTO runs(
-    run_id, transaction_code, operator_id, operator_name, operator_dept, status, request_json,
+    run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
     script_file, script_hash, source, notify_target, priority, max_attempts, queued_at
 ) VALUES(
-    $runId, $tcode, $operatorId, $operatorName, $operatorDept, 'queued', $requestJson,
+    $runId, $tcode, $operatorId, $operatorName, $operatorDept, $dingTalkUserId, 'queued', $requestJson,
     $scriptFile, $scriptHash, $source, $notifyTarget, $priority, $maxAttempts, $queuedAt
 );
 """;
@@ -3139,6 +3165,7 @@ INSERT INTO runs(
         command.Parameters.AddWithValue("$operatorId", request.Operator.Id ?? "");
         command.Parameters.AddWithValue("$operatorName", request.Operator.Name ?? "");
         command.Parameters.AddWithValue("$operatorDept", request.Operator.Dept ?? "");
+        command.Parameters.AddWithValue("$dingTalkUserId", dingTalkUserId);
         command.Parameters.AddWithValue("$requestJson", JsonSerializer.Serialize(request, JsonOptions));
         command.Parameters.AddWithValue("$scriptFile", script.ScriptFile);
         command.Parameters.AddWithValue("$scriptHash", script.ScriptHash);
@@ -3176,6 +3203,7 @@ ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
             OperatorId = request.Operator.Id ?? "",
             OperatorName = request.Operator.Name ?? "",
             OperatorDept = request.Operator.Dept ?? "",
+            DingTalkUserId = dingTalkUserId,
             Status = "queued",
             RequestJson = JsonSerializer.Serialize(request, JsonOptions),
             ScriptFile = script.ScriptFile,
@@ -3198,7 +3226,7 @@ ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
         if (string.IsNullOrWhiteSpace(status))
         {
             command.CommandText = """
-SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, status, request_json,
+SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
        sap_status_type, sap_status_text, message, script_file, script_hash,
        queued_at, started_at, finished_at, duration_ms,
        source, notify_target, priority, attempt, max_attempts, locked_by, locked_at
@@ -3210,13 +3238,13 @@ LIMIT $limit;
         else
         {
             command.CommandText = """
-SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, status, request_json,
+SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
        sap_status_type, sap_status_text, message, script_file, script_hash,
        queued_at, started_at, finished_at, duration_ms,
        source, notify_target, priority, attempt, max_attempts, locked_by, locked_at
 FROM runs
 WHERE status=$status
-ORDER BY queued_at
+ORDER BY priority DESC, queued_at, run_id
 LIMIT $limit;
 """;
             command.Parameters.AddWithValue("$status", status.ToLowerInvariant());
@@ -3491,7 +3519,7 @@ WHERE run_id=$runId AND status='running';
         using var connection = OpenDatabaseConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, status, request_json,
+SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
        sap_status_type, sap_status_text, message, script_file, script_hash,
        queued_at, started_at, finished_at, duration_ms,
        source, notify_target, priority, attempt, max_attempts, locked_by, locked_at
@@ -3557,7 +3585,7 @@ WHERE run_id=$runId;
 SELECT run_id
 FROM runs
 WHERE status='queued'
-ORDER BY priority DESC, queued_at
+ORDER BY priority DESC, queued_at, run_id
 LIMIT 1;
 """;
             runId = select.ExecuteScalar() as string ?? "";
@@ -3765,7 +3793,8 @@ VALUES($runId, $type, $name, $path, $size);
         string notifyMessage = status == "success"
             ? "任务执行完成"
             : $"任务执行失败：{FirstNonEmpty(result.Message ?? "", result.SapStatusText ?? "", status)}";
-        NotifyRunEvent(runId, status == "success" ? "success" : "failure", notifyMessage);
+        bool vbsAlreadySentSapDingTalk = HasVbsSapDingTalkNotifyResult(result);
+        NotifyRunEvent(runId, status == "success" ? "success" : "failure", notifyMessage, vbsAlreadySentSapDingTalk);
     }
 
     static TransactionScriptInfo LoadScriptInfo(string tcode)
@@ -3796,24 +3825,25 @@ VALUES($runId, $type, $name, $path, $size);
             OperatorId = reader.GetString(2),
             OperatorName = reader.GetString(3),
             OperatorDept = reader.GetString(4),
-            Status = reader.GetString(5),
-            RequestJson = reader.GetString(6),
-            SapStatusType = reader.GetString(7),
-            SapStatusText = reader.GetString(8),
-            Message = reader.GetString(9),
-            ScriptFile = reader.GetString(10),
-            ScriptHash = reader.GetString(11),
-            QueuedAt = reader.GetString(12),
-            StartedAt = reader.GetString(13),
-            FinishedAt = reader.GetString(14),
-            DurationMs = reader.GetInt64(15),
-            Source = reader.GetString(16),
-            NotifyTarget = reader.GetString(17),
-            Priority = reader.GetInt32(18),
-            Attempt = reader.GetInt32(19),
-            MaxAttempts = reader.GetInt32(20),
-            LockedBy = reader.GetString(21),
-            LockedAt = reader.GetString(22)
+            DingTalkUserId = reader.GetString(5),
+            Status = reader.GetString(6),
+            RequestJson = reader.GetString(7),
+            SapStatusType = reader.GetString(8),
+            SapStatusText = reader.GetString(9),
+            Message = reader.GetString(10),
+            ScriptFile = reader.GetString(11),
+            ScriptHash = reader.GetString(12),
+            QueuedAt = reader.GetString(13),
+            StartedAt = reader.GetString(14),
+            FinishedAt = reader.GetString(15),
+            DurationMs = reader.GetInt64(16),
+            Source = reader.GetString(17),
+            NotifyTarget = reader.GetString(18),
+            Priority = reader.GetInt32(19),
+            Attempt = reader.GetInt32(20),
+            MaxAttempts = reader.GetInt32(21),
+            LockedBy = reader.GetString(22),
+            LockedAt = reader.GetString(23)
         };
     }
 
@@ -3889,10 +3919,35 @@ ORDER BY id;
         }
     }
 
-    static void NotifyRunEvent(string runId, string eventName, string message)
+    static void NotifyRunEvent(string runId, string eventName, string message, bool skipSapDingTalk = false)
     {
         if (string.IsNullOrWhiteSpace(runId))
             return;
+
+        AppendRunLog(runId, "INFO", $"notify {eventName} queued: {message}");
+        ThreadPool.QueueUserWorkItem(_ => DispatchRunNotification(runId, eventName, message, skipSapDingTalk));
+    }
+
+    static void DispatchRunNotification(string runId, string eventName, string message, bool skipSapDingTalk)
+    {
+        if (IsRunFinishedEvent(eventName))
+        {
+            if (skipSapDingTalk)
+            {
+                AppendRunLog(runId, "INFO", "sap dingtalk notify skipped: legacy VBS notification result detected");
+            }
+            else
+            {
+                try
+                {
+                    SendSapDingTalkNotification(runId, eventName, message);
+                }
+                catch (Exception ex)
+                {
+                    AppendRunLog(runId, "WARN", $"sap dingtalk notify failed: {ex.Message}");
+                }
+            }
+        }
 
         var targets = LoadNotificationTargetsForRun(runId, eventName);
         string targetText = targets.Count == 0 ? "local" : string.Join(",", targets.Select(t => t.Label));
@@ -4023,6 +4078,326 @@ ORDER BY 1;
         catch (Exception ex)
         {
             AppendRunLog(runId, "WARN", $"notify failed target={target.Label}: {ex.Message}");
+        }
+    }
+
+    static void SendSapDingTalkNotification(string runId, string eventName, string message)
+    {
+        string provider = ResolveSapDingTalkProvider();
+        var run = LoadRun(runId, includeDetails: false);
+        string dingTalkId = FirstNonEmpty(
+            run?.DingTalkUserId ?? "",
+            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ID") ?? "",
+            DefaultDingTalkId);
+        string workNo = FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_WORKNO") ?? "",
+            run?.OperatorId ?? "",
+            Environment.UserName);
+        string notifyMessage = BuildSapDingTalkMessage(run, message);
+
+        var request = new SapDingTalkNotifyRequest
+        {
+            RunId = runId,
+            EventName = eventName,
+            Message = notifyMessage,
+            Content = BuildSapDingTalkContent(run, notifyMessage),
+            TransactionCode = run?.TransactionCode ?? "",
+            Status = run?.Status ?? eventName,
+            WorkNo = workNo,
+            DingTalkId = dingTalkId,
+            SapFunction = SapDingTalkFunctionName
+        };
+
+        switch (provider)
+        {
+            case "http":
+                string endpoint = FirstNonEmpty(
+                    Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_NOTIFY_URL") ?? "",
+                    Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_HTTP_URL") ?? "");
+                if (string.IsNullOrWhiteSpace(endpoint))
+                {
+                    AppendRunLog(runId, "INFO", $"sap dingtalk notify skipped: provider=http but no endpoint configured, function={request.SapFunction}, IV_DDID={request.DingTalkId}");
+                    return;
+                }
+
+                SendSapDingTalkNotificationByHttp(runId, endpoint, request);
+                return;
+
+            case "rfc":
+                SendSapDingTalkNotificationByRfc(runId, request);
+                return;
+
+            case "command":
+                string command = Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_NOTIFY_COMMAND") ?? "";
+                if (string.IsNullOrWhiteSpace(command))
+                {
+                    AppendRunLog(runId, "INFO", $"sap dingtalk notify skipped: provider=command but no command configured, function={request.SapFunction}, IV_DDID={request.DingTalkId}");
+                    return;
+                }
+
+                SendSapDingTalkNotificationByCommand(runId, command, request);
+                return;
+
+            default:
+                AppendRunLog(runId, "INFO", $"sap dingtalk notify skipped: provider={provider}, function={request.SapFunction}, IV_DDID={request.DingTalkId}");
+                return;
+        }
+    }
+
+    static string BuildSapDingTalkMessage(RunRecordView? run, string fallbackMessage)
+    {
+        if (run == null)
+            return fallbackMessage;
+
+        string prefix = run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
+            ? "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
+            : "自动化执行失败";
+        string sapText = FirstNonEmpty(run.SapStatusText, run.Message, fallbackMessage);
+        return string.IsNullOrWhiteSpace(sapText) || sapText.Equals(prefix, StringComparison.OrdinalIgnoreCase)
+            ? $"{prefix}: {run.TransactionCode}"
+            : $"{prefix}: {run.TransactionCode}, {sapText}";
+    }
+
+    static string BuildSapDingTalkContent(RunRecordView? run, string message)
+    {
+        if (run == null)
+            return message;
+
+        string plants = ExtractRunParamValue(run.RequestJson, "plants");
+        string sapMessage = FirstNonEmpty(run.SapStatusText, run.Message, message, "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C");
+        var lines = new List<string>
+        {
+            $"TCODE={run.TransactionCode}",
+            $"PLANTS={plants}",
+            $"RUN_ID={run.RunId}",
+            $"STATUS={run.Status}",
+            $"SAP_STATUS_TYPE={run.SapStatusType}",
+            $"SAP_MESSAGE={sapMessage}",
+            $"OPERATOR={FirstNonEmpty(run.OperatorName, run.OperatorId, "unknown")}",
+            $"STARTED_AT={run.StartedAt}",
+            $"FINISHED_AT={run.FinishedAt}",
+            $"DURATION={FormatDuration(run.DurationMs)}"
+        };
+
+        return string.Join("\n", lines.Where(line => !string.IsNullOrWhiteSpace(line)));
+    }
+
+    static string ResolveSapDingTalkProvider()
+    {
+        string provider = FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_PROVIDER") ?? "",
+            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_NOTIFY_PROVIDER") ?? "",
+            "");
+
+        if (string.IsNullOrWhiteSpace(provider))
+            return "none";
+
+        provider = provider.Trim().ToLowerInvariant();
+        return provider switch
+        {
+            "0" or "false" or "off" or "disabled" or "none" => "none",
+            "1" or "true" or "on" or "http" => "http",
+            "rfc" => "rfc",
+            "command" or "cmd" => "command",
+            _ => provider
+        };
+    }
+
+    static bool HasVbsSapDingTalkNotifyResult(RunResultRequest result)
+    {
+        return result.Logs.Any(line =>
+            line.Message.StartsWith("NOTIFY_TYPE=", StringComparison.OrdinalIgnoreCase) ||
+            line.Message.StartsWith("NOTIFY_MSG=", StringComparison.OrdinalIgnoreCase));
+    }
+
+    static string ExtractRunParamValue(string requestJson, string key)
+    {
+        if (string.IsNullOrWhiteSpace(requestJson))
+            return "";
+
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(requestJson);
+            if (doc.RootElement.TryGetProperty("params", out JsonElement paramElement) &&
+                paramElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in paramElement.EnumerateObject())
+                {
+                    if (property.Name.Equals(key, StringComparison.OrdinalIgnoreCase))
+                        return JsonValueToString(property.Value);
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return "";
+    }
+
+    static string FormatDuration(long durationMs)
+    {
+        if (durationMs <= 0)
+            return "";
+
+        var span = TimeSpan.FromMilliseconds(durationMs);
+        return span.TotalMinutes >= 1
+            ? $"{(int)span.TotalMinutes}分{span.Seconds}秒"
+            : $"{Math.Max(1, (int)Math.Round(span.TotalSeconds))}秒";
+    }
+
+    static bool IsRunFinishedEvent(string eventName)
+    {
+        return eventName.Equals("success", StringComparison.OrdinalIgnoreCase) ||
+               eventName.Equals("failure", StringComparison.OrdinalIgnoreCase) ||
+               eventName.Equals("failed", StringComparison.OrdinalIgnoreCase) ||
+               eventName.Equals("finish", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void SendSapDingTalkNotificationByHttp(string runId, string endpoint, SapDingTalkNotifyRequest request)
+    {
+        string payload = BuildSapDingTalkRequestPayload(request);
+
+        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+        using var response = NotificationHttpClient.PostAsync(endpoint, content).GetAwaiter().GetResult();
+        string responseText = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        var sapResult = ParseSapDingTalkNotifyResponse(responseText);
+        if (!string.IsNullOrWhiteSpace(sapResult.Message))
+            AppendRunLog(runId, "INFO", $"sap dingtalk notify EV_TYPE={sapResult.Type}, EV_MSG={Truncate(sapResult.Message, 200)}");
+
+        if (response.IsSuccessStatusCode && !IsSapErrorType(sapResult.Type))
+        {
+            AppendRunLog(runId, "INFO", $"sap dingtalk notify sent: IV_WORKNO={request.WorkNo}, IV_DDID={request.DingTalkId}");
+            return;
+        }
+
+        AppendRunLog(runId, "WARN", $"sap dingtalk notify failed: status={(int)response.StatusCode}, EV_TYPE={sapResult.Type}, body={Truncate(responseText, 200)}");
+    }
+
+    static void SendSapDingTalkNotificationByRfc(string runId, SapDingTalkNotifyRequest request)
+    {
+        string command = Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_RFC_COMMAND") ?? "";
+        if (string.IsNullOrWhiteSpace(command))
+        {
+            AppendRunLog(runId, "INFO", $"sap dingtalk notify skipped: provider=rfc but no RFC command configured, function={request.SapFunction}, IV_DDID={request.DingTalkId}");
+            return;
+        }
+
+        SendSapDingTalkNotificationByCommand(runId, command, request);
+    }
+
+    static string BuildSapDingTalkRequestPayload(SapDingTalkNotifyRequest request)
+    {
+        var payload = new Dictionary<string, string>
+        {
+            ["function"] = request.SapFunction,
+            ["IV_WORKNO"] = request.WorkNo,
+            ["IV_DDID"] = request.DingTalkId,
+            ["IV_CONTENT"] = request.Content,
+            ["ivWorkno"] = request.WorkNo,
+            ["ivDdid"] = request.DingTalkId,
+            ["ivContent"] = request.Content,
+            ["runId"] = request.RunId,
+            ["eventName"] = request.EventName,
+            ["status"] = request.Status,
+            ["transactionCode"] = request.TransactionCode,
+            ["message"] = request.Message
+        };
+
+        return JsonSerializer.Serialize(payload, JsonOptions);
+    }
+
+    static SapFunctionResult ParseSapDingTalkNotifyResponse(string responseText)
+    {
+        if (string.IsNullOrWhiteSpace(responseText))
+            return new SapFunctionResult();
+
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(responseText);
+            JsonElement root = doc.RootElement;
+            return new SapFunctionResult
+            {
+                Type = FirstNonEmpty(
+                    GetJsonString(root, "evType"),
+                    GetJsonString(root, "ev_type"),
+                    GetJsonString(root, "EV_TYPE"),
+                    GetJsonString(root, "type")),
+                Message = FirstNonEmpty(
+                    GetJsonString(root, "evMsg"),
+                    GetJsonString(root, "ev_msg"),
+                    GetJsonString(root, "EV_MSG"),
+                    GetJsonString(root, "message"),
+                    GetJsonString(root, "msg"))
+            };
+        }
+        catch
+        {
+            string type = Regex.Match(responseText, @"EV_TYPE\s*[=:]\s*([A-Za-z])", RegexOptions.IgnoreCase).Groups[1].Value;
+            string message = Regex.Match(responseText, @"EV_MSG\s*[=:]\s*(.+)$", RegexOptions.IgnoreCase | RegexOptions.Multiline).Groups[1].Value.Trim();
+            return new SapFunctionResult { Type = type, Message = message };
+        }
+    }
+
+    static bool IsSapErrorType(string type)
+    {
+        return type.Equals("E", StringComparison.OrdinalIgnoreCase) ||
+               type.Equals("A", StringComparison.OrdinalIgnoreCase) ||
+               type.Equals("X", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void SendSapDingTalkNotificationByCommand(string runId, string command, SapDingTalkNotifyRequest request)
+    {
+        string tempFile = Path.Combine(Path.GetTempPath(), $"sap-rpa-dingtalk-{runId}-{Guid.NewGuid():N}.json");
+        File.WriteAllText(tempFile, BuildSapDingTalkRequestPayload(request), Encoding.UTF8);
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = command,
+                Arguments = $"\"{tempFile}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc == null)
+            {
+                AppendRunLog(runId, "WARN", "sap dingtalk notify failed: command process not started");
+                return;
+            }
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+            if (!proc.WaitForExit(TimeSpan.FromSeconds(NotificationWorkerTimeoutSeconds)))
+            {
+                proc.Kill(entireProcessTree: true);
+                AppendRunLog(runId, "WARN", $"sap dingtalk notify timed out after {NotificationWorkerTimeoutSeconds}s");
+                return;
+            }
+
+            string stdout = stdoutTask.GetAwaiter().GetResult();
+            string stderr = stderrTask.GetAwaiter().GetResult();
+            var sapResult = ParseSapDingTalkNotifyResponse(stdout);
+            if (!string.IsNullOrWhiteSpace(sapResult.Message))
+                AppendRunLog(runId, "INFO", $"sap dingtalk notify EV_TYPE={sapResult.Type}, EV_MSG={Truncate(sapResult.Message, 200)}");
+
+            if (proc.ExitCode == 0 && !IsSapErrorType(sapResult.Type))
+                AppendRunLog(runId, "INFO", $"sap dingtalk notify sent: IV_WORKNO={request.WorkNo}, IV_DDID={request.DingTalkId}, IV_CONTENT={Truncate(request.Content, 120)}");
+            else
+                AppendRunLog(runId, "WARN", $"sap dingtalk notify failed: command exit={proc.ExitCode}, EV_TYPE={sapResult.Type}, stderr={Truncate(stderr, 200)}");
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(tempFile);
+            }
+            catch
+            {
+                // Best-effort cleanup only.
+            }
         }
     }
 
@@ -4759,7 +5134,7 @@ WScript.Quit 0
         if (!string.IsNullOrWhiteSpace(externalScript))
         {
             Log($"加载外部事务码脚本: {externalScript}");
-            return File.ReadAllText(externalScript, Encoding.UTF8);
+            return ReadTextFileWithFallbackEncoding(externalScript);
         }
 
         if (!p.Script.Equals("openOnly", StringComparison.OrdinalIgnoreCase) &&
@@ -4769,6 +5144,20 @@ WScript.Quit 0
         }
 
         return ReadEmbeddedTemplate("transaction_template.vbs");
+    }
+
+    static string ReadTextFileWithFallbackEncoding(string path)
+    {
+        byte[] bytes = File.ReadAllBytes(path);
+        try
+        {
+            var strictUtf8 = new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+            return strictUtf8.GetString(bytes);
+        }
+        catch (DecoderFallbackException)
+        {
+            return Encoding.Default.GetString(bytes);
+        }
     }
 
     static string ExtractScriptMetadataValue(string scriptText, string key)
@@ -5417,6 +5806,8 @@ class OperatorIdentity
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
     public string Dept { get; set; } = "";
+    public string DingTalkUserId { get; set; } = "";
+    public string Ddid { get; set; } = "";
 }
 
 class RunResultRequest
@@ -5437,6 +5828,7 @@ class RunRecordView
     public string OperatorId { get; set; } = "";
     public string OperatorName { get; set; } = "";
     public string OperatorDept { get; set; } = "";
+    public string DingTalkUserId { get; set; } = "";
     public string Status { get; set; } = "";
     public string RequestJson { get; set; } = "";
     public string SapStatusType { get; set; } = "";
@@ -5516,6 +5908,28 @@ class NotificationTarget
     public string Label { get; set; } = "";
     public string Webhook { get; set; } = "";
     public string Secret { get; set; } = "";
+}
+
+class SapDingTalkNotifyRequest
+{
+    public string RunId { get; set; } = "";
+    public string EventName { get; set; } = "";
+    public string Message { get; set; } = "";
+    public string Content { get; set; } = "";
+    public string TransactionCode { get; set; } = "";
+    public string Status { get; set; } = "";
+    public string WorkNo { get; set; } = "";
+    public string DingTalkId { get; set; } = "";
+    public string SapFunction { get; set; } = "";
+    public string IV_WORKNO => WorkNo;
+    public string IV_DDID => DingTalkId;
+    public string IV_CONTENT => Content;
+}
+
+class SapFunctionResult
+{
+    public string Type { get; set; } = "";
+    public string Message { get; set; } = "";
 }
 
 class TransactionScriptInfo
