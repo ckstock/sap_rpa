@@ -9,12 +9,16 @@
 On Error Resume Next
 
 Dim tcode, plantsCsv, businessAreasCsv, factoryGroup, unresolvedPlantsToken, unresolvedOkCodeToken
+Dim targetSystem, targetClient, targetUser, unresolvedSapSystemToken, unresolvedSapClientToken, unresolvedSapUserToken
 Dim targetDate, yearValue, weekValue, pageYear, pageWeek, periodValue, weekEndValue
 Dim plantValue, setOk
 Dim SapGuiAuto, application, connection, session, connIndex, sessIndex
 Dim retries, maxRetries, sleepMs, statusType, statusText, operationError
 
 tcode = "{OK_CODE}"
+targetSystem = "{SAP_SYSTEM}"
+targetClient = "{SAP_CLIENT}"
+targetUser = "{SAP_USER}"
 plantsCsv = "{PLANTS}"
 businessAreasCsv = "{BUSINESS_AREAS}"
 factoryGroup = "{FACTORY_GROUP}"
@@ -25,8 +29,14 @@ weekEndValue = "{WEEK_END}"
 maxRetries = 100
 unresolvedPlantsToken = "{" & "PLANTS" & "}"
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
+unresolvedSapSystemToken = "{" & "SAP_SYSTEM" & "}"
+unresolvedSapClientToken = "{" & "SAP_CLIENT" & "}"
+unresolvedSapUserToken = "{" & "SAP_USER" & "}"
 
 If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFI072A"
+If Trim(CStr(targetSystem)) = unresolvedSapSystemToken Then targetSystem = ""
+If Trim(CStr(targetClient)) = unresolvedSapClientToken Then targetClient = ""
+If Trim(CStr(targetUser)) = unresolvedSapUserToken Then targetUser = ""
 If UCase(Trim(CStr(tcode))) <> "ZFI072A" Then
    EmitError "ZFI072A script refuses non-ZFI072A tcode=" & CStr(tcode)
    WScript.Quit 10
@@ -225,6 +235,24 @@ Function SessionIsUsable(candidate)
       Err.Clear
       Exit Function
    End If
+   If Trim(CStr(targetSystem)) <> "" Then
+      If UCase(Trim(CStr(candidate.Info.SystemName))) <> UCase(Trim(CStr(targetSystem))) Then
+         Err.Clear
+         Exit Function
+      End If
+   End If
+   If Trim(CStr(targetClient)) <> "" Then
+      If Trim(CStr(candidate.Info.Client)) <> Trim(CStr(targetClient)) Then
+         Err.Clear
+         Exit Function
+      End If
+   End If
+   If Trim(CStr(targetUser)) <> "" Then
+      If UCase(Trim(CStr(candidate.Info.User))) <> UCase(Trim(CStr(targetUser))) Then
+         Err.Clear
+         Exit Function
+      End If
+   End If
    Err.Clear
    Dim okcd
    Set okcd = candidate.findById("wnd[0]/tbar[0]/okcd")
@@ -347,7 +375,9 @@ Sub EmitSapGuiDiagnostics(reason)
                   Err.Clear
                   okcdText = BoolText(CandidateHasObject(diagSession, "wnd[0]/tbar[0]/okcd"))
                   WScript.Echo "SAP_DIAG: session[" & CStr(diagConnIndex) & "." & CStr(diagSessIndex) & _
-                     "] user=" & SafeSessionValue(diagSession, "User") & _
+                     "] system=" & SafeSessionValue(diagSession, "SystemName") & _
+                     ", client=" & SafeSessionValue(diagSession, "Client") & _
+                     ", user=" & SafeSessionValue(diagSession, "User") & _
                      ", transaction=" & SafeSessionValue(diagSession, "Transaction") & _
                      ", title=" & SafeObjectText(diagSession, "wnd[0]", "Text") & _
                      ", statusType=" & SafeObjectText(diagSession, "wnd[0]/sbar", "MessageType") & _
@@ -615,7 +645,7 @@ For retries = 1 To maxRetries
             End If
          Next
          If IsObject(session) And SessionIsUsable(session) Then
-            WScript.Echo "INFO: using SAP session user=" & session.Info.User & ", transaction=" & session.Info.Transaction
+            WScript.Echo "INFO: using SAP session system=" & session.Info.SystemName & ", client=" & session.Info.Client & ", user=" & session.Info.User & ", transaction=" & session.Info.Transaction
             Exit For
          End If
       End If

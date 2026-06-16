@@ -4093,13 +4093,15 @@ ORDER BY 1;
             Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_WORKNO") ?? "",
             "");
         string notifyMessage = BuildSapDingTalkMessage(run, message);
+        string notifyContent = BuildSapDingTalkContent(run, notifyMessage);
 
         var request = new SapDingTalkNotifyRequest
         {
             RunId = runId,
             EventName = eventName,
             Message = notifyMessage,
-            Content = BuildSapDingTalkContent(run, notifyMessage),
+            Content = notifyContent,
+            MarkdownContent = BuildSapDingTalkMarkdownContent(run, notifyMessage),
             TransactionCode = run?.TransactionCode ?? "",
             Status = run?.Status ?? eventName,
             WorkNo = workNo,
@@ -4155,7 +4157,7 @@ ORDER BY 1;
         string prefix = run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
             ? "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
             : "自动化执行失败";
-        string sapText = FirstNonEmpty(run.SapStatusText, run.Message, fallbackMessage);
+        string sapText = CleanDingTalkDisplayText(FirstNonEmpty(run.SapStatusText, run.Message, fallbackMessage));
         return string.IsNullOrWhiteSpace(sapText) || sapText.Equals(prefix, StringComparison.OrdinalIgnoreCase)
             ? $"{prefix}: {run.TransactionCode}"
             : $"{prefix}: {run.TransactionCode}, {sapText}";
@@ -4167,28 +4169,106 @@ ORDER BY 1;
             return message;
 
         string plants = ExtractRunParamValue(run.RequestJson, "plants");
-        string sapMessage = FirstNonEmpty(run.SapStatusText, run.Message, message, "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C");
+        string sapMessage = BuildFriendlySapMessage(run, message);
         string statusLabel = FormatRunStatusForDingTalk(run.Status);
         string sapStatusType = FormatSapStatusType(run.SapStatusType);
         string title = run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
             ? "\u2705 SAP \u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
             : "\u274C SAP \u81EA\u52A8\u5316\u6267\u884C\u5931\u8D25";
+        string plantText = FormatPlantsForDingTalk(plants);
+        string durationText = FirstNonEmpty(FormatDuration(run.DurationMs), "\u672A\u8BB0\u5F55");
         var lines = new List<string>
         {
             title,
             "",
+            $"\u3010\u6458\u8981\u3011{run.TransactionCode} / {statusLabel} / {durationText}",
             $"\U0001F4CC \u4E8B\u52A1\u7801\uFF1A{run.TransactionCode}",
-            $"\U0001F3ED \u5DE5\u5382\uFF1A{FormatPlantsForDingTalk(plants)}",
+            $"\U0001F3ED \u5DE5\u5382\uFF1A{plantText}",
             $"\U0001F4CA \u6267\u884C\u7ED3\u679C\uFF1A{statusLabel}",
             $"\U0001F514 SAP\u6D88\u606F\uFF1A{sapMessage}",
             $"\U0001F3F7\uFE0F SAP\u72B6\u6001\uFF1A{sapStatusType}",
-            $"\u23F1\uFE0F \u6267\u884C\u8017\u65F6\uFF1A{FirstNonEmpty(FormatDuration(run.DurationMs), "\u672A\u8BB0\u5F55")}",
+            $"\u23F1\uFE0F \u6267\u884C\u8017\u65F6\uFF1A{durationText}",
             $"\U0001F552 \u5F00\u59CB\u65F6\u95F4\uFF1A{FirstNonEmpty(run.StartedAt, "\u672A\u8BB0\u5F55")}",
             $"\U0001F3C1 \u5B8C\u6210\u65F6\u95F4\uFF1A{FirstNonEmpty(run.FinishedAt, "\u672A\u8BB0\u5F55")}",
             $"\U0001F194 \u4EFB\u52A1\u7F16\u53F7\uFF1A{run.RunId}"
         };
 
         return string.Join("\n", lines);
+    }
+
+    static string BuildSapDingTalkMarkdownContent(RunRecordView? run, string message)
+    {
+        if (run == null)
+            return message;
+
+        string plants = ExtractRunParamValue(run.RequestJson, "plants");
+        string statusLabel = FormatRunStatusForDingTalk(run.Status);
+        string statusIcon = run.Status.Equals("success", StringComparison.OrdinalIgnoreCase) ? "\u2705" : "\u274C";
+        string titleText = run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
+            ? "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
+            : "\u81EA\u52A8\u5316\u6267\u884C\u5931\u8D25";
+        string sapMessage = BuildFriendlySapMessage(run, message);
+        string plantText = FormatPlantsForDingTalk(plants);
+        string durationText = FirstNonEmpty(FormatDuration(run.DurationMs), "\u672A\u8BB0\u5F55");
+        string sapStatusType = FormatSapStatusType(run.SapStatusType);
+
+        var lines = new List<string>
+        {
+            $"## {statusIcon} SAP {titleText}",
+            "",
+            $"> **{run.TransactionCode}**  |  **{statusLabel}**  |  {durationText}",
+            "",
+            $"**\U0001F514 SAP\u6D88\u606F**  ",
+            $"> {EscapeMarkdownForDingTalk(sapMessage)}",
+            "",
+            $"**\U0001F4CC \u6267\u884C\u4FE1\u606F**",
+            $"- \u4E8B\u52A1\u7801\uFF1A`{EscapeMarkdownForDingTalk(run.TransactionCode)}`",
+            $"- \u5DE5\u5382\uFF1A{EscapeMarkdownForDingTalk(plantText)}",
+            $"- SAP\u72B6\u6001\uFF1A{EscapeMarkdownForDingTalk(sapStatusType)}",
+            $"- \u5F00\u59CB\u65F6\u95F4\uFF1A{EscapeMarkdownForDingTalk(FirstNonEmpty(run.StartedAt, "\u672A\u8BB0\u5F55"))}",
+            $"- \u5B8C\u6210\u65F6\u95F4\uFF1A{EscapeMarkdownForDingTalk(FirstNonEmpty(run.FinishedAt, "\u672A\u8BB0\u5F55"))}",
+            "",
+            $"**\U0001F194 \u4EFB\u52A1\u7F16\u53F7**  ",
+            $"`{EscapeMarkdownForDingTalk(run.RunId)}`"
+        };
+
+        return string.Join("\n", lines);
+    }
+
+    static string BuildFriendlySapMessage(RunRecordView run, string fallbackMessage)
+    {
+        string raw = FirstNonEmpty(run.SapStatusText, run.Message, fallbackMessage, "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C");
+        string cleaned = CleanDingTalkDisplayText(raw);
+        if (!string.IsNullOrWhiteSpace(cleaned))
+            return cleaned;
+
+        return run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
+            ? "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
+            : "\u81EA\u52A8\u5316\u6267\u884C\u5B8C\u6210\uFF0C\u8BF7\u5728\u8FD0\u884C\u65E5\u5FD7\u67E5\u770B\u8BE6\u60C5";
+    }
+
+    static string CleanDingTalkDisplayText(string value)
+    {
+        string text = FirstNonEmpty(value, "").Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            return "";
+
+        text = Regex.Replace(text, @"[A-Za-z]:\\[^\r\n;]+", "\u672C\u673A\u4E34\u65F6\u811A\u672C");
+        if (text.Contains("VBS", StringComparison.OrdinalIgnoreCase) &&
+            (text.Contains("\u8D85\u8FC7", StringComparison.OrdinalIgnoreCase) || text.Contains("timeout", StringComparison.OrdinalIgnoreCase)))
+        {
+            return "VBS \u6267\u884C\u8D85\u65F6\uFF0C\u5DF2\u505C\u6B62\u5E76\u6E05\u7406 SAP \u4F1A\u8BDD";
+        }
+
+        return text;
+    }
+
+    static string EscapeMarkdownForDingTalk(string value)
+    {
+        return FirstNonEmpty(value, "")
+            .Replace("`", "'")
+            .Replace("\r\n", "\n")
+            .Replace("\r", "\n");
     }
 
     static string FormatRunStatusForDingTalk(string status)
@@ -4228,7 +4308,9 @@ ORDER BY 1;
         if (string.IsNullOrWhiteSpace(value))
             return "\u672A\u6307\u5B9A";
 
-        return value.Replace(",", "\u3001");
+        string replaced = value.Replace(",", "\u3001");
+        const int maxLength = 120;
+        return replaced.Length <= maxLength ? replaced : replaced[..maxLength] + "\u2026";
     }
 
     static string ResolveSapDingTalkProvider()
@@ -4329,8 +4411,12 @@ ORDER BY 1;
             userid_list = FirstNonEmpty(request.DingTalkId, DefaultDingTalkId),
             msg = new
             {
-                msgtype = "text",
-                text = new { content = request.Content }
+                msgtype = "markdown",
+                markdown = new
+                {
+                    title = FirstNonEmpty(request.Message, "SAP\u81EA\u52A8\u5316\u901A\u77E5"),
+                    text = FirstNonEmpty(request.MarkdownContent, request.Content)
+                }
             }
         };
 
@@ -4921,16 +5007,16 @@ ORDER BY 1;
             return FailedRunResult(message, started);
         }
 
-        var initialProbe = ProbeSapSession();
+        var initialProbe = ProbeSapSession(p);
         if (initialProbe.Ready)
         {
             Log($"Detected ready SAP GUI session; skip sapshcut login. {initialProbe.Details}");
         }
         else
         {
-            if (initialProbe.HasSapGui)
+            if (initialProbe.HasBlockingSapGui)
             {
-                string message = "SAP GUI has open windows but no logged-in scripting session is ready. " +
+                string message = "SAP GUI has open windows but target login session is not ready. " +
                     "Close SAP login or multi-logon dialogs before submitting another queued run. " +
                     $"Probe: {initialProbe.Details}";
                 Console.Error.WriteLine(message);
@@ -4968,7 +5054,7 @@ ORDER BY 1;
             Log($"未检测到可用 SAP GUI 会话，启动 SAP GUI: path={sapshcut}, args={MaskSapArgs(string.Join(" ", args))}");
             Process.Start(startInfo);
             Log("SAP GUI started; waiting for logged-in scripting session before running VBS");
-            var loginProbe = WaitForReadySapSession(TimeSpan.FromSeconds(35), TimeSpan.FromSeconds(2));
+            var loginProbe = WaitForReadySapSession(p, TimeSpan.FromSeconds(35), TimeSpan.FromSeconds(2));
             if (!loginProbe.Ready)
             {
                 string message = "SAP login did not produce a ready scripting session. " +
@@ -5001,26 +5087,31 @@ ORDER BY 1;
         }
     }
 
-    static SapSessionProbeResult WaitForReadySapSession(TimeSpan timeout, TimeSpan interval)
+    static SapSessionProbeResult WaitForReadySapSession(SapRunParams p, TimeSpan timeout, TimeSpan interval)
     {
         var deadline = DateTime.UtcNow.Add(timeout);
-        SapSessionProbeResult last = ProbeSapSession();
+        SapSessionProbeResult last = ProbeSapSession(p);
         while (!last.Ready && DateTime.UtcNow < deadline)
         {
             Thread.Sleep(interval);
-            last = ProbeSapSession();
+            last = ProbeSapSession(p);
         }
 
         return last;
     }
 
-    static SapSessionProbeResult ProbeSapSession()
+    static SapSessionProbeResult ProbeSapSession(SapRunParams p)
     {
         string probeFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_probe_{Guid.NewGuid():N}.vbs");
-        string probeScript = """
+        string probeScript = $"""
 On Error Resume Next
-Dim SapGuiAuto, application, connection, session, i, j, detail, okcd
+Dim SapGuiAuto, application, connection, session, i, j, detail, okcd, foundTarget
+Dim targetSystem, targetClient, targetUser, currentSystem, currentClient, currentUser
+targetSystem = "{VbsEscape(p.System)}"
+targetClient = "{VbsEscape(p.Client)}"
+targetUser = "{VbsEscape(p.User)}"
 detail = ""
+foundTarget = False
 Set SapGuiAuto = GetObject("SAPGUI")
 If Err.Number <> 0 Then
    WScript.Echo "NO: SAPGUI object not found"
@@ -5041,23 +5132,37 @@ For i = 0 To application.Children.Count - 1
          Err.Clear
          Set session = connection.Children.Item(CInt(j))
          If Err.Number = 0 And IsObject(session) Then
-            detail = detail & "; session[" & i & "," & j & "].user=" & session.Info.User & ",transaction=" & session.Info.Transaction & ",program=" & session.Info.Program & ",screen=" & session.Info.ScreenNumber
-            If Trim(CStr(session.Info.User)) <> "" Then
+            currentSystem = Trim(CStr(session.Info.SystemName))
+            currentClient = Trim(CStr(session.Info.Client))
+            currentUser = Trim(CStr(session.Info.User))
+            detail = detail & "; session[" & i & "," & j & "].system=" & currentSystem & ",client=" & currentClient & ",user=" & currentUser & ",transaction=" & session.Info.Transaction & ",program=" & session.Info.Program & ",screen=" & session.Info.ScreenNumber
+            If UCase(currentSystem) = UCase(Trim(CStr(targetSystem))) And currentClient = Trim(CStr(targetClient)) And UCase(currentUser) = UCase(Trim(CStr(targetUser))) Then
                Err.Clear
                Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
-               If Err.Number = 0 And IsObject(okcd) Then Exit For
+               If Err.Number = 0 And IsObject(okcd) Then
+                  foundTarget = True
+                  Exit For
+               End If
             End If
          End If
       Next
-      If IsObject(session) And Trim(CStr(session.Info.User)) <> "" Then
-         Err.Clear
-         Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
-         If Err.Number = 0 And IsObject(okcd) Then Exit For
-      End If
+       If IsObject(session) Then
+          Err.Clear
+          currentSystem = Trim(CStr(session.Info.SystemName))
+          currentClient = Trim(CStr(session.Info.Client))
+          currentUser = Trim(CStr(session.Info.User))
+          If UCase(currentSystem) = UCase(Trim(CStr(targetSystem))) And currentClient = Trim(CStr(targetClient)) And UCase(currentUser) = UCase(Trim(CStr(targetUser))) Then
+             Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
+             If Err.Number = 0 And IsObject(okcd) Then
+                foundTarget = True
+                Exit For
+             End If
+          End If
+       End If
    End If
 Next
-If Err.Number <> 0 Or Not IsObject(session) Or Trim(CStr(session.Info.User)) = "" Then
-   WScript.Echo "NO: logged-in SAP session not ready; " & detail
+If Err.Number <> 0 Or Not IsObject(session) Or Not CBool(foundTarget) Then
+   WScript.Echo "NO: target SAP session not found; target=" & targetSystem & "/" & targetClient & "/" & targetUser & "; " & detail
    WScript.Quit 4
 End If
 Err.Clear
@@ -5066,7 +5171,7 @@ If Err.Number <> 0 Or Not IsObject(okcd) Then
    WScript.Echo "NO: command field not ready; " & detail
    WScript.Quit 5
 End If
-WScript.Echo "OK: user=" & session.Info.User & ", transaction=" & session.Info.Transaction & "; " & detail
+WScript.Echo "OK: system=" & session.Info.SystemName & ", client=" & session.Info.Client & ", user=" & session.Info.User & ", transaction=" & session.Info.Transaction & "; " & detail
 WScript.Quit 0
 """;
 
@@ -5083,7 +5188,7 @@ WScript.Quit 0
 
             using var proc = Process.Start(psi);
             if (proc == null)
-                return new SapSessionProbeResult(false, false, "failed to start cscript.exe");
+                return new SapSessionProbeResult(false, false, false, "failed to start cscript.exe");
 
             proc.WaitForExit(10_000);
             string output = proc.StandardOutput.ReadToEnd().Trim();
@@ -5094,12 +5199,13 @@ WScript.Quit 0
             return new SapSessionProbeResult(
                 Ready: proc.ExitCode == 0 && output.StartsWith("OK:", StringComparison.OrdinalIgnoreCase),
                 HasSapGui: hasSapGui,
+                HasBlockingSapGui: hasSapGui && !merged.Contains("target SAP session not found", StringComparison.OrdinalIgnoreCase),
                 Details: merged);
         }
         catch (Exception ex)
         {
             Log($"SAP session probe failed: {ex.Message}");
-            return new SapSessionProbeResult(false, false, ex.Message);
+            return new SapSessionProbeResult(false, false, false, ex.Message);
         }
         finally
         {
@@ -5258,6 +5364,9 @@ WScript.Quit 0
 
         string vbsScript = template
             .Replace("{OK_CODE}", VbsEscape(p.TCode))
+            .Replace("{SAP_SYSTEM}", VbsEscape(p.System))
+            .Replace("{SAP_CLIENT}", VbsEscape(p.Client))
+            .Replace("{SAP_USER}", VbsEscape(p.User))
             .Replace("{SCRIPT_MODE}", VbsEscape(p.Script))
             .Replace("{FIELD1_NAME}", VbsEscape(p.Field1Name))
             .Replace("{FIELD1_VALUE}", VbsEscape(p.Field1Value))
@@ -5388,7 +5497,7 @@ WScript.Quit 0
         finally
         {
             if (p.TCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase))
-                CleanupSapGuiSessionAfterRun(p.TCode);
+                CleanupSapGuiSessionAfterRun(p);
 
             try
             {
@@ -5399,12 +5508,16 @@ WScript.Quit 0
         }
     }
 
-    static void CleanupSapGuiSessionAfterRun(string tcode)
+    static void CleanupSapGuiSessionAfterRun(SapRunParams p)
     {
         string cleanupFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_cleanup_{Guid.NewGuid():N}.vbs");
-        string cleanupScript = """
+        string cleanupScript = $"""
 On Error Resume Next
 Dim SapGuiAuto, application, connection, session, i, j, okcd
+Dim targetSystem, targetClient, targetUser, currentSystem, currentClient, currentUser
+targetSystem = "{VbsEscape(p.System)}"
+targetClient = "{VbsEscape(p.Client)}"
+targetUser = "{VbsEscape(p.User)}"
 Set SapGuiAuto = GetObject("SAPGUI")
 If Err.Number <> 0 Or Not IsObject(SapGuiAuto) Then
    WScript.Echo "CLEANUP: SAPGUI object not found"
@@ -5421,28 +5534,35 @@ For i = 0 To application.Children.Count - 1
    Set connection = application.Children.Item(CInt(i))
    If Err.Number = 0 And IsObject(connection) Then
       For j = 0 To connection.Children.Count - 1
-         Err.Clear
-         Set session = connection.Children.Item(CInt(j))
-         If Err.Number = 0 And IsObject(session) Then
-            Err.Clear
-            Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
-            If Err.Number = 0 And IsObject(okcd) Then
-               WScript.Echo "CLEANUP: closing session user=" & session.Info.User & ", transaction=" & session.Info.Transaction
-               okcd.Text = "/nex"
-               session.findById("wnd[0]").sendVKey 0
-               WScript.Sleep 500
+          Err.Clear
+          Set session = connection.Children.Item(CInt(j))
+          If Err.Number = 0 And IsObject(session) Then
+             currentSystem = Trim(CStr(session.Info.SystemName))
+             currentClient = Trim(CStr(session.Info.Client))
+             currentUser = Trim(CStr(session.Info.User))
+             If UCase(currentSystem) <> UCase(Trim(CStr(targetSystem))) Or currentClient <> Trim(CStr(targetClient)) Or UCase(currentUser) <> UCase(Trim(CStr(targetUser))) Then
+                WScript.Echo "CLEANUP: skip non-target session system=" & currentSystem & ", client=" & currentClient & ", user=" & currentUser & ", transaction=" & session.Info.Transaction
+             Else
+             Err.Clear
+             Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
+             If Err.Number = 0 And IsObject(okcd) Then
+                WScript.Echo "CLEANUP: closing session system=" & session.Info.SystemName & ", client=" & session.Info.Client & ", user=" & session.Info.User & ", transaction=" & session.Info.Transaction
+                okcd.Text = "/nex"
+                session.findById("wnd[0]").sendVKey 0
+                WScript.Sleep 500
                If Err.Number = 0 Then
                   WScript.Echo "CLEANUP: sent /nex"
                Else
                   WScript.Echo "CLEANUP: failed to send /nex - " & Err.Description
-               End If
-               WScript.Quit 0
-            End If
-         End If
-      Next
+                End If
+                WScript.Quit 0
+             End If
+             End If
+          End If
+       Next
    End If
 Next
-WScript.Echo "CLEANUP: no closable SAP session found"
+WScript.Echo "CLEANUP: no target closable SAP session found"
 WScript.Quit 0
 """;
 
@@ -5460,25 +5580,25 @@ WScript.Quit 0
             using var proc = Process.Start(psi);
             if (proc == null)
             {
-                Log($"SAP cleanup after {tcode}: failed to start cscript.exe");
+                Log($"SAP cleanup after {p.TCode}: failed to start cscript.exe");
                 return;
             }
 
             if (!proc.WaitForExit(15_000))
             {
                 proc.Kill(entireProcessTree: true);
-                Log($"SAP cleanup after {tcode}: timeout");
+                Log($"SAP cleanup after {p.TCode}: timeout");
                 return;
             }
 
             string output = proc.StandardOutput.ReadToEnd().Trim();
             string error = proc.StandardError.ReadToEnd().Trim();
             string merged = string.Join(" ", new[] { output, error }.Where(x => !string.IsNullOrWhiteSpace(x)));
-            Log($"SAP cleanup after {tcode}: exit={proc.ExitCode}, {merged}");
+            Log($"SAP cleanup after {p.TCode}: exit={proc.ExitCode}, {merged}");
         }
         catch (Exception ex)
         {
-            Log($"SAP cleanup after {tcode} failed: {ex.Message}");
+            Log($"SAP cleanup after {p.TCode} failed: {ex.Message}");
         }
         finally
         {
@@ -6004,7 +6124,7 @@ class SapLocalConfig
     public string? SysNr { get; set; }
 }
 
-readonly record struct SapSessionProbeResult(bool Ready, bool HasSapGui, string Details);
+readonly record struct SapSessionProbeResult(bool Ready, bool HasSapGui, bool HasBlockingSapGui, string Details);
 
 class TransactionConfigRequest
 {
@@ -6279,6 +6399,7 @@ class SapDingTalkNotifyRequest
     public string EventName { get; set; } = "";
     public string Message { get; set; } = "";
     public string Content { get; set; } = "";
+    public string MarkdownContent { get; set; } = "";
     public string TransactionCode { get; set; } = "";
     public string Status { get; set; } = "";
     public string WorkNo { get; set; } = "";
