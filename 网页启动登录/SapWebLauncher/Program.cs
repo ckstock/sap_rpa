@@ -4847,32 +4847,64 @@ ORDER BY 1;
         string statusIcon = FormatDingTalkStatusIcon(run.Status);
         string titleText = FormatDingTalkTitleText(run.Status);
         string sapMessage = BuildFriendlySapMessage(run, message);
-        string plantText = FormatPlantsForDingTalk(plants);
+        string plantTags = FormatPlantTagsForDingTalk(plants);
+        string failedPlantTags = FormatFailedPlantTagsForDingTalk(run);
         string durationText = FirstNonEmpty(FormatDuration(run.DurationMs), "\u672A\u8BB0\u5F55");
         string sapStatusType = FormatSapStatusType(run.SapStatusType);
         string transactionText = FormatTransactionDisplay(run);
+        string startedAt = FirstNonEmpty(run.StartedAt, "\u672A\u8BB0\u5F55");
+        string finishedAt = FirstNonEmpty(run.FinishedAt, "\u672A\u8BB0\u5F55");
+        string batchSummary = BuildDingTalkBatchSummary(run);
 
         var lines = new List<string>
         {
-            $"## {statusIcon} SAP {titleText}",
+            $"## {statusIcon} {EscapeMarkdownForDingTalk(titleText)}",
             "",
-            $"> **{EscapeMarkdownForDingTalk(transactionText)}**  |  **{statusLabel}**  |  {durationText}",
+            $"> **\u72B6\u6001\uFF1A{EscapeMarkdownForDingTalk(statusLabel)}**  |  \u4E8B\u52A1\uFF1A**{EscapeMarkdownForDingTalk(transactionText)}**  |  \u8017\u65F6\uFF1A{EscapeMarkdownForDingTalk(durationText)}",
             "",
-            $"**\U0001F514 SAP\u6D88\u606F**  ",
+            $"### \U0001F514 SAP\u6D88\u606F",
             $"> {EscapeMarkdownForDingTalk(sapMessage)}",
             "",
-            $"**\U0001F4CC \u6267\u884C\u4FE1\u606F**",
-            $"- \u4E8B\u52A1\uFF1A{EscapeMarkdownForDingTalk(transactionText)}",
-            $"- \u5DE5\u5382\uFF1A{EscapeMarkdownForDingTalk(plantText)}",
-            $"- SAP\u72B6\u6001\uFF1A{EscapeMarkdownForDingTalk(sapStatusType)}",
-            $"- \u5F00\u59CB\u65F6\u95F4\uFF1A{EscapeMarkdownForDingTalk(FirstNonEmpty(run.StartedAt, "\u672A\u8BB0\u5F55"))}",
-            $"- \u5B8C\u6210\u65F6\u95F4\uFF1A{EscapeMarkdownForDingTalk(FirstNonEmpty(run.FinishedAt, "\u672A\u8BB0\u5F55"))}",
+            $"### \U0001F4CC \u6267\u884C\u6982\u89C8",
+            $"- **\u6267\u884C\u7ED3\u679C**\uFF1A{statusIcon} **{EscapeMarkdownForDingTalk(statusLabel)}**",
+            $"- **\u5DE5\u5382\u7ED3\u679C**\uFF1A{EscapeMarkdownForDingTalk(batchSummary)}",
+            $"- **\u4E8B\u52A1**\uFF1A{EscapeMarkdownForDingTalk(transactionText)}",
+            $"- **SAP\u72B6\u6001**\uFF1A{EscapeMarkdownForDingTalk(sapStatusType)}",
+            $"- **\u6267\u884C\u8017\u65F6**\uFF1A{EscapeMarkdownForDingTalk(durationText)}",
             "",
-            $"**\U0001F194 \u4EFB\u52A1\u7F16\u53F7**  ",
+            $"### \U0001F3ED \u5DE5\u5382\u8303\u56F4",
+            $"- **\u672C\u6B21\u5DE5\u5382**\uFF1A{EscapeMarkdownForDingTalk(plantTags)}",
+            $"- **\u5931\u8D25\u5DE5\u5382**\uFF1A{EscapeMarkdownForDingTalk(failedPlantTags)}",
+            "",
+            $"### \U0001F552 \u65F6\u95F4\u8F74",
+            $"- **\u5F00\u59CB**\uFF1A{EscapeMarkdownForDingTalk(startedAt)}",
+            $"- **\u5B8C\u6210**\uFF1A{EscapeMarkdownForDingTalk(finishedAt)}",
+            "",
+            $"### \U0001F194 \u4EFB\u52A1\u53F7",
             $"`{EscapeMarkdownForDingTalk(run.RunId)}`"
         };
 
         return string.Join("\n", lines);
+    }
+
+    static string BuildDingTalkBatchSummary(RunRecordView run)
+    {
+        if (run.BatchItems.Count == 0)
+            return "\u5355\u4E2A\u4EFB\u52A1";
+
+        var latestItems = LatestBatchItemsByPlant(run.BatchItems);
+        int total = latestItems.Count;
+        int success = latestItems.Count(i => i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
+        int failed = latestItems.Count(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
+        int pending = latestItems.Count(i => !IsTerminalRunStatus(i.Status));
+
+        var parts = new List<string> { $"\u6210\u529F {success}/{total}" };
+        if (failed > 0)
+            parts.Add($"\u5931\u8D25 {failed}");
+        if (pending > 0)
+            parts.Add($"\u672A\u5B8C\u6210 {pending}");
+
+        return string.Join("\uFF0C", parts);
     }
 
     static string BuildFriendlySapMessage(RunRecordView run, string fallbackMessage)
@@ -4985,6 +5017,43 @@ ORDER BY 1;
         string replaced = value.Replace(",", "\u3001");
         const int maxLength = 120;
         return replaced.Length <= maxLength ? replaced : replaced[..maxLength] + "\u2026";
+    }
+
+    static string FormatPlantTagsForDingTalk(string plants)
+    {
+        string[] values = NormalizeStringArray(plants);
+        if (values.Length == 0)
+            return "\u672A\u6307\u5B9A";
+
+        string text = string.Join(" ", values.Select(p => $"[{p}]"));
+        const int maxLength = 120;
+        return text.Length <= maxLength ? text : text[..maxLength] + "\u2026";
+    }
+
+    static string FormatFailedPlantTagsForDingTalk(RunRecordView run)
+    {
+        var failedPlants = run.BatchItems
+            .Where(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(i => i.BatchIndex)
+            .Select(i => i.Plant)
+            .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (failedPlants.Length > 0)
+            return "\u26A0\uFE0F " + string.Join(" ", failedPlants.Select(p => $"**[{p}]**"));
+
+        if (run.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+            return "\u65E0";
+
+        string plants = ExtractRunParamValue(run.RequestJson, "plants");
+        string plant = ExtractRunParamValue(run.RequestJson, "plant");
+        string fallback = FirstNonEmpty(plants, plant);
+        string[] values = NormalizeStringArray(fallback);
+        if (values.Length > 0 && (run.Status.Equals("failure", StringComparison.OrdinalIgnoreCase) || run.Status.Equals("failed", StringComparison.OrdinalIgnoreCase)))
+            return "\u26A0\uFE0F " + string.Join(" ", values.Select(p => $"**[{p}]**"));
+
+        return "\u672A\u6807\u8BB0";
     }
 
     static string FormatTransactionDisplay(RunRecordView run)

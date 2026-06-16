@@ -551,7 +551,7 @@
         <div class="section-num">2</div>
         <h2>SapWebLauncher 本地应用设计</h2>
       </div>
-      <p>SapWebLauncher 使用 C# / .NET 8 Windows 应用实现，部署在固定 Windows 执行账号下。它既保留 <code>sap-rpa://</code> 协议唤醒能力，也承担 V2 的本地 HTTP API、SQLite 仓储、执行队列、VBS 运行器和通知适配职责。</p>
+      <p>SapWebLauncher 使用 C# / .NET 8 Windows 应用实现，部署在固定 Windows 执行账号下。HTTP API 由 SapWebLauncher 基于 <code>HttpListener</code> 提供本机服务，默认监听 <code>127.0.0.1:17890</code>，接口统一使用 JSON 请求/响应，并通过 SQLite 持久化配置、队列、运行审计和执行结果。它既保留 <code>sap-rpa://</code> 协议唤醒能力，也承担 V2 的本地 HTTP API、SQLite 仓储、执行队列、VBS 运行器和通知适配职责。</p>
 
       <h3 id="launcher-api">本地 API 职责</h3>
       <div class="grid">
@@ -567,7 +567,7 @@
           <tr><td class="nowrap"><code>POST /api/runs</code></td><td>创建一次执行任务。API 校验事务码、参数、工厂范围和通知绑定；ZFI072A 多工厂请求生成一个 parent run，并按工厂准备 child run。</td><td><code>runId</code>、<code>status</code>、<code>transactionCode</code>、<code>queuePosition</code>、<code>createdAt</code>、<code>childRuns</code>、<code>summaryJson</code></td></tr>
           <tr><td class="nowrap"><code>GET /api/runs</code></td><td>查询队列和历史记录，支持按事务码、状态、操作人、日期范围过滤，用于页面列表、前方任务数和审计查询。</td><td><code>items</code>、<code>total</code>、<code>runId</code>、<code>parentRunId</code>、<code>status</code>、<code>queuePosition</code>、<code>startedAt</code>、<code>finishedAt</code></td></tr>
           <tr><td class="nowrap"><code>GET /api/runs/{runId}</code></td><td>查看单个 run 详情。parent run 返回汇总和 child 明细；child run 返回单工厂执行日志、SAP 状态和输出文件。</td><td><code>run</code>、<code>requestJson</code>、<code>summaryJson</code>、<code>logs</code>、<code>files</code>、<code>childRuns</code>、<code>batchItems</code>、<code>notificationStatus</code></td></tr>
-          <tr><td class="nowrap"><code>POST /api/runs/{parentRunId}/rerun-failed</code></td><td>只重跑指定 parent run 下失败的工厂。API 从原 <code>run_batch_items</code> 读取失败项，新建一次重跑 parent run 和失败工厂 child runs；原 parent 不改回 <code>running</code>，只作为审计记录保留。</td><td><code>sourceParentRunId</code>、<code>newParentRunId</code>、<code>rerunOfRunId</code>、<code>plants</code>、<code>childRuns</code>、<code>status</code>、<code>queuePosition</code></td></tr>
+          <tr><td class="nowrap"><code>POST /api/runs/{parentRunId}/rerun-failed</code></td><td>只允许在原 parent run 已进入终态后调用。API 从原 <code>run_batch_items</code> 读取失败工厂，新建一次重跑 parent run 和失败工厂 child runs；原 parent 不改回 <code>running</code>，只作为审计记录保留。该接口用于部分失败后只重跑失败工厂，避免 A/C 等已成功工厂被重复执行。</td><td><code>ok</code>、<code>sourceParentRunId</code>、<code>parentRunId</code>/<code>rerunParentRunId</code>、<code>created</code>、<code>childRunIds</code>、<code>plants</code></td></tr>
           <tr><td class="nowrap"><code>GET /api/config</code></td><td>读取页面所需配置，包括事务码、参数定义、工厂、工厂组、事务工厂规则、通知机器人别名和定时任务。</td><td><code>transactions</code>、<code>plants</code>、<code>plantGroups</code>、<code>transactionPlantRules</code>、<code>notificationRobots</code>、<code>scheduleTasks</code>、<code>appSettings</code></td></tr>
           <tr><td class="nowrap"><code>GET /api/health</code></td><td>健康检查和上线巡检接口，用于确认 API 进程、SQLite、队列 worker、SAP GUI 执行账号状态是否可用。</td><td><code>ok</code>、<code>version</code>、<code>dbStatus</code>、<code>queueStatus</code>、<code>runningRunId</code>、<code>serverTime</code></td></tr>
           <tr><td class="nowrap"><code>GET /api/schema</code></td><td>返回本机 SQLite schema 和迁移版本，便于联调确认表结构，不返回任何密钥、密码或本机私有配置明文。</td><td><code>schemaVersion</code>、<code>tables</code>、<code>columns</code>、<code>indexes</code>、<code>migrations</code></td></tr>
@@ -744,7 +744,7 @@ ERROR=失败原因</div>
         <div class="step"><b>2. 生成 child</b>按工厂顺序生成 child run 和 <code>run_batch_items</code>，每个 child 只携带一个 <code>plant</code>。</div>
         <div class="step"><b>3. 串行执行</b>队列 worker 一次领取一个 child run，调用 <code>ZFI072A.vbs</code>，避免多个 SAP GUI 脚本抢同一桌面会话。</div>
         <div class="step"><b>4. 汇总 parent</b>每个 child 完成后更新批次项、日志、文件和 parent 的 <code>summary_json</code>。</div>
-        <div class="step"><b>5. 重跑失败</b><code>rerun-failed</code> 只读取失败工厂，新建重跑 parent run 和失败工厂 child runs，原 parent 作为审计记录不改回运行态。</div>
+        <div class="step"><b>5. 重跑失败</b><code>rerun-failed</code> 只允许在 parent 已终态后调用，只读取失败工厂，新建重跑 parent run 和失败工厂 child runs；原 parent 作为审计记录不改回运行态，已成功工厂不重复执行。</div>
       </div>
       <table>
         <thead>
@@ -757,7 +757,7 @@ ERROR=失败原因</div>
           <tr><td>用户取消或执行器中断</td><td><code>canceled</code> 或 <code>partial_failed</code></td><td>已完成 child 不回滚；未执行项保持可识别状态，便于人工判断是否重跑。</td></tr>
         </tbody>
       </table>
-      <div class="solution-box"><strong>重跑失败工厂：</strong><code>POST /api/runs/{parentRunId}/rerun-failed</code> 不修改原 parent run 的最终状态，也不把原 parent 改回 <code>queued</code> 或 <code>running</code>。接口只基于失败的 <code>run_batch_items</code> 新建一次重跑 parent run，并为失败工厂生成新的 child runs；新记录通过 <code>sourceParentRunId</code> 指向原 parent，通过 <code>rerunOfRunId</code> 或 <code>source_batch_item_id</code> 指向原失败 child 和批次项。</div>
+      <div class="solution-box"><strong>重跑失败工厂：</strong><code>POST /api/runs/{parentRunId}/rerun-failed</code> 只允许在原 parent run 已终态后调用，不修改原 parent run 的最终状态，也不把原 parent 改回 <code>queued</code> 或 <code>running</code>。接口用于“部分失败后只重跑失败工厂”：只基于失败的 <code>run_batch_items</code> 新建一次重跑 parent run，并为失败工厂生成新的 child runs，避免 A/C 等已成功工厂被重复执行；新记录通过 <code>sourceParentRunId</code> 指向原 parent，通过 <code>rerunOfRunId</code> 或 <code>source_batch_item_id</code> 指向原失败 child 和批次项。</div>
 
       <h3 id="vbs-serial">SAP GUI 串行执行和 /NEX 清理</h3>
       <div class="priority">

@@ -2049,6 +2049,21 @@
       return `<div class="area-chips">${items.map(item => `<span class="area-chip">${esc(item)}</span>`).join("")}</div>`;
     }
 
+    function normalizeRulePlantCode(value) {
+      return String(value || "").trim().toUpperCase();
+    }
+
+    function normalizeRulePlantList(value) {
+      return unique(toArray(value).map(normalizeRulePlantCode).filter(Boolean));
+    }
+
+    function renderRulePlantChips(plantsValue) {
+      const plantsList = normalizeRulePlantList(plantsValue);
+      return plantsList.length
+        ? plantsList.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-rule-plant" data-plant="${esc(code)}">${icon("x")}</button></span>`).join("")
+        : `<span class="table-hint">未配置工厂</span>`;
+    }
+
     function renderGroupNames(groupIds) {
       const names = toArray(groupIds).map(id => getFactoryGroup(id)?.shortName || getFactoryGroup(id)?.name || id);
       return names.length ? esc(names.join(",")) : `<span class="table-hint">-</span>`;
@@ -2252,7 +2267,7 @@
       const selectedGroupId = data.defaultPlantGroup || factoryGroups[0]?.id || "";
       const defaultPlants = getDefaultPlantsForTCode(data.code, selectedGroupId);
       const customPlants = unique(toArray(data.plants).length ? data.plants : data.fixedPlants);
-      const resolvedPlants = customPlants.length ? customPlants : defaultPlants;
+      const resolvedPlants = normalizeRulePlantList(customPlants.length ? customPlants : defaultPlants);
       return `
         <div class="form-grid">
           <div class="field"><label>事务码</label><input id="cfgRuleCode" value="${esc(data.code)}" ${mode === "edit" ? "disabled" : ""} placeholder="例如 ZFI072A"></div>
@@ -2265,7 +2280,7 @@
               <button type="button" class="btn small" data-action="reset-rule-plants">${icon("rotate-ccw")}恢复默认</button>
             </div>
             <input type="hidden" id="cfgRulePlants" value="${esc(resolvedPlants.join(","))}">
-            <div id="cfgRulePlantChips" class="area-chips">${resolvedPlants.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-rule-plant" data-plant="${esc(code)}">${icon("x")}</button></span>`).join("") || `<span class="table-hint">未配置工厂</span>`}</div>
+            <div id="cfgRulePlantChips" class="area-chips">${renderRulePlantChips(resolvedPlants)}</div>
             <div class="rule-plant-add">
               <input id="cfgRulePlantAdd" placeholder="新增工厂代码">
               <button type="button" class="btn small" data-action="add-rule-plant">${icon("plus")}新增</button>
@@ -2439,24 +2454,23 @@
       const input = document.getElementById("cfgRulePlants");
       const chips = document.getElementById("cfgRulePlantChips");
       if (!input || !chips) return;
-      const plantsList = unique(toArray(plantsValue).map(item => item.toUpperCase()));
+      const plantsList = normalizeRulePlantList(plantsValue);
       input.value = plantsList.join(",");
-      chips.innerHTML = plantsList.length
-        ? plantsList.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-rule-plant" data-plant="${esc(code)}">${icon("x")}</button></span>`).join("")
-        : `<span class="table-hint">未配置工厂</span>`;
+      chips.innerHTML = renderRulePlantChips(plantsList);
       chips.querySelectorAll("[data-action='remove-rule-plant']").forEach(btn => btn.addEventListener("click", () => removeRulePlant(btn.dataset.plant || "")));
     }
 
     function addRulePlant() {
       const input = document.getElementById("cfgRulePlantAdd");
-      const code = (input?.value || "").trim().toUpperCase();
+      const code = normalizeRulePlantCode(input?.value);
       if (!code) return;
       setRulePlantInput([...getRulePlantInput(), code]);
       input.value = "";
     }
 
     function removeRulePlant(code) {
-      setRulePlantInput(getRulePlantInput().filter(item => item !== code));
+      const target = normalizeRulePlantCode(code);
+      setRulePlantInput(getRulePlantInput().filter(item => normalizeRulePlantCode(item) !== target));
     }
 
     function buildPlantConfigPayload(mode, id) {
@@ -2549,7 +2563,7 @@
     function buildRuleConfigPayload(mode, id) {
       const code = (mode === "edit" ? id : readInputValue("cfgRuleCode")).toUpperCase();
       const payload = buildExistingTransactionPayload(code);
-      const plantsValue = toArray(readInputValue("cfgRulePlants"));
+      const plantsValue = normalizeRulePlantList(readInputValue("cfgRulePlants"));
       const selectableInput = readInputValue("cfgRuleSelectableGroups");
       const businessAreasInput = readInputValue("cfgRuleBusinessAreas");
       const selectableGroupIds = selectableInput ? toArray(selectableInput) : toArray(payload.selectableGroupIds);
