@@ -886,6 +886,10 @@ WHERE tcode=$tcode AND enabled=1;
                 {
                     runId = run.RunId,
                     status = run.Status,
+                    runType = run.RunType,
+                    parentRunId = run.ParentRunId,
+                    childRunIds = run.ChildRunIds,
+                    batchTotal = run.BatchTotal,
                     queuedAt = run.QueuedAt,
                     queuePosition = position.QueuePosition,
                     runsAhead = position.RunsAhead,
@@ -911,6 +915,15 @@ WHERE tcode=$tcode AND enabled=1;
                 string runId = runResultMatch.Groups[1].Value;
                 CompleteRun(runId, result);
                 WriteJson(context.Response, new { ok = true, runId });
+                return;
+            }
+
+            Match rerunFailedMatch = Regex.Match(path, @"^/api/runs/([A-Za-z0-9_.-]+)/rerun-failed$", RegexOptions.IgnoreCase);
+            if (rerunFailedMatch.Success &&
+                context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
+            {
+                var result = RerunFailedBatchItems(rerunFailedMatch.Groups[1].Value);
+                WriteJson(context.Response, result);
                 return;
             }
 
@@ -1077,6 +1090,15 @@ CREATE TABLE IF NOT EXISTS runs (
     priority INTEGER NOT NULL DEFAULT 0,
     attempt INTEGER NOT NULL DEFAULT 0,
     max_attempts INTEGER NOT NULL DEFAULT 1,
+    run_type TEXT NOT NULL DEFAULT 'single',
+    parent_run_id TEXT NOT NULL DEFAULT '',
+    batch_item_key TEXT NOT NULL DEFAULT '',
+    batch_index INTEGER NOT NULL DEFAULT 0,
+    batch_total INTEGER NOT NULL DEFAULT 0,
+    attempt_no INTEGER NOT NULL DEFAULT 1,
+    summary_json TEXT NOT NULL DEFAULT '',
+    source_parent_run_id TEXT NOT NULL DEFAULT '',
+    rerun_of_run_id TEXT NOT NULL DEFAULT '',
     locked_by TEXT NOT NULL DEFAULT '',
     locked_at TEXT NOT NULL DEFAULT '',
     queued_at TEXT NOT NULL DEFAULT '',
@@ -1086,6 +1108,24 @@ CREATE TABLE IF NOT EXISTS runs (
 );
 CREATE INDEX IF NOT EXISTS idx_runs_status_queued_at ON runs(status, queued_at);
 CREATE INDEX IF NOT EXISTS idx_runs_transaction_finished ON runs(transaction_code, finished_at);
+CREATE TABLE IF NOT EXISTS run_batch_items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    parent_run_id TEXT NOT NULL,
+    child_run_id TEXT NOT NULL,
+    plant_code TEXT NOT NULL DEFAULT '',
+    batch_index INTEGER NOT NULL DEFAULT 0,
+    attempt_no INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'queued',
+    message TEXT NOT NULL DEFAULT '',
+    started_at TEXT NOT NULL DEFAULT '',
+    finished_at TEXT NOT NULL DEFAULT '',
+    duration_ms INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    UNIQUE(child_run_id)
+);
+CREATE INDEX IF NOT EXISTS idx_run_batch_items_parent ON run_batch_items(parent_run_id, batch_index, attempt_no);
+CREATE INDEX IF NOT EXISTS idx_run_batch_items_status ON run_batch_items(parent_run_id, status);
 CREATE TABLE IF NOT EXISTS run_params (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL,
@@ -1249,8 +1289,18 @@ VALUES
             EnsureColumn(connection, "runs", "priority", "INTEGER NOT NULL DEFAULT 0");
             EnsureColumn(connection, "runs", "attempt", "INTEGER NOT NULL DEFAULT 0");
             EnsureColumn(connection, "runs", "max_attempts", "INTEGER NOT NULL DEFAULT 1");
+            EnsureColumn(connection, "runs", "run_type", "TEXT NOT NULL DEFAULT 'single'");
+            EnsureColumn(connection, "runs", "parent_run_id", "TEXT NOT NULL DEFAULT ''");
+            EnsureColumn(connection, "runs", "batch_item_key", "TEXT NOT NULL DEFAULT ''");
+            EnsureColumn(connection, "runs", "batch_index", "INTEGER NOT NULL DEFAULT 0");
+            EnsureColumn(connection, "runs", "batch_total", "INTEGER NOT NULL DEFAULT 0");
+            EnsureColumn(connection, "runs", "attempt_no", "INTEGER NOT NULL DEFAULT 1");
+            EnsureColumn(connection, "runs", "summary_json", "TEXT NOT NULL DEFAULT ''");
+            EnsureColumn(connection, "runs", "source_parent_run_id", "TEXT NOT NULL DEFAULT ''");
+            EnsureColumn(connection, "runs", "rerun_of_run_id", "TEXT NOT NULL DEFAULT ''");
             EnsureColumn(connection, "runs", "locked_by", "TEXT NOT NULL DEFAULT ''");
             EnsureColumn(connection, "runs", "locked_at", "TEXT NOT NULL DEFAULT ''");
+            EnsureIndex(connection, "idx_runs_parent", "runs", "parent_run_id, batch_index, attempt_no");
             EnsureColumn(connection, "transactions", "timeout_seconds", "INTEGER NOT NULL DEFAULT 0");
             EnsureColumn(connection, "transactions", "retry_count", "INTEGER NOT NULL DEFAULT 0");
             EnsureScheduleColumns(connection);
@@ -1330,6 +1380,20 @@ ON CONFLICT(setting_key) DO UPDATE SET
         using var alter = connection.CreateCommand();
         alter.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {definition}";
         alter.ExecuteNonQuery();
+    }
+
+    static void EnsureIndex(SqliteConnection connection, string indexName, string tableName, string columns)
+    {
+        if (!Regex.IsMatch(indexName, @"^[A-Za-z0-9_]+$") ||
+            !Regex.IsMatch(tableName, @"^[A-Za-z0-9_]+$") ||
+            !Regex.IsMatch(columns, @"^[A-Za-z0-9_,\s]+$"))
+        {
+            throw new InvalidOperationException($"Unsafe SQLite index definition: {indexName}");
+        }
+
+        using var command = connection.CreateCommand();
+        command.CommandText = $"CREATE INDEX IF NOT EXISTS {indexName} ON {tableName}({columns})";
+        command.ExecuteNonQuery();
     }
 
     static long CountTransactions(SqliteConnection connection)
@@ -3138,8 +3202,6 @@ WHERE id=$id;
         string tcode = SanitizeTCode(FirstNonEmpty(request.TransactionCode, request.TCode, request.Code)).ToUpperInvariant();
         var script = LoadScriptInfo(tcode);
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        string rawRunId = $"RUN-{DateTime.Now:yyyyMMddHHmmss}-{tcode}-{Guid.NewGuid():N}";
-        string runId = rawRunId[..Math.Min(56, rawRunId.Length)];
 
         request.TransactionCode = tcode;
         request.TCode = tcode;
@@ -3150,6 +3212,11 @@ WHERE id=$id;
         if (string.IsNullOrWhiteSpace(request.Operator.Ddid))
             request.Operator.Ddid = dingTalkUserId;
 
+        string[] plants = NormalizeStringArray(GetParamValue(request.Params, "plants"));
+        if (tcode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) && plants.Length > 1)
+            return CreateZfi072PlantBatchRun(request, script, plants, dingTalkUserId, now);
+
+        string runId = NewRunId(tcode);
         using var connection = OpenDatabaseConnection();
         using var tx = connection.BeginTransaction();
         using var command = connection.CreateCommand();
@@ -3157,10 +3224,12 @@ WHERE id=$id;
         command.CommandText = """
 INSERT INTO runs(
     run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
-    script_file, script_hash, source, notify_target, priority, max_attempts, queued_at
+    script_file, script_hash, source, notify_target, priority, max_attempts,
+    run_type, batch_total, attempt_no, queued_at
 ) VALUES(
     $runId, $tcode, $operatorId, $operatorName, $operatorDept, $dingTalkUserId, 'queued', $requestJson,
-    $scriptFile, $scriptHash, $source, $notifyTarget, $priority, $maxAttempts, $queuedAt
+    $scriptFile, $scriptHash, $source, $notifyTarget, $priority, $maxAttempts,
+    'single', 0, 1, $queuedAt
 );
 """;
         command.Parameters.AddWithValue("$runId", runId);
@@ -3215,6 +3284,431 @@ ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
         };
     }
 
+    static RunRecordView CreateZfi072PlantBatchRun(CreateRunRequest request, TransactionScriptInfo script, string[] plants, string dingTalkUserId, string now)
+    {
+        string tcode = "ZFI072A";
+        string parentRunId = NewRunId(tcode);
+        int batchTotal = plants.Length;
+        var childRunIds = new List<string>();
+        string summaryJson = BuildBatchSummaryJson(parentRunId, plants, Array.Empty<BatchItemStatus>(), "queued");
+
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+
+        InsertRunRow(connection, tx, parentRunId, request, script, dingTalkUserId, now, "parent", "", "", 0, batchTotal, 1, "running", summaryJson);
+        InsertRunParams(connection, tx, parentRunId, request.Params);
+
+        for (int i = 0; i < plants.Length; i++)
+        {
+            string plant = plants[i];
+            var childRequest = CloneRunRequestForPlant(request, plant);
+            string childRunId = NewRunId(tcode);
+            childRunIds.Add(childRunId);
+
+            InsertRunRow(connection, tx, childRunId, childRequest, script, dingTalkUserId, now, "child", parentRunId, plant, i + 1, batchTotal, 1, "queued", "");
+            InsertRunParams(connection, tx, childRunId, childRequest.Params);
+            InsertRunBatchItem(connection, tx, parentRunId, childRunId, plant, i + 1, 1, "queued", "", "", "", 0);
+        }
+
+        tx.Commit();
+
+        AppendRunLog(parentRunId, "INFO", $"queued ZFI072A parent batch, plants={string.Join(",", plants)}");
+        foreach (string childRunId in childRunIds)
+            AppendRunLog(childRunId, "INFO", $"queued ZFI072A child under parent {parentRunId}");
+
+        NotifyRunEvent(parentRunId, "start", $"ZFI072A 批次开始：共 {batchTotal} 个工厂");
+
+        return new RunRecordView
+        {
+            RunId = parentRunId,
+            TransactionCode = tcode,
+            OperatorId = request.Operator.Id ?? "",
+            OperatorName = request.Operator.Name ?? "",
+            OperatorDept = request.Operator.Dept ?? "",
+            DingTalkUserId = dingTalkUserId,
+            Status = "running",
+            RunType = "parent",
+            RequestJson = JsonSerializer.Serialize(request, JsonOptions),
+            ScriptFile = script.ScriptFile,
+            ScriptHash = script.ScriptHash,
+            QueuedAt = now,
+            StartedAt = now,
+            BatchTotal = batchTotal,
+            SummaryJson = summaryJson,
+            ChildRunIds = childRunIds
+        };
+    }
+
+    static string NewRunId(string tcode)
+    {
+        string rawRunId = $"RUN-{DateTime.Now:yyyyMMddHHmmss}-{tcode}-{Guid.NewGuid():N}";
+        return rawRunId[..Math.Min(56, rawRunId.Length)];
+    }
+
+    static CreateRunRequest CloneRunRequestForPlant(CreateRunRequest request, string plant)
+    {
+        var clone = JsonSerializer.Deserialize<CreateRunRequest>(JsonSerializer.Serialize(request, JsonOptions), new JsonSerializerOptions(JsonOptions)
+        {
+            PropertyNameCaseInsensitive = true
+        }) ?? new CreateRunRequest();
+        EnsureCreateRunRequestDefaults(clone);
+        clone.Params["plants"] = plant;
+        clone.Params["plant"] = plant;
+        clone.Params.Remove("werkslist");
+        clone.Params.Remove("plantlist");
+        clone.Params.Remove("werks");
+        return clone;
+    }
+
+    static void InsertRunRow(SqliteConnection connection, SqliteTransaction tx, string runId, CreateRunRequest request, TransactionScriptInfo script, string dingTalkUserId, string now, string runType, string parentRunId, string batchItemKey, int batchIndex, int batchTotal, int attemptNo, string status, string summaryJson, string sourceParentRunId = "", string rerunOfRunId = "")
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+INSERT INTO runs(
+    run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
+    script_file, script_hash, source, notify_target, priority, max_attempts,
+    run_type, parent_run_id, batch_item_key, batch_index, batch_total, attempt_no, summary_json,
+    source_parent_run_id, rerun_of_run_id,
+    queued_at, started_at
+) VALUES(
+    $runId, $tcode, $operatorId, $operatorName, $operatorDept, $dingTalkUserId, $status, $requestJson,
+    $scriptFile, $scriptHash, $source, $notifyTarget, $priority, $maxAttempts,
+    $runType, $parentRunId, $batchItemKey, $batchIndex, $batchTotal, $attemptNo, $summaryJson,
+    $sourceParentRunId, $rerunOfRunId,
+    $queuedAt, $startedAt
+);
+""";
+        command.Parameters.AddWithValue("$runId", runId);
+        command.Parameters.AddWithValue("$tcode", request.TransactionCode ?? "");
+        command.Parameters.AddWithValue("$operatorId", request.Operator.Id ?? "");
+        command.Parameters.AddWithValue("$operatorName", request.Operator.Name ?? "");
+        command.Parameters.AddWithValue("$operatorDept", request.Operator.Dept ?? "");
+        command.Parameters.AddWithValue("$dingTalkUserId", dingTalkUserId);
+        command.Parameters.AddWithValue("$status", status);
+        command.Parameters.AddWithValue("$requestJson", JsonSerializer.Serialize(request, JsonOptions));
+        command.Parameters.AddWithValue("$scriptFile", script.ScriptFile);
+        command.Parameters.AddWithValue("$scriptHash", script.ScriptHash);
+        command.Parameters.AddWithValue("$source", request.Source ?? "");
+        command.Parameters.AddWithValue("$notifyTarget", request.NotifyTarget ?? "");
+        command.Parameters.AddWithValue("$priority", request.Priority);
+        command.Parameters.AddWithValue("$maxAttempts", request.MaxAttempts <= 0 ? 1 : request.MaxAttempts);
+        command.Parameters.AddWithValue("$runType", runType);
+        command.Parameters.AddWithValue("$parentRunId", parentRunId);
+        command.Parameters.AddWithValue("$batchItemKey", batchItemKey);
+        command.Parameters.AddWithValue("$batchIndex", batchIndex);
+        command.Parameters.AddWithValue("$batchTotal", batchTotal);
+        command.Parameters.AddWithValue("$attemptNo", attemptNo);
+        command.Parameters.AddWithValue("$summaryJson", summaryJson);
+        command.Parameters.AddWithValue("$sourceParentRunId", sourceParentRunId);
+        command.Parameters.AddWithValue("$rerunOfRunId", rerunOfRunId);
+        command.Parameters.AddWithValue("$queuedAt", now);
+        command.Parameters.AddWithValue("$startedAt", status.Equals("running", StringComparison.OrdinalIgnoreCase) ? now : "");
+        command.ExecuteNonQuery();
+    }
+
+    static void InsertRunParams(SqliteConnection connection, SqliteTransaction tx, string runId, Dictionary<string, string> parameters)
+    {
+        foreach (var pair in parameters)
+        {
+            using var paramCommand = connection.CreateCommand();
+            paramCommand.Transaction = tx;
+            paramCommand.CommandText = """
+INSERT INTO run_params(run_id, param_key, param_value)
+VALUES($runId, $key, $value)
+ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
+""";
+            paramCommand.Parameters.AddWithValue("$runId", runId);
+            paramCommand.Parameters.AddWithValue("$key", pair.Key);
+            paramCommand.Parameters.AddWithValue("$value", pair.Value ?? "");
+            paramCommand.ExecuteNonQuery();
+        }
+    }
+
+    static void InsertRunBatchItem(SqliteConnection connection, SqliteTransaction tx, string parentRunId, string childRunId, string plant, int batchIndex, int attemptNo, string status, string message, string startedAt, string finishedAt, long durationMs)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = """
+INSERT INTO run_batch_items(
+    parent_run_id, child_run_id, plant_code, batch_index, attempt_no, status,
+    message, started_at, finished_at, duration_ms, updated_at
+) VALUES(
+    $parentRunId, $childRunId, $plant, $batchIndex, $attemptNo, $status,
+    $message, $startedAt, $finishedAt, $durationMs, $updatedAt
+);
+""";
+        command.Parameters.AddWithValue("$parentRunId", parentRunId);
+        command.Parameters.AddWithValue("$childRunId", childRunId);
+        command.Parameters.AddWithValue("$plant", plant);
+        command.Parameters.AddWithValue("$batchIndex", batchIndex);
+        command.Parameters.AddWithValue("$attemptNo", attemptNo);
+        command.Parameters.AddWithValue("$status", status);
+        command.Parameters.AddWithValue("$message", message);
+        command.Parameters.AddWithValue("$startedAt", startedAt);
+        command.Parameters.AddWithValue("$finishedAt", finishedAt);
+        command.Parameters.AddWithValue("$durationMs", durationMs);
+        command.Parameters.AddWithValue("$updatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        command.ExecuteNonQuery();
+    }
+
+    static string UpdateBatchAfterChildCompletion(string childRunId, string status, RunResultRequest result, string finishedAt)
+    {
+        using var connection = OpenDatabaseConnection();
+        string parentRunId = "";
+        string plant = "";
+        int batchIndex = 0;
+        int batchTotal = 0;
+        using (var lookup = connection.CreateCommand())
+        {
+            lookup.CommandText = """
+SELECT parent_run_id, batch_item_key, batch_index, batch_total
+FROM runs
+WHERE run_id=$runId AND COALESCE(run_type, 'single')='child' AND parent_run_id<>'';
+""";
+            lookup.Parameters.AddWithValue("$runId", childRunId);
+            using var reader = lookup.ExecuteReader();
+            if (!reader.Read())
+                return "";
+
+            parentRunId = reader.GetString(0);
+            plant = reader.GetString(1);
+            batchIndex = reader.GetInt32(2);
+            batchTotal = reader.GetInt32(3);
+        }
+
+        string message = FirstNonEmpty(result.Message ?? "", result.SapStatusText ?? "", status);
+        string startedAt = "";
+        using (var started = connection.CreateCommand())
+        {
+            started.CommandText = "SELECT started_at FROM runs WHERE run_id=$runId";
+            started.Parameters.AddWithValue("$runId", childRunId);
+            startedAt = started.ExecuteScalar() as string ?? "";
+        }
+
+        using (var update = connection.CreateCommand())
+        {
+            update.CommandText = """
+UPDATE run_batch_items
+SET status=$status,
+    message=$message,
+    started_at=$startedAt,
+    finished_at=$finishedAt,
+    duration_ms=$durationMs,
+    updated_at=$updatedAt
+WHERE child_run_id=$childRunId;
+""";
+            update.Parameters.AddWithValue("$childRunId", childRunId);
+            update.Parameters.AddWithValue("$status", status);
+            update.Parameters.AddWithValue("$message", message);
+            update.Parameters.AddWithValue("$startedAt", startedAt);
+            update.Parameters.AddWithValue("$finishedAt", finishedAt);
+            update.Parameters.AddWithValue("$durationMs", result.DurationMs);
+            update.Parameters.AddWithValue("$updatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            update.ExecuteNonQuery();
+        }
+
+        AppendRunLog(parentRunId, status.Equals("success", StringComparison.OrdinalIgnoreCase) ? "INFO" : "WARN",
+            $"plant {plant} finished: status={status}, child={childRunId}");
+        TryFinalizeBatchParent(parentRunId, batchTotal);
+        return parentRunId;
+    }
+
+    static void TryFinalizeBatchParent(string parentRunId, int batchTotalHint)
+    {
+        var items = LoadBatchItems(parentRunId);
+        if (items.Count == 0)
+            return;
+
+        var latestItems = LatestBatchItemsByPlant(items);
+        int finishedCount = latestItems.Count(i => IsTerminalRunStatus(i.Status));
+        int total = batchTotalHint > 0 ? batchTotalHint : latestItems.Count;
+        string parentStatus = finishedCount >= total ? ResolveBatchParentStatus(latestItems) : "running";
+        string[] plants = latestItems.OrderBy(i => i.BatchIndex).Select(i => i.Plant).Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        string summaryJson = BuildBatchSummaryJson(parentRunId, plants, latestItems, parentStatus);
+
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        if (parentStatus.Equals("running", StringComparison.OrdinalIgnoreCase))
+        {
+            command.CommandText = "UPDATE runs SET summary_json=$summaryJson WHERE run_id=$parentRunId";
+            command.Parameters.AddWithValue("$summaryJson", summaryJson);
+            command.Parameters.AddWithValue("$parentRunId", parentRunId);
+            command.ExecuteNonQuery();
+            return;
+        }
+
+        long durationMs = latestItems.Sum(i => Math.Max(0, i.DurationMs));
+        string finishedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        string message = BuildBatchSummaryMessage(latestItems);
+        command.CommandText = """
+UPDATE runs
+SET status=$status,
+    message=$message,
+    summary_json=$summaryJson,
+    finished_at=$finishedAt,
+    duration_ms=$durationMs,
+    locked_by='',
+    locked_at=''
+WHERE run_id=$parentRunId
+  AND status IN ('queued', 'running');
+""";
+        command.Parameters.AddWithValue("$parentRunId", parentRunId);
+        command.Parameters.AddWithValue("$status", parentStatus);
+        command.Parameters.AddWithValue("$message", message);
+        command.Parameters.AddWithValue("$summaryJson", summaryJson);
+        command.Parameters.AddWithValue("$finishedAt", finishedAt);
+        command.Parameters.AddWithValue("$durationMs", durationMs);
+        int updatedRows = command.ExecuteNonQuery();
+
+        if (updatedRows > 0)
+            NotifyRunEvent(parentRunId, parentStatus.Equals("success", StringComparison.OrdinalIgnoreCase) ? "success" : "failure", message);
+    }
+
+    static bool IsTerminalRunStatus(string status)
+    {
+        return status.Equals("success", StringComparison.OrdinalIgnoreCase) ||
+               status.Equals("failed", StringComparison.OrdinalIgnoreCase) ||
+               status.Equals("partial_failed", StringComparison.OrdinalIgnoreCase) ||
+               status.Equals("canceled", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static List<BatchItemStatus> LatestBatchItemsByPlant(List<BatchItemStatus> items)
+    {
+        return items
+            .GroupBy(i => i.Plant, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.OrderByDescending(i => i.AttemptNo).ThenByDescending(i => i.FinishedAt).ThenByDescending(i => i.ChildRunId).First())
+            .OrderBy(i => i.BatchIndex)
+            .ToList();
+    }
+
+    static string ResolveBatchParentStatus(List<BatchItemStatus> items)
+    {
+        int success = items.Count(i => i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
+        int failed = items.Count(i => !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
+        if (success == items.Count)
+            return "success";
+        if (success > 0 && failed > 0)
+            return "partial_failed";
+        return "failed";
+    }
+
+    static string BuildBatchSummaryMessage(List<BatchItemStatus> items)
+    {
+        int success = items.Count(i => i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
+        int failed = items.Count(i => !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
+        string failedPlants = string.Join(",", items.Where(i => !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase)).Select(i => i.Plant));
+        return failed == 0
+            ? $"ZFI072A 批次执行完成：成功 {success}/{items.Count} 个工厂"
+            : $"ZFI072A 批次执行完成：成功 {success}/{items.Count} 个工厂，失败 {failed} 个，失败工厂：{failedPlants.Replace(",", "、")}";
+    }
+
+    static string BuildBatchSummaryJson(string parentRunId, string[] plants, IEnumerable<BatchItemStatus> items, string status)
+    {
+        var itemList = items.ToList();
+        var payload = new
+        {
+            parentRunId,
+            status,
+            total = plants.Length > 0 ? plants.Length : itemList.Count,
+            success = itemList.Count(i => i.Status.Equals("success", StringComparison.OrdinalIgnoreCase)),
+            failed = itemList.Count(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase)),
+            pending = itemList.Count == 0 ? plants.Length : itemList.Count(i => !IsTerminalRunStatus(i.Status)),
+            plants,
+            items = itemList.Select(i => new
+            {
+                plant = i.Plant,
+                childRunId = i.ChildRunId,
+                batchIndex = i.BatchIndex,
+                attemptNo = i.AttemptNo,
+                status = i.Status,
+                message = i.Message,
+                startedAt = i.StartedAt,
+                finishedAt = i.FinishedAt,
+                durationMs = i.DurationMs
+            }).ToArray()
+        };
+        return JsonSerializer.Serialize(payload, JsonOptions);
+    }
+
+    static object RerunFailedBatchItems(string parentRunId)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        var parent = LoadRun(parentRunId, includeDetails: false);
+        if (parent == null || !parent.RunType.Equals("parent", StringComparison.OrdinalIgnoreCase))
+            return new { ok = false, error = $"parent run not found: {parentRunId}" };
+        if (!IsTerminalRunStatus(parent.Status))
+            return new { ok = false, parentRunId, error = $"parent run is not finished: {parent.Status}" };
+
+        var items = LoadBatchItems(parentRunId);
+        var latestByPlant = LatestBatchItemsByPlant(items);
+        var failedItems = latestByPlant
+            .Where(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(i => i.BatchIndex)
+            .ToList();
+
+        if (failedItems.Count == 0)
+            return new { ok = true, parentRunId, created = 0, childRunIds = Array.Empty<string>(), message = "没有失败工厂需要重跑" };
+
+        var request = JsonSerializer.Deserialize<CreateRunRequest>(parent.RequestJson, new JsonSerializerOptions(JsonOptions)
+        {
+            PropertyNameCaseInsensitive = true
+        }) ?? new CreateRunRequest { TransactionCode = parent.TransactionCode };
+        EnsureCreateRunRequestDefaults(request);
+        request.TransactionCode = parent.TransactionCode;
+        request.TCode = parent.TransactionCode;
+        request.Code = parent.TransactionCode;
+        string dingTalkUserId = FirstNonEmpty(parent.DingTalkUserId, ResolveDingTalkUserId(request.Operator));
+        request.Operator.DingTalkUserId = dingTalkUserId;
+        if (string.IsNullOrWhiteSpace(request.Operator.Ddid))
+            request.Operator.Ddid = dingTalkUserId;
+
+        var script = LoadScriptInfo(parent.TransactionCode);
+        string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        string rerunParentRunId = NewRunId(parent.TransactionCode);
+        string[] rerunPlants = failedItems.Select(i => i.Plant).ToArray();
+        string summaryJson = BuildBatchSummaryJson(rerunParentRunId, rerunPlants, Array.Empty<BatchItemStatus>(), "queued");
+        var newChildRunIds = new List<string>();
+
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+        request.Params["plants"] = string.Join(",", rerunPlants);
+        request.Params["plant"] = rerunPlants.FirstOrDefault() ?? "";
+        InsertRunRow(connection, tx, rerunParentRunId, request, script, dingTalkUserId, now, "parent", "", "", 0, rerunPlants.Length, 1, "running", summaryJson, parentRunId, parentRunId);
+        InsertRunParams(connection, tx, rerunParentRunId, request.Params);
+
+        foreach (var failed in failedItems)
+        {
+            int nextAttempt = Math.Max(1, failed.AttemptNo + 1);
+            var childRequest = CloneRunRequestForPlant(request, failed.Plant);
+            string childRunId = NewRunId(parent.TransactionCode);
+            newChildRunIds.Add(childRunId);
+            InsertRunRow(connection, tx, childRunId, childRequest, script, dingTalkUserId, now, "child", rerunParentRunId, failed.Plant, failed.BatchIndex, rerunPlants.Length, nextAttempt, "queued", "", parentRunId, failed.ChildRunId);
+            InsertRunParams(connection, tx, childRunId, childRequest.Params);
+            InsertRunBatchItem(connection, tx, rerunParentRunId, childRunId, failed.Plant, failed.BatchIndex, nextAttempt, "queued", "", "", "", 0);
+        }
+
+        tx.Commit();
+
+        AppendRunLog(parentRunId, "INFO", $"rerun parent created: {rerunParentRunId}, plants={string.Join(",", rerunPlants)}");
+        AppendRunLog(rerunParentRunId, "INFO", $"rerun failed plants queued from {parentRunId}: {string.Join(",", rerunPlants)}");
+        foreach (string childRunId in newChildRunIds)
+            AppendRunLog(childRunId, "INFO", $"rerun child queued under parent {rerunParentRunId}, sourceParent={parentRunId}");
+
+        NotifyRunEvent(rerunParentRunId, "start", $"ZFI072A 失败工厂重跑开始：共 {rerunPlants.Length} 个工厂");
+
+        return new
+        {
+            ok = true,
+            sourceParentRunId = parentRunId,
+            parentRunId = rerunParentRunId,
+            rerunParentRunId,
+            created = newChildRunIds.Count,
+            childRunIds = newChildRunIds,
+            plants = rerunPlants
+        };
+    }
+
     static object LoadRuns(HttpListenerRequest request)
     {
         InitializeDatabase(seedFromScripts: true);
@@ -3229,29 +3723,33 @@ ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
         if (string.IsNullOrWhiteSpace(status))
         {
             command.CommandText = """
-SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
-       sap_status_type, sap_status_text, message, script_file, script_hash,
-       queued_at, started_at, finished_at, duration_ms,
-       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at,
+SELECT r.run_id, r.transaction_code, r.operator_id, r.operator_name, r.operator_dept, r.ding_talk_user_id, r.status, r.request_json,
+       r.sap_status_type, r.sap_status_text, r.message, r.script_file, r.script_hash,
+       r.queued_at, r.started_at, r.finished_at, r.duration_ms,
+       r.source, r.notify_target, r.priority, r.attempt, r.max_attempts, r.locked_by, r.locked_at,
+       r.run_type, r.parent_run_id, r.batch_item_key, r.batch_index, r.batch_total, r.attempt_no, r.summary_json,
+       r.source_parent_run_id, r.rerun_of_run_id,
        COALESCE(NULLIF(t.name, ''), '') AS transaction_name
 FROM runs r
 LEFT JOIN transactions t ON t.tcode = r.transaction_code
-ORDER BY COALESCE(NULLIF(finished_at, ''), queued_at) DESC
+ORDER BY COALESCE(NULLIF(r.finished_at, ''), r.queued_at) DESC
 LIMIT $limit;
 """;
         }
         else
         {
             command.CommandText = """
-SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
-       sap_status_type, sap_status_text, message, script_file, script_hash,
-       queued_at, started_at, finished_at, duration_ms,
-       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at,
+SELECT r.run_id, r.transaction_code, r.operator_id, r.operator_name, r.operator_dept, r.ding_talk_user_id, r.status, r.request_json,
+       r.sap_status_type, r.sap_status_text, r.message, r.script_file, r.script_hash,
+       r.queued_at, r.started_at, r.finished_at, r.duration_ms,
+       r.source, r.notify_target, r.priority, r.attempt, r.max_attempts, r.locked_by, r.locked_at,
+       r.run_type, r.parent_run_id, r.batch_item_key, r.batch_index, r.batch_total, r.attempt_no, r.summary_json,
+       r.source_parent_run_id, r.rerun_of_run_id,
        COALESCE(NULLIF(t.name, ''), '') AS transaction_name
 FROM runs r
 LEFT JOIN transactions t ON t.tcode = r.transaction_code
-WHERE status=$status
-ORDER BY priority DESC, queued_at, run_id
+WHERE r.status=$status
+ORDER BY r.priority DESC, r.queued_at, r.run_id
 LIMIT $limit;
 """;
             command.Parameters.AddWithValue("$status", status.ToLowerInvariant());
@@ -3371,7 +3869,7 @@ WHERE run_id=$runId;
     static long CountQueuedRuns(SqliteConnection connection)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT COUNT(*) FROM runs WHERE status='queued';";
+        command.CommandText = "SELECT COUNT(*) FROM runs WHERE status='queued' AND COALESCE(run_type, 'single') <> 'parent';";
         return (long)(command.ExecuteScalar() ?? 0L);
     }
 
@@ -3382,6 +3880,7 @@ WHERE run_id=$runId;
 SELECT COUNT(*)
 FROM runs
 WHERE status='queued'
+  AND COALESCE(run_type, 'single') <> 'parent'
   AND (
       priority > $priority
       OR (priority = $priority AND queued_at < $queuedAt)
@@ -3401,6 +3900,7 @@ WHERE status='queued'
 SELECT run_id
 FROM runs
 WHERE status='running'
+  AND COALESCE(run_type, 'single') <> 'parent'
 ORDER BY started_at DESC, locked_at DESC
 LIMIT 1;
 """;
@@ -3415,6 +3915,7 @@ SELECT run_id, transaction_code, operator_id, operator_name, operator_dept,
        status, queued_at, started_at, priority, attempt, max_attempts, locked_by, locked_at
 FROM runs
 WHERE status='running'
+  AND COALESCE(run_type, 'single') <> 'parent'
 ORDER BY started_at DESC, locked_at DESC
 LIMIT 1;
 """;
@@ -3431,6 +3932,7 @@ SELECT run_id, transaction_code, operator_id, operator_name, operator_dept,
        status, queued_at, started_at, priority, attempt, max_attempts, locked_by, locked_at
 FROM runs
 WHERE status='queued'
+  AND COALESCE(run_type, 'single') <> 'parent'
 ORDER BY priority DESC, queued_at, run_id
 LIMIT $limit;
 """;
@@ -3481,6 +3983,7 @@ LIMIT $limit;
 SELECT run_id
 FROM runs
 WHERE status='running'
+  AND COALESCE(run_type, 'single') <> 'parent'
   AND COALESCE(NULLIF(locked_at, ''), NULLIF(started_at, ''), queued_at) < $threshold;
 """;
                 select.Parameters.AddWithValue("$threshold", threshold);
@@ -3516,6 +4019,11 @@ WHERE run_id=$runId AND status='running';
         foreach (string runId in staleRunIds)
         {
             AppendRunLog(runId, "ERR", $"stale running timeout after {StaleRunningTimeoutHours} hours");
+            UpdateBatchAfterChildCompletion(runId, "failed", new RunResultRequest
+            {
+                Status = "failed",
+                Message = $"stale running timeout after {StaleRunningTimeoutHours} hours"
+            }, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
             NotifyRunEvent(runId, "finish", "任务运行超时，已释放 SAP 串行队列");
         }
     }
@@ -3526,14 +4034,16 @@ WHERE run_id=$runId AND status='running';
         using var connection = OpenDatabaseConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
-       sap_status_type, sap_status_text, message, script_file, script_hash,
-       queued_at, started_at, finished_at, duration_ms,
-       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at,
+SELECT r.run_id, r.transaction_code, r.operator_id, r.operator_name, r.operator_dept, r.ding_talk_user_id, r.status, r.request_json,
+       r.sap_status_type, r.sap_status_text, r.message, r.script_file, r.script_hash,
+       r.queued_at, r.started_at, r.finished_at, r.duration_ms,
+       r.source, r.notify_target, r.priority, r.attempt, r.max_attempts, r.locked_by, r.locked_at,
+       r.run_type, r.parent_run_id, r.batch_item_key, r.batch_index, r.batch_total, r.attempt_no, r.summary_json,
+       r.source_parent_run_id, r.rerun_of_run_id,
        COALESCE(NULLIF(t.name, ''), '') AS transaction_name
 FROM runs r
 LEFT JOIN transactions t ON t.tcode = r.transaction_code
-WHERE run_id=$runId;
+WHERE r.run_id=$runId;
 """;
         command.Parameters.AddWithValue("$runId", runId);
         RunRecordView run;
@@ -3550,6 +4060,11 @@ WHERE run_id=$runId;
         {
             run.Logs = LoadRunLogs(runId);
             run.Files = LoadRunFiles(runId);
+            if (run.RunType.Equals("parent", StringComparison.OrdinalIgnoreCase))
+            {
+                run.BatchItems = LoadBatchItems(runId);
+                run.ChildRunIds = run.BatchItems.Select(i => i.ChildRunId).ToList();
+            }
         }
 
         return run;
@@ -3594,6 +4109,7 @@ WHERE run_id=$runId;
 SELECT run_id
 FROM runs
 WHERE status='queued'
+  AND COALESCE(run_type, 'single') <> 'parent'
 ORDER BY priority DESC, queued_at, run_id
 LIMIT 1;
 """;
@@ -3634,7 +4150,7 @@ WHERE run_id=$runId AND status='queued';
         {
             select.Transaction = tx;
             select.CommandText = """
-SELECT run_id, transaction_code, request_json, script_file
+SELECT run_id, transaction_code, request_json, script_file, run_type, parent_run_id
 FROM runs
 WHERE run_id=$runId;
 """;
@@ -3647,12 +4163,17 @@ WHERE run_id=$runId;
                     RunId = reader.GetString(0),
                     TransactionCode = reader.GetString(1),
                     RequestJson = reader.GetString(2),
-                    ScriptFile = reader.GetString(3)
+                    ScriptFile = reader.GetString(3),
+                    RunType = reader.GetString(4),
+                    ParentRunId = reader.GetString(5)
                 };
             }
         }
 
         tx.Commit();
+        if (item != null && item.RunType.Equals("child", StringComparison.OrdinalIgnoreCase))
+            MarkBatchItemRunning(item.RunId);
+
         if (item != null)
             NotifyRunEvent(item.RunId, "start", "任务开始执行，SAP GUI 桌面会话已被当前任务占用");
         return item;
@@ -3680,6 +4201,29 @@ WHERE run_id=$runId;
         {
             Log($"队列执行失败: runId={item.RunId}, {ex}");
             CompleteRun(item.RunId, FailedRunResult(ex.Message, started));
+        }
+    }
+
+    static void MarkBatchItemRunning(string childRunId)
+    {
+        try
+        {
+            using var connection = OpenDatabaseConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+UPDATE run_batch_items
+SET status='running',
+    started_at=CASE WHEN started_at='' THEN $startedAt ELSE started_at END,
+    updated_at=$startedAt
+WHERE child_run_id=$childRunId;
+""";
+            command.Parameters.AddWithValue("$childRunId", childRunId);
+            command.Parameters.AddWithValue("$startedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            command.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            Log($"mark batch item running failed: child={childRunId}, {ex.Message}");
         }
     }
 
@@ -3799,6 +4343,13 @@ VALUES($runId, $type, $name, $path, $size);
 
         tx.Commit();
         Log($"run result updated: {runId}, status={status}, sap={result.SapStatusType}");
+        string parentRunId = UpdateBatchAfterChildCompletion(runId, status, result, now);
+        if (!string.IsNullOrWhiteSpace(parentRunId))
+        {
+            AppendRunLog(runId, "INFO", $"child result recorded for parent {parentRunId}");
+            return;
+        }
+
         string notifyMessage = status == "success"
             ? "任务执行完成"
             : $"任务执行失败：{FirstNonEmpty(result.Message ?? "", result.SapStatusText ?? "", status)}";
@@ -3853,7 +4404,16 @@ VALUES($runId, $type, $name, $path, $size);
             MaxAttempts = reader.GetInt32(21),
             LockedBy = reader.GetString(22),
             LockedAt = reader.GetString(23),
-            TransactionName = reader.FieldCount > 24 ? reader.GetString(24) : ""
+            RunType = reader.FieldCount > 24 ? reader.GetString(24) : "single",
+            ParentRunId = reader.FieldCount > 25 ? reader.GetString(25) : "",
+            BatchItemKey = reader.FieldCount > 26 ? reader.GetString(26) : "",
+            BatchIndex = reader.FieldCount > 27 ? reader.GetInt32(27) : 0,
+            BatchTotal = reader.FieldCount > 28 ? reader.GetInt32(28) : 0,
+            AttemptNo = reader.FieldCount > 29 ? reader.GetInt32(29) : 1,
+            SummaryJson = reader.FieldCount > 30 ? reader.GetString(30) : "",
+            SourceParentRunId = reader.FieldCount > 31 ? reader.GetString(31) : "",
+            RerunOfRunId = reader.FieldCount > 32 ? reader.GetString(32) : "",
+            TransactionName = reader.FieldCount > 33 ? reader.GetString(33) : ""
         };
     }
 
@@ -3911,6 +4471,40 @@ ORDER BY id;
         return files;
     }
 
+    static List<BatchItemStatus> LoadBatchItems(string parentRunId)
+    {
+        var items = new List<BatchItemStatus>();
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT parent_run_id, child_run_id, plant_code, batch_index, attempt_no, status,
+       message, started_at, finished_at, duration_ms
+FROM run_batch_items
+WHERE parent_run_id=$parentRunId
+ORDER BY batch_index, attempt_no, child_run_id;
+""";
+        command.Parameters.AddWithValue("$parentRunId", parentRunId);
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            items.Add(new BatchItemStatus
+            {
+                ParentRunId = reader.GetString(0),
+                ChildRunId = reader.GetString(1),
+                Plant = reader.GetString(2),
+                BatchIndex = reader.GetInt32(3),
+                AttemptNo = reader.GetInt32(4),
+                Status = reader.GetString(5),
+                Message = reader.GetString(6),
+                StartedAt = reader.GetString(7),
+                FinishedAt = reader.GetString(8),
+                DurationMs = reader.GetInt64(9)
+            });
+        }
+
+        return items;
+    }
+
     static void AppendRunLog(string runId, string level, string message)
     {
         try
@@ -3934,13 +4528,36 @@ ORDER BY id;
         if (string.IsNullOrWhiteSpace(runId))
             return;
 
+        if (IsChildRun(runId))
+        {
+            AppendRunLog(runId, "INFO", $"child notify suppressed {eventName}: {message}");
+            return;
+        }
+
         AppendRunLog(runId, "INFO", $"notify {eventName} queued: {message}");
         ThreadPool.QueueUserWorkItem(_ => DispatchRunNotification(runId, eventName, message, skipSapDingTalk));
     }
 
+    static bool IsChildRun(string runId)
+    {
+        try
+        {
+            using var connection = OpenDatabaseConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT run_type FROM runs WHERE run_id=$runId";
+            command.Parameters.AddWithValue("$runId", runId);
+            return (command.ExecuteScalar() as string ?? "").Equals("child", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     static void DispatchRunNotification(string runId, string eventName, string message, bool skipSapDingTalk)
     {
-        if (IsRunFinishedEvent(eventName))
+        bool parentBatchStart = eventName.Equals("start", StringComparison.OrdinalIgnoreCase) && IsParentRun(runId);
+        if (IsRunFinishedEvent(eventName) || parentBatchStart)
         {
             if (skipSapDingTalk)
             {
@@ -3964,6 +4581,22 @@ ORDER BY id;
         AppendRunLog(runId, "INFO", $"notify {eventName} target={targetText}: {message}");
         foreach (var target in targets.Where(t => !string.IsNullOrWhiteSpace(t.Webhook)))
             SendNotification(runId, eventName, message, target);
+    }
+
+    static bool IsParentRun(string runId)
+    {
+        try
+        {
+            using var connection = OpenDatabaseConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT run_type FROM runs WHERE run_id=$runId";
+            command.Parameters.AddWithValue("$runId", runId);
+            return (command.ExecuteScalar() as string ?? "").Equals("parent", StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     static List<NotificationTarget> LoadNotificationTargetsForRun(string runId, string eventName)
@@ -4164,9 +4797,7 @@ ORDER BY 1;
         if (run == null)
             return fallbackMessage;
 
-        string prefix = run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
-            ? "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
-            : "自动化执行失败";
+        string prefix = FormatDingTalkTitleText(run.Status);
         string sapText = CleanDingTalkDisplayText(FirstNonEmpty(run.SapStatusText, run.Message, fallbackMessage));
         string transactionText = FormatTransactionDisplay(run);
         return string.IsNullOrWhiteSpace(sapText) || sapText.Equals(prefix, StringComparison.OrdinalIgnoreCase)
@@ -4184,9 +4815,7 @@ ORDER BY 1;
         string statusLabel = FormatRunStatusForDingTalk(run.Status);
         string sapStatusType = FormatSapStatusType(run.SapStatusType);
         string transactionText = FormatTransactionDisplay(run);
-        string title = run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
-            ? "\u2705 SAP \u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
-            : "\u274C SAP \u81EA\u52A8\u5316\u6267\u884C\u5931\u8D25";
+        string title = $"{FormatDingTalkStatusIcon(run.Status)} SAP {FormatDingTalkTitleText(run.Status)}";
         string plantText = FormatPlantsForDingTalk(plants);
         string durationText = FirstNonEmpty(FormatDuration(run.DurationMs), "\u672A\u8BB0\u5F55");
         var lines = new List<string>
@@ -4215,10 +4844,8 @@ ORDER BY 1;
 
         string plants = ExtractRunParamValue(run.RequestJson, "plants");
         string statusLabel = FormatRunStatusForDingTalk(run.Status);
-        string statusIcon = run.Status.Equals("success", StringComparison.OrdinalIgnoreCase) ? "\u2705" : "\u274C";
-        string titleText = run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
-            ? "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
-            : "\u81EA\u52A8\u5316\u6267\u884C\u5931\u8D25";
+        string statusIcon = FormatDingTalkStatusIcon(run.Status);
+        string titleText = FormatDingTalkTitleText(run.Status);
         string sapMessage = BuildFriendlySapMessage(run, message);
         string plantText = FormatPlantsForDingTalk(plants);
         string durationText = FirstNonEmpty(FormatDuration(run.DurationMs), "\u672A\u8BB0\u5F55");
@@ -4294,6 +4921,8 @@ ORDER BY 1;
     {
         if (status.Equals("success", StringComparison.OrdinalIgnoreCase))
             return "\u6210\u529F";
+        if (status.Equals("partial_failed", StringComparison.OrdinalIgnoreCase))
+            return "\u90E8\u5206\u5931\u8D25";
         if (status.Equals("failure", StringComparison.OrdinalIgnoreCase) || status.Equals("failed", StringComparison.OrdinalIgnoreCase))
             return "\u5931\u8D25";
         if (status.Equals("running", StringComparison.OrdinalIgnoreCase))
@@ -4304,6 +4933,32 @@ ORDER BY 1;
             return "\u5DF2\u53D6\u6D88";
 
         return FirstNonEmpty(status, "\u672A\u77E5");
+    }
+
+    static string FormatDingTalkStatusIcon(string status)
+    {
+        string value = FirstNonEmpty(status, "").Trim().ToLowerInvariant();
+        return value switch
+        {
+            "success" => "\u2705",
+            "running" or "queued" or "pending" => "\u23F3",
+            "partial_failed" => "\u26A0\uFE0F",
+            "canceled" or "cancelled" => "\u23F9\uFE0F",
+            _ => "\u274C"
+        };
+    }
+
+    static string FormatDingTalkTitleText(string status)
+    {
+        string value = FirstNonEmpty(status, "").Trim().ToLowerInvariant();
+        return value switch
+        {
+            "success" => "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C",
+            "running" or "queued" or "pending" => "\u81EA\u52A8\u5316\u5F00\u59CB\u6267\u884C",
+            "partial_failed" => "\u81EA\u52A8\u5316\u90E8\u5206\u5931\u8D25",
+            "canceled" or "cancelled" => "\u81EA\u52A8\u5316\u5DF2\u53D6\u6D88",
+            _ => "\u81EA\u52A8\u5316\u6267\u884C\u5931\u8D25"
+        };
     }
 
     static string FormatSapStatusType(string statusType)
@@ -4877,7 +5532,7 @@ ORDER BY 1;
         string value = (status ?? "").Trim().ToLowerInvariant();
         return value switch
         {
-            "queued" or "running" or "success" or "failed" or "canceled" => value,
+            "queued" or "running" or "success" or "failed" or "partial_failed" or "canceled" => value,
             "ok" or "done" => "success",
             "error" or "abort" => "failed",
             _ => "failed"
@@ -6361,6 +7016,17 @@ class RunRecordView
     public int Priority { get; set; }
     public int Attempt { get; set; }
     public int MaxAttempts { get; set; }
+    public string RunType { get; set; } = "single";
+    public string ParentRunId { get; set; } = "";
+    public string BatchItemKey { get; set; } = "";
+    public int BatchIndex { get; set; }
+    public int BatchTotal { get; set; }
+    public int AttemptNo { get; set; } = 1;
+    public string SummaryJson { get; set; } = "";
+    public string SourceParentRunId { get; set; } = "";
+    public string RerunOfRunId { get; set; } = "";
+    public List<string> ChildRunIds { get; set; } = new();
+    public List<BatchItemStatus> BatchItems { get; set; } = new();
     public string LockedBy { get; set; } = "";
     public string LockedAt { get; set; } = "";
     public int QueuePosition { get; set; }
@@ -6414,6 +7080,20 @@ class RunFile
     public string Path { get; set; } = "";
     public long Size { get; set; }
     public string CreatedAt { get; set; } = "";
+}
+
+class BatchItemStatus
+{
+    public string ParentRunId { get; set; } = "";
+    public string ChildRunId { get; set; } = "";
+    public string Plant { get; set; } = "";
+    public int BatchIndex { get; set; }
+    public int AttemptNo { get; set; } = 1;
+    public string Status { get; set; } = "";
+    public string Message { get; set; } = "";
+    public string StartedAt { get; set; } = "";
+    public string FinishedAt { get; set; } = "";
+    public long DurationMs { get; set; }
 }
 
 class NotificationTarget
@@ -6481,6 +7161,8 @@ class QueuedRunWorkItem
     public string TransactionCode { get; set; } = "";
     public string RequestJson { get; set; } = "";
     public string ScriptFile { get; set; } = "";
+    public string RunType { get; set; } = "single";
+    public string ParentRunId { get; set; } = "";
 }
 
 class PlantReportAccumulator
