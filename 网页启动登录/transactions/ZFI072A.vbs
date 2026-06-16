@@ -366,6 +366,7 @@ End Sub
 
 Sub CloseSapSession()
    Dim closeTry, exitTry
+   WScript.Echo "INFO: cleanup enter, send /nex if SAP session is still open"
    If Not IsObject(session) Then
       WScript.Echo "WARN: no SAP session object to close"
       Exit Sub

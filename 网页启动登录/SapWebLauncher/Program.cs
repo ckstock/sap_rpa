@@ -5341,10 +5341,105 @@ WScript.Quit 0
         }
         finally
         {
+            if (p.TCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase))
+                CleanupSapGuiSessionAfterRun(p.TCode);
+
             try
             {
                 if (!keepTempFile && File.Exists(tmpFile))
                     File.Delete(tmpFile);
+            }
+            catch { }
+        }
+    }
+
+    static void CleanupSapGuiSessionAfterRun(string tcode)
+    {
+        string cleanupFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_cleanup_{Guid.NewGuid():N}.vbs");
+        string cleanupScript = """
+On Error Resume Next
+Dim SapGuiAuto, application, connection, session, i, j, okcd
+Set SapGuiAuto = GetObject("SAPGUI")
+If Err.Number <> 0 Or Not IsObject(SapGuiAuto) Then
+   WScript.Echo "CLEANUP: SAPGUI object not found"
+   WScript.Quit 0
+End If
+Err.Clear
+Set application = SapGuiAuto.GetScriptingEngine
+If Err.Number <> 0 Or Not IsObject(application) Then
+   WScript.Echo "CLEANUP: scripting engine not available"
+   WScript.Quit 0
+End If
+For i = 0 To application.Children.Count - 1
+   Err.Clear
+   Set connection = application.Children.Item(CInt(i))
+   If Err.Number = 0 And IsObject(connection) Then
+      For j = 0 To connection.Children.Count - 1
+         Err.Clear
+         Set session = connection.Children.Item(CInt(j))
+         If Err.Number = 0 And IsObject(session) Then
+            Err.Clear
+            Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
+            If Err.Number = 0 And IsObject(okcd) Then
+               WScript.Echo "CLEANUP: closing session user=" & session.Info.User & ", transaction=" & session.Info.Transaction
+               okcd.Text = "/nex"
+               session.findById("wnd[0]").sendVKey 0
+               WScript.Sleep 500
+               If Err.Number = 0 Then
+                  WScript.Echo "CLEANUP: sent /nex"
+               Else
+                  WScript.Echo "CLEANUP: failed to send /nex - " & Err.Description
+               End If
+               WScript.Quit 0
+            End If
+         End If
+      Next
+   End If
+Next
+WScript.Echo "CLEANUP: no closable SAP session found"
+WScript.Quit 0
+""";
+
+        try
+        {
+            File.WriteAllText(cleanupFile, cleanupScript, Encoding.Default);
+            var psi = new ProcessStartInfo("cscript.exe", $"//T:12 //nologo \"{cleanupFile}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc == null)
+            {
+                Log($"SAP cleanup after {tcode}: failed to start cscript.exe");
+                return;
+            }
+
+            if (!proc.WaitForExit(15_000))
+            {
+                proc.Kill(entireProcessTree: true);
+                Log($"SAP cleanup after {tcode}: timeout");
+                return;
+            }
+
+            string output = proc.StandardOutput.ReadToEnd().Trim();
+            string error = proc.StandardError.ReadToEnd().Trim();
+            string merged = string.Join(" ", new[] { output, error }.Where(x => !string.IsNullOrWhiteSpace(x)));
+            Log($"SAP cleanup after {tcode}: exit={proc.ExitCode}, {merged}");
+        }
+        catch (Exception ex)
+        {
+            Log($"SAP cleanup after {tcode} failed: {ex.Message}");
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(cleanupFile))
+                    File.Delete(cleanupFile);
             }
             catch { }
         }
