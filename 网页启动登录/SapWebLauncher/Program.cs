@@ -50,6 +50,9 @@ static class Program
     {
         Timeout = TimeSpan.FromSeconds(8)
     };
+    // Keep strict SAP session matching off during multi-client testing. Enable for production with SAP_RPA_STRICT_SAP_SESSION=1.
+    private static readonly bool StrictSapSessionMatching =
+        (Environment.GetEnvironmentVariable("SAP_RPA_STRICT_SAP_SESSION") ?? "").Trim() is "1" or "true" or "TRUE" or "on" or "ON" or "yes" or "YES";
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -3229,8 +3232,10 @@ ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
 SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
        sap_status_type, sap_status_text, message, script_file, script_hash,
        queued_at, started_at, finished_at, duration_ms,
-       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at
-FROM runs
+       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at,
+       COALESCE(NULLIF(t.name, ''), '') AS transaction_name
+FROM runs r
+LEFT JOIN transactions t ON t.tcode = r.transaction_code
 ORDER BY COALESCE(NULLIF(finished_at, ''), queued_at) DESC
 LIMIT $limit;
 """;
@@ -3241,8 +3246,10 @@ LIMIT $limit;
 SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
        sap_status_type, sap_status_text, message, script_file, script_hash,
        queued_at, started_at, finished_at, duration_ms,
-       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at
-FROM runs
+       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at,
+       COALESCE(NULLIF(t.name, ''), '') AS transaction_name
+FROM runs r
+LEFT JOIN transactions t ON t.tcode = r.transaction_code
 WHERE status=$status
 ORDER BY priority DESC, queued_at, run_id
 LIMIT $limit;
@@ -3522,8 +3529,10 @@ WHERE run_id=$runId AND status='running';
 SELECT run_id, transaction_code, operator_id, operator_name, operator_dept, ding_talk_user_id, status, request_json,
        sap_status_type, sap_status_text, message, script_file, script_hash,
        queued_at, started_at, finished_at, duration_ms,
-       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at
-FROM runs
+       source, notify_target, priority, attempt, max_attempts, locked_by, locked_at,
+       COALESCE(NULLIF(t.name, ''), '') AS transaction_name
+FROM runs r
+LEFT JOIN transactions t ON t.tcode = r.transaction_code
 WHERE run_id=$runId;
 """;
         command.Parameters.AddWithValue("$runId", runId);
@@ -3843,7 +3852,8 @@ VALUES($runId, $type, $name, $path, $size);
             Attempt = reader.GetInt32(20),
             MaxAttempts = reader.GetInt32(21),
             LockedBy = reader.GetString(22),
-            LockedAt = reader.GetString(23)
+            LockedAt = reader.GetString(23),
+            TransactionName = reader.FieldCount > 24 ? reader.GetString(24) : ""
         };
     }
 
@@ -4158,9 +4168,10 @@ ORDER BY 1;
             ? "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
             : "自动化执行失败";
         string sapText = CleanDingTalkDisplayText(FirstNonEmpty(run.SapStatusText, run.Message, fallbackMessage));
+        string transactionText = FormatTransactionDisplay(run);
         return string.IsNullOrWhiteSpace(sapText) || sapText.Equals(prefix, StringComparison.OrdinalIgnoreCase)
-            ? $"{prefix}: {run.TransactionCode}"
-            : $"{prefix}: {run.TransactionCode}, {sapText}";
+            ? $"{prefix}: {transactionText}"
+            : $"{prefix}: {transactionText}, {sapText}";
     }
 
     static string BuildSapDingTalkContent(RunRecordView? run, string message)
@@ -4172,6 +4183,7 @@ ORDER BY 1;
         string sapMessage = BuildFriendlySapMessage(run, message);
         string statusLabel = FormatRunStatusForDingTalk(run.Status);
         string sapStatusType = FormatSapStatusType(run.SapStatusType);
+        string transactionText = FormatTransactionDisplay(run);
         string title = run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
             ? "\u2705 SAP \u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
             : "\u274C SAP \u81EA\u52A8\u5316\u6267\u884C\u5931\u8D25";
@@ -4181,8 +4193,8 @@ ORDER BY 1;
         {
             title,
             "",
-            $"\u3010\u6458\u8981\u3011{run.TransactionCode} / {statusLabel} / {durationText}",
-            $"\U0001F4CC \u4E8B\u52A1\u7801\uFF1A{run.TransactionCode}",
+            $"\u3010\u6458\u8981\u3011{transactionText} / {statusLabel} / {durationText}",
+            $"\U0001F4CC \u4E8B\u52A1\uFF1A{transactionText}",
             $"\U0001F3ED \u5DE5\u5382\uFF1A{plantText}",
             $"\U0001F4CA \u6267\u884C\u7ED3\u679C\uFF1A{statusLabel}",
             $"\U0001F514 SAP\u6D88\u606F\uFF1A{sapMessage}",
@@ -4211,18 +4223,19 @@ ORDER BY 1;
         string plantText = FormatPlantsForDingTalk(plants);
         string durationText = FirstNonEmpty(FormatDuration(run.DurationMs), "\u672A\u8BB0\u5F55");
         string sapStatusType = FormatSapStatusType(run.SapStatusType);
+        string transactionText = FormatTransactionDisplay(run);
 
         var lines = new List<string>
         {
             $"## {statusIcon} SAP {titleText}",
             "",
-            $"> **{run.TransactionCode}**  |  **{statusLabel}**  |  {durationText}",
+            $"> **{EscapeMarkdownForDingTalk(transactionText)}**  |  **{statusLabel}**  |  {durationText}",
             "",
             $"**\U0001F514 SAP\u6D88\u606F**  ",
             $"> {EscapeMarkdownForDingTalk(sapMessage)}",
             "",
             $"**\U0001F4CC \u6267\u884C\u4FE1\u606F**",
-            $"- \u4E8B\u52A1\u7801\uFF1A`{EscapeMarkdownForDingTalk(run.TransactionCode)}`",
+            $"- \u4E8B\u52A1\uFF1A{EscapeMarkdownForDingTalk(transactionText)}",
             $"- \u5DE5\u5382\uFF1A{EscapeMarkdownForDingTalk(plantText)}",
             $"- SAP\u72B6\u6001\uFF1A{EscapeMarkdownForDingTalk(sapStatusType)}",
             $"- \u5F00\u59CB\u65F6\u95F4\uFF1A{EscapeMarkdownForDingTalk(FirstNonEmpty(run.StartedAt, "\u672A\u8BB0\u5F55"))}",
@@ -4258,6 +4271,12 @@ ORDER BY 1;
             (text.Contains("\u8D85\u8FC7", StringComparison.OrdinalIgnoreCase) || text.Contains("timeout", StringComparison.OrdinalIgnoreCase)))
         {
             return "VBS \u6267\u884C\u8D85\u65F6\uFF0C\u5DF2\u505C\u6B62\u5E76\u6E05\u7406 SAP \u4F1A\u8BDD";
+        }
+
+        if (text.Contains("SAP login did not produce a ready scripting session", StringComparison.OrdinalIgnoreCase) ||
+            text.Contains("target SAP session not found", StringComparison.OrdinalIgnoreCase))
+        {
+            return "SAP GUI \u5DF2\u6253\u5F00\uFF0C\u4F46\u811A\u672C\u4F1A\u8BDD\u672A\u5C31\u7EEA\uFF1B\u5DF2\u505C\u6B62\u672C\u6B21\u4EFB\u52A1";
         }
 
         return text;
@@ -4311,6 +4330,16 @@ ORDER BY 1;
         string replaced = value.Replace(",", "\u3001");
         const int maxLength = 120;
         return replaced.Length <= maxLength ? replaced : replaced[..maxLength] + "\u2026";
+    }
+
+    static string FormatTransactionDisplay(RunRecordView run)
+    {
+        string code = FirstNonEmpty(run.TransactionCode, "").Trim();
+        string name = FirstNonEmpty(run.TransactionName, "").Trim();
+        if (string.IsNullOrWhiteSpace(name) || name.Equals(code, StringComparison.OrdinalIgnoreCase))
+            return code;
+
+        return $"{code} - {name}";
     }
 
     static string ResolveSapDingTalkProvider()
@@ -5007,14 +5036,14 @@ ORDER BY 1;
             return FailedRunResult(message, started);
         }
 
-        var initialProbe = ProbeSapSession(p);
+        var initialProbe = ProbeSapSession(p, StrictSapSessionMatching);
         if (initialProbe.Ready)
         {
             Log($"Detected ready SAP GUI session; skip sapshcut login. {initialProbe.Details}");
         }
         else
         {
-            if (initialProbe.HasBlockingSapGui)
+            if (StrictSapSessionMatching && initialProbe.HasBlockingSapGui)
             {
                 string message = "SAP GUI has open windows but target login session is not ready. " +
                     "Close SAP login or multi-logon dialogs before submitting another queued run. " +
@@ -5054,7 +5083,7 @@ ORDER BY 1;
             Log($"未检测到可用 SAP GUI 会话，启动 SAP GUI: path={sapshcut}, args={MaskSapArgs(string.Join(" ", args))}");
             Process.Start(startInfo);
             Log("SAP GUI started; waiting for logged-in scripting session before running VBS");
-            var loginProbe = WaitForReadySapSession(p, TimeSpan.FromSeconds(35), TimeSpan.FromSeconds(2));
+            var loginProbe = WaitForReadySapSession(p, StrictSapSessionMatching, TimeSpan.FromSeconds(35), TimeSpan.FromSeconds(2));
             if (!loginProbe.Ready)
             {
                 string message = "SAP login did not produce a ready scripting session. " +
@@ -5087,29 +5116,32 @@ ORDER BY 1;
         }
     }
 
-    static SapSessionProbeResult WaitForReadySapSession(SapRunParams p, TimeSpan timeout, TimeSpan interval)
+    static SapSessionProbeResult WaitForReadySapSession(SapRunParams p, bool strictMatch, TimeSpan timeout, TimeSpan interval)
     {
         var deadline = DateTime.UtcNow.Add(timeout);
-        SapSessionProbeResult last = ProbeSapSession(p);
+        SapSessionProbeResult last = ProbeSapSession(p, strictMatch);
         while (!last.Ready && DateTime.UtcNow < deadline)
         {
             Thread.Sleep(interval);
-            last = ProbeSapSession(p);
+            last = ProbeSapSession(p, strictMatch);
         }
 
         return last;
     }
 
-    static SapSessionProbeResult ProbeSapSession(SapRunParams p)
+    static SapSessionProbeResult ProbeSapSession(SapRunParams p, bool strictMatch)
     {
         string probeFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_probe_{Guid.NewGuid():N}.vbs");
+        string targetSystem = strictMatch ? p.System : "";
+        string targetClient = strictMatch ? p.Client : "";
+        string targetUser = strictMatch ? p.User : "";
         string probeScript = $"""
 On Error Resume Next
 Dim SapGuiAuto, application, connection, session, i, j, detail, okcd, foundTarget
 Dim targetSystem, targetClient, targetUser, currentSystem, currentClient, currentUser
-targetSystem = "{VbsEscape(p.System)}"
-targetClient = "{VbsEscape(p.Client)}"
-targetUser = "{VbsEscape(p.User)}"
+targetSystem = "{VbsEscape(targetSystem)}"
+targetClient = "{VbsEscape(targetClient)}"
+targetUser = "{VbsEscape(targetUser)}"
 detail = ""
 foundTarget = False
 Set SapGuiAuto = GetObject("SAPGUI")
@@ -5136,7 +5168,7 @@ For i = 0 To application.Children.Count - 1
             currentClient = Trim(CStr(session.Info.Client))
             currentUser = Trim(CStr(session.Info.User))
             detail = detail & "; session[" & i & "," & j & "].system=" & currentSystem & ",client=" & currentClient & ",user=" & currentUser & ",transaction=" & session.Info.Transaction & ",program=" & session.Info.Program & ",screen=" & session.Info.ScreenNumber
-            If UCase(currentSystem) = UCase(Trim(CStr(targetSystem))) And currentClient = Trim(CStr(targetClient)) And UCase(currentUser) = UCase(Trim(CStr(targetUser))) Then
+            If (Trim(CStr(targetSystem)) = "" Or UCase(currentSystem) = UCase(Trim(CStr(targetSystem)))) And (Trim(CStr(targetClient)) = "" Or currentClient = Trim(CStr(targetClient))) And (Trim(CStr(targetUser)) = "" Or UCase(currentUser) = UCase(Trim(CStr(targetUser)))) Then
                Err.Clear
                Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
                If Err.Number = 0 And IsObject(okcd) Then
@@ -5151,7 +5183,7 @@ For i = 0 To application.Children.Count - 1
           currentSystem = Trim(CStr(session.Info.SystemName))
           currentClient = Trim(CStr(session.Info.Client))
           currentUser = Trim(CStr(session.Info.User))
-          If UCase(currentSystem) = UCase(Trim(CStr(targetSystem))) And currentClient = Trim(CStr(targetClient)) And UCase(currentUser) = UCase(Trim(CStr(targetUser))) Then
+          If (Trim(CStr(targetSystem)) = "" Or UCase(currentSystem) = UCase(Trim(CStr(targetSystem)))) And (Trim(CStr(targetClient)) = "" Or currentClient = Trim(CStr(targetClient))) And (Trim(CStr(targetUser)) = "" Or UCase(currentUser) = UCase(Trim(CStr(targetUser)))) Then
              Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
              If Err.Number = 0 And IsObject(okcd) Then
                 foundTarget = True
@@ -5364,9 +5396,9 @@ WScript.Quit 0
 
         string vbsScript = template
             .Replace("{OK_CODE}", VbsEscape(p.TCode))
-            .Replace("{SAP_SYSTEM}", VbsEscape(p.System))
-            .Replace("{SAP_CLIENT}", VbsEscape(p.Client))
-            .Replace("{SAP_USER}", VbsEscape(p.User))
+            .Replace("{SAP_SYSTEM}", VbsEscape(StrictSapSessionMatching ? p.System : ""))
+            .Replace("{SAP_CLIENT}", VbsEscape(StrictSapSessionMatching ? p.Client : ""))
+            .Replace("{SAP_USER}", VbsEscape(StrictSapSessionMatching ? p.User : ""))
             .Replace("{SCRIPT_MODE}", VbsEscape(p.Script))
             .Replace("{FIELD1_NAME}", VbsEscape(p.Field1Name))
             .Replace("{FIELD1_VALUE}", VbsEscape(p.Field1Value))
@@ -6308,6 +6340,7 @@ class RunRecordView
 {
     public string RunId { get; set; } = "";
     public string TransactionCode { get; set; } = "";
+    public string TransactionName { get; set; } = "";
     public string OperatorId { get; set; } = "";
     public string OperatorName { get; set; } = "";
     public string OperatorDept { get; set; } = "";
