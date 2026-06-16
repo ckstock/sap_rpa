@@ -288,29 +288,43 @@ ERROR=
 3. 队列开始执行时写入 `run_logs`，可推送“任务开始执行”。
 4. `ZFI072A.vbs` 执行结束后，API 更新 `runs.status`、`sap_status_type`、`sap_status_text`、`message`。
 5. API 根据运行结果调用通知适配器。
-6. 如果公司已有 SAP 程序可按钉钉 ID 推送消息，优先由 API 调用该 SAP 程序封装出的 OData/HTTP 接口。
+6. API 根据服务器本地配置调用 DingTalk OpenAPI，不再通过 SAP Gateway OData 或 SAP 事务码做通知推送。
 
 不建议用 VBS 再打开一个 SAP 事务码去做通知推送。原因是 SAP GUI 桌面是串行资源，通知如果也占用 SAP GUI，会拖慢后续任务，并且高并发时更容易产生多登录窗口。
 
-当前推荐使用 SAP Gateway OData function import：
+当前推荐后端直连 DingTalk OpenAPI：
 
 ```text
-POST http(s)://SAP域名:端口/sap/opu/odata/sap/ZFI_DD_MSG_SRV/zfi_send_msg_to_DD?WorkNo=''&Ddid='11464769'&Content='test'
+POST <DINGTALK_OPENAPI_BASE>/token
+POST <DINGTALK_OPENAPI_BASE>/dingtalk-oa/topapi/message/corpconversation/asyncsend_v2?token=<token>
 ```
 
 API 侧配置建议：
 
 ```text
-SAP_RPA_DINGTALK_PROVIDER=odata
-SAP_RPA_DINGTALK_ODATA_URL=http://<sap-host>:<port>/sap/opu/odata/sap/ZFI_DD_MSG_SRV/zfi_send_msg_to_DD
-SAP_RPA_DINGTALK_ODATA_USER=<SAP technical user if required>
-SAP_RPA_DINGTALK_ODATA_PASSWORD=<SAP password if required; use server-local secret storage>
-SAP_RPA_DINGTALK_ODATA_FETCH_CSRF=1
+SAP_RPA_DINGTALK_PROVIDER=openapi
+SAP_RPA_DINGTALK_OPENAPI_BASE_URL=<接口根地址，末尾可带 /，不提交 Git>
+SAP_RPA_DINGTALK_OPENAPI_APP_KEY=<from environment or server-local config>
+SAP_RPA_DINGTALK_OPENAPI_APP_SECRET=<from environment or server-local secret config>
+SAP_RPA_DINGTALK_OPENAPI_AGENT_ID=<from environment or server-local config>
 ```
 
-注意：`SAP_RPA_DINGTALK_ODATA_URL` 必须是完整 URL，包含协议、SAP 域名/IP 和端口。本地 API 不在 SAP Gateway 上下文里，不能只配置 `/sap/opu/odata/...` 相对路径。当前临时阶段，API 会把 `runs.ding_talk_user_id` 默认写成 `11464769`；上线扫码登录后应由登录态写入真实钉钉 ID。通知时 API 从数据库 run 记录取 `Ddid`，`WorkNo` 默认传空字符串，并把事务码、工厂、运行状态、SAP 返回消息、runId、耗时等信息拼入 `Content`。
+也可以在服务器运行目录放置不提交 Git 的 `D:\sap_ai\config.local.json`：
 
-建议后续新增 `notification_outbox` 表，执行任务完成后先把通知写入 outbox，再由后台异步发送和重试。这样即使钉钉或 SAP 通知接口临时失败，也不会阻塞 SAP GUI 串行队列。
+```json
+{
+  "dingTalkOpenApi": {
+    "baseUrl": "<接口根地址>",
+    "appKey": "<appKey>",
+    "appSecret": "<appSecret>",
+    "agentId": "<agentId>"
+  }
+}
+```
+
+注意：接口根地址是服务器本地配置项，不能在代码或前端里硬编码；`appKey`、`appSecret`、`agentId` 必须使用环境变量或服务器本地 config，`appSecret` 不得明文返回前端、不得提交 Git。当前临时阶段 `Ddid=11464769` 只作为联调写死值；上线扫码登录后应由登录态写入真实钉钉用户 ID，或由服务器本地配置映射得到。通知时 API 从数据库 run 记录或登录态取接收人钉钉 ID，并把事务码、工厂、运行状态、SAP 返回消息、runId、耗时等信息拼入 DingTalk OpenAPI 消息体。若临时联调方案和上线方案不一致，必须先向用户说明差异和风险，得到确认后再调整部署或代码。
+
+建议后续新增 `notification_outbox` 表，执行任务完成后先把通知写入 outbox，再由后台异步发送和重试。这样即使 DingTalk OpenAPI 临时失败，也不会阻塞 SAP GUI 串行队列。
 
 ## 12. 当前仍需保留的安装文件
 
