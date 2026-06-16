@@ -4168,21 +4168,67 @@ ORDER BY 1;
 
         string plants = ExtractRunParamValue(run.RequestJson, "plants");
         string sapMessage = FirstNonEmpty(run.SapStatusText, run.Message, message, "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C");
+        string statusLabel = FormatRunStatusForDingTalk(run.Status);
+        string sapStatusType = FormatSapStatusType(run.SapStatusType);
+        string title = run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
+            ? "\u2705 SAP \u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
+            : "\u274C SAP \u81EA\u52A8\u5316\u6267\u884C\u5931\u8D25";
         var lines = new List<string>
         {
-            $"TCODE={run.TransactionCode}",
-            $"PLANTS={plants}",
-            $"RUN_ID={run.RunId}",
-            $"STATUS={run.Status}",
-            $"SAP_STATUS_TYPE={run.SapStatusType}",
-            $"SAP_MESSAGE={sapMessage}",
-            $"OPERATOR={FirstNonEmpty(run.OperatorName, run.OperatorId, "unknown")}",
-            $"STARTED_AT={run.StartedAt}",
-            $"FINISHED_AT={run.FinishedAt}",
-            $"DURATION={FormatDuration(run.DurationMs)}"
+            title,
+            "",
+            $"\U0001F4CC \u4E8B\u52A1\u7801\uFF1A{run.TransactionCode}",
+            $"\U0001F3ED \u5DE5\u5382\uFF1A{FormatPlantsForDingTalk(plants)}",
+            $"\U0001F4CA \u6267\u884C\u7ED3\u679C\uFF1A{statusLabel}",
+            $"\U0001F514 SAP\u6D88\u606F\uFF1A{sapMessage}",
+            $"\U0001F3F7\uFE0F SAP\u72B6\u6001\uFF1A{sapStatusType}",
+            $"\u23F1\uFE0F \u6267\u884C\u8017\u65F6\uFF1A{FirstNonEmpty(FormatDuration(run.DurationMs), "\u672A\u8BB0\u5F55")}",
+            $"\U0001F552 \u5F00\u59CB\u65F6\u95F4\uFF1A{FirstNonEmpty(run.StartedAt, "\u672A\u8BB0\u5F55")}",
+            $"\U0001F3C1 \u5B8C\u6210\u65F6\u95F4\uFF1A{FirstNonEmpty(run.FinishedAt, "\u672A\u8BB0\u5F55")}",
+            $"\U0001F194 \u4EFB\u52A1\u7F16\u53F7\uFF1A{run.RunId}"
         };
 
-        return string.Join("\n", lines.Where(line => !string.IsNullOrWhiteSpace(line)));
+        return string.Join("\n", lines);
+    }
+
+    static string FormatRunStatusForDingTalk(string status)
+    {
+        if (status.Equals("success", StringComparison.OrdinalIgnoreCase))
+            return "\u6210\u529F";
+        if (status.Equals("failure", StringComparison.OrdinalIgnoreCase) || status.Equals("failed", StringComparison.OrdinalIgnoreCase))
+            return "\u5931\u8D25";
+        if (status.Equals("running", StringComparison.OrdinalIgnoreCase))
+            return "\u6267\u884C\u4E2D";
+        if (status.Equals("queued", StringComparison.OrdinalIgnoreCase) || status.Equals("pending", StringComparison.OrdinalIgnoreCase))
+            return "\u6392\u961F\u4E2D";
+        if (status.Equals("cancelled", StringComparison.OrdinalIgnoreCase) || status.Equals("canceled", StringComparison.OrdinalIgnoreCase))
+            return "\u5DF2\u53D6\u6D88";
+
+        return FirstNonEmpty(status, "\u672A\u77E5");
+    }
+
+    static string FormatSapStatusType(string statusType)
+    {
+        string value = FirstNonEmpty(statusType, "").Trim().ToUpperInvariant();
+        return value switch
+        {
+            "S" => "\u6210\u529F",
+            "W" => "\u8B66\u544A",
+            "E" => "\u9519\u8BEF",
+            "A" => "\u4E2D\u6B62",
+            "I" => "\u4FE1\u606F",
+            "" => "\u672A\u8FD4\u56DE",
+            _ => value
+        };
+    }
+
+    static string FormatPlantsForDingTalk(string plants)
+    {
+        string value = FirstNonEmpty(plants, "").Trim();
+        if (string.IsNullOrWhiteSpace(value))
+            return "\u672A\u6307\u5B9A";
+
+        return value.Replace(",", "\u3001");
     }
 
     static string ResolveSapDingTalkProvider()

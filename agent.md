@@ -28,6 +28,8 @@
 6. subagent 工作期间，主 agent 不重复实现同一份功能，只做协调、审查和非冲突工作。
 7. 如果无法真正 spawn subagents，必须明确说明，并用可见状态表模拟并行流程。
 8. 如果发现“临时方案”和“上线方案”不一致，主 agent 必须先向用户说明差异、风险和推荐方案，得到确认后再写代码。
+9. 涉及 Git 提交、推送、部署包、README、示例配置时，`appKey`、`appSecret`、`agentId`、token、密码、服务器私有地址等敏感或环境相关值必须全部使用占位符，例如“请填写真实AppKey”“请填写真实AppSecret”“请填写真实AgentId”或 `<...>`；真实值只允许写入本机不提交 Git 的 `config.local.json`、环境变量或受保护的本地凭据。
+10. `config.local.json` 默认不得明文提交到 Git。Git 里只允许提交占位模板（例如 `config.local.example.json`）或已经加密且不可直接使用的配置文件；如果确实需要把配置文件纳入版本库，必须先用 DPAPI、Windows 凭据管理器或公司密钥管理方案加密，严禁提交真实 `appKey`、`appSecret`、`agentId`、token、密码、服务器地址等明文值。
 
 ## V2 架构规则
 
@@ -40,6 +42,8 @@
 7. 通知机器人 webhook/secret 不得明文返回前端。
 8. SQLite 数据库、日志、导出文件、本机配置、真实凭据密文等运行产物不得提交到源码仓库。
 9. 迁移公司服务器时，源码走 GitHub；机器本地 SAP 登录配置必须在目标 Windows 执行账号下重新生成。
+10. 钉钉通知不再走 SAP Gateway OData；由后端直连 DingTalk OpenAPI。接口根地址、appKey、appSecret、agentId 必须来自服务器环境变量或本地 config，不得写死到前端、VBS 或源码文档示例里；当前 `Ddid=11464769` 只允许作为联调临时值，上线必须改为登录态/配置中的真实钉钉用户 ID。
+11. 提交前必须检查 `git status` 和 `git diff`，确认没有把本机 `config.local.json`、数据库、日志、导出文件或任何真实密钥混入提交；发现明文配置时先停止提交并改成占位模板或加密存储。
 
 ## 敏感信息规则
 
