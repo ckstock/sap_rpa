@@ -14,6 +14,7 @@ Dim targetDate, yearValue, weekValue, pageYear, pageWeek, periodValue, weekEndVa
 Dim plantValue, setOk
 Dim SapGuiAuto, application, connection, session, connIndex, sessIndex
 Dim retries, maxRetries, sleepMs, statusType, statusText, operationError
+Dim longRunTimeoutMs, saveTimeoutMs, saveButtonTimeoutMs, sapCloseOk
 
 tcode = "{OK_CODE}"
 targetSystem = "{SAP_SYSTEM}"
@@ -27,6 +28,10 @@ pageWeek = "{WEEK}"
 periodValue = "{PERIOD}"
 weekEndValue = "{WEEK_END}"
 maxRetries = 100
+longRunTimeoutMs = 3600000
+If CsvContains(plantsCsv, "9301") Then longRunTimeoutMs = 7200000
+saveTimeoutMs = 600000
+saveButtonTimeoutMs = 120000
 unresolvedPlantsToken = "{" & "PLANTS" & "}"
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
 unresolvedSapSystemToken = "{" & "SAP_SYSTEM" & "}"
@@ -125,6 +130,20 @@ Function CsvCount(value)
    CsvCount = count
 End Function
 
+Function CsvContains(value, expected)
+   Dim parts, item
+   CsvContains = False
+   value = Replace(value, ";", ",")
+   value = Replace(value, "|", ",")
+   parts = Split(value, ",")
+   For Each item In parts
+      If UCase(Trim(CStr(item))) = UCase(Trim(CStr(expected))) Then
+         CsvContains = True
+         Exit Function
+      End If
+   Next
+End Function
+
 Function SetClipboardText(value)
    Dim sh, exec
    SetClipboardText = False
@@ -217,6 +236,126 @@ Function WaitForAnyObject(label, ids, timeoutMs)
       WScript.Sleep 200
       waited = waited + 200
    Loop
+End Function
+
+Function ObjectIsEnabled(id)
+   Dim obj, enabledValue
+   ObjectIsEnabled = False
+   Err.Clear
+   Set obj = session.findById(CStr(id))
+   If Err.Number = 0 And IsObject(obj) Then
+      enabledValue = True
+      Err.Clear
+      enabledValue = obj.Enabled
+      If Err.Number <> 0 Then enabledValue = True
+      ObjectIsEnabled = CBool(enabledValue)
+   End If
+   Err.Clear
+End Function
+
+Function WaitForAnyEnabledObject(label, ids, timeoutMs)
+   Dim waited, id
+   WaitForAnyEnabledObject = False
+   waited = 0
+   Do While waited <= timeoutMs
+      For Each id In ids
+         If ObjectIsEnabled(CStr(id)) Then
+            WScript.Echo "INFO: ready enabled " & label & " via " & id
+            WaitForAnyEnabledObject = True
+            Exit Function
+         End If
+      Next
+      WScript.Sleep 200
+      waited = waited + 200
+   Loop
+End Function
+
+Function WaitForPostExecuteReady(timeoutMs)
+   Dim waited, readyLogged
+   WaitForPostExecuteReady = False
+   waited = 0
+   readyLogged = False
+   WScript.Echo "INFO: wait for SAP execute processing, timeoutMs=" & CStr(timeoutMs)
+   Do While waited <= timeoutMs
+      If WaitForSessionReady(1000) Then
+         Err.Clear
+         statusType = session.findById("wnd[0]/sbar").MessageType
+         statusText = session.findById("wnd[0]/sbar").Text
+         If Err.Number = 0 Then
+            If statusText <> "" Then WScript.Echo "INFO: post execute status type=" & statusType & ", text=" & statusText
+            If statusType = "E" Or statusType = "A" Then
+               EmitError "SAP execute rejected - " & statusText
+               Err.Clear
+               Exit Function
+            End If
+         End If
+         Err.Clear
+         If ObjectIsEnabled("wnd[0]/tbar[1]/btn[14]") Then
+            WScript.Echo "INFO: SAP execute processing finished, save button is enabled"
+            WaitForPostExecuteReady = True
+            Exit Function
+         End If
+         If ObjectIsEnabled("wnd[0]/tbar[1]/btn[11]") Then
+            WScript.Echo "INFO: SAP execute processing finished, alternate save button is enabled"
+            WaitForPostExecuteReady = True
+            Exit Function
+         End If
+         If Not readyLogged Then
+            WScript.Echo "INFO: SAP session ready after execute, waiting for save action availability"
+            readyLogged = True
+         End If
+      End If
+      WScript.Sleep 1000
+      waited = waited + 1000
+      If waited > 0 And waited Mod 60000 = 0 Then
+         WScript.Echo "INFO: still waiting for SAP execute result, waitedMs=" & CStr(waited)
+         EchoSessionContext "WAIT_CONTEXT"
+      End If
+   Loop
+   EmitError "SAP execute did not finish before timeoutMs=" & CStr(timeoutMs)
+End Function
+
+Function PressSaveAfterReady(timeoutMs)
+   PressSaveAfterReady = False
+   If Not WaitForAnyEnabledObject("save button", Array("wnd[0]/tbar[1]/btn[14]", "wnd[0]/tbar[1]/btn[11]"), timeoutMs) Then
+      EmitError "save button not enabled after SAP execute processing"
+      EchoSessionContext "ERROR_CONTEXT"
+      Exit Function
+   End If
+   PressSaveAfterReady = PressButtonByCandidates("save", Array("wnd[0]/tbar[1]/btn[14]", "wnd[0]/tbar[1]/btn[11]"))
+End Function
+
+Function WaitForSaveComplete(timeoutMs)
+   Dim waited
+   WaitForSaveComplete = False
+   waited = 0
+   WScript.Echo "INFO: wait for SAP save processing, timeoutMs=" & CStr(timeoutMs)
+   Do While waited <= timeoutMs
+      If WaitForSessionReady(1000) Then
+         Err.Clear
+         statusType = session.findById("wnd[0]/sbar").MessageType
+         statusText = session.findById("wnd[0]/sbar").Text
+         If Err.Number = 0 Then
+            If statusText <> "" Then WScript.Echo "INFO: save status type=" & statusType & ", text=" & statusText
+            If statusType = "E" Or statusType = "A" Then
+               EmitError "SAP save rejected - " & statusText
+               Err.Clear
+               Exit Function
+            End If
+         Else
+            Err.Clear
+         End If
+         WaitForSaveComplete = True
+         Exit Function
+      End If
+      WScript.Sleep 1000
+      waited = waited + 1000
+      If waited > 0 And waited Mod 60000 = 0 Then
+         WScript.Echo "INFO: still waiting for SAP save completion, waitedMs=" & CStr(waited)
+         EchoSessionContext "WAIT_CONTEXT"
+      End If
+   Loop
+   EmitError "SAP save did not finish before timeoutMs=" & CStr(timeoutMs)
 End Function
 
 Function SessionIsUsable(candidate)
@@ -394,12 +533,13 @@ Sub EmitSapGuiDiagnostics(reason)
    Next
 End Sub
 
-Sub CloseSapSession()
-   Dim closeTry, exitTry
+Function CloseSapSession()
+   Dim closeTry, exitTry, waitClose
+   CloseSapSession = False
    WScript.Echo "INFO: cleanup enter, send /nex if SAP session is still open"
    If Not IsObject(session) Then
       WScript.Echo "WARN: no SAP session object to close"
-      Exit Sub
+      Exit Function
    End If
    If Not WaitForSessionReady(8000) Then WScript.Echo "WARN: SAP session still busy before /nex close"
    For closeTry = 1 To 3
@@ -427,15 +567,19 @@ Sub CloseSapSession()
       End If
       Err.Clear
       ConfirmSapExitModal
-      WScript.Sleep 800
-      If Not ObjectExists("wnd[0]/tbar[0]/okcd") Then
-         WScript.Echo "INFO: SAP session closed after /nex"
-         Exit For
-      End If
-      If exitTry < 2 Then WScript.Echo "WARN: SAP session still open after /nex, retrying"
+      For waitClose = 1 To 20
+         WScript.Sleep 500
+         If Not ObjectExists("wnd[0]/tbar[0]/okcd") Then
+            WScript.Echo "INFO: SAP session closed after /nex"
+            CloseSapSession = True
+            Exit Function
+         End If
+         ConfirmSapExitModal
+      Next
+       If exitTry < 2 Then WScript.Echo "WARN: SAP session still open after /nex, retrying"
    Next
    If ObjectExists("wnd[0]/tbar[0]/okcd") Then WScript.Echo "WARN: SAP session still appears open after /nex"
-End Sub
+End Function
 
 Sub ConfirmSapExitModal()
    Dim confirmTry, obj
@@ -468,7 +612,7 @@ Sub ConfirmSapExitModal()
 End Sub
 
 Sub QuitWithCleanup(exitCode)
-   CloseSapSession
+   sapCloseOk = CloseSapSession()
    WScript.Quit exitCode
 End Sub
 
@@ -715,8 +859,8 @@ If Not setOk Then QuitWithCleanup 9
 
 SetCheckboxIfExists "wnd[0]/usr/chkP_SEL", False
 
+Err.Clear
 session.findById("wnd[0]/tbar[1]/btn[8]").press
-session.findById("wnd[0]/tbar[1]/btn[14]").press
 If Err.Number <> 0 Then
    operationError = Err.Description
    Err.Clear
@@ -727,9 +871,15 @@ If Err.Number <> 0 Then
       WScript.Echo "STATUS_TEXT=" & statusText
    End If
    Err.Clear
-   EmitError "SAP operation failed - " & operationError
+   EmitError "SAP execute failed - " & operationError
    QuitWithCleanup 8
 End If
+Err.Clear
+WScript.Echo "INFO: pressed execute, waiting before save"
+
+If Not WaitForPostExecuteReady(longRunTimeoutMs) Then QuitWithCleanup 8
+If Not PressSaveAfterReady(saveButtonTimeoutMs) Then QuitWithCleanup 8
+If Not WaitForSaveComplete(saveTimeoutMs) Then QuitWithCleanup 8
 
 Err.Clear
 statusType = session.findById("wnd[0]/sbar").MessageType
@@ -750,5 +900,10 @@ End If
 Err.Clear
 
 WScript.Echo "OUTPUT_FILE="
+sapCloseOk = CloseSapSession()
+If Not sapCloseOk Then
+   EmitError "SAP GUI cleanup did not confirm /nex close"
+   WScript.Quit 11
+End If
 WScript.Echo "INFO: transaction script executed"
-QuitWithCleanup 0
+WScript.Quit 0

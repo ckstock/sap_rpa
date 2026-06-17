@@ -26,6 +26,9 @@ static class Program
     private const int DefaultQueueStatusLimit = 5;
     private const int MaxQueueStatusLimit = 20;
     private const int StaleRunningTimeoutHours = 6;
+    private const int QueueHeartbeatIntervalSeconds = 60;
+    private const int SchedulePollIntervalMilliseconds = 30_000;
+    private const int ScheduleTriggerLookbackMinutes = 15;
     // Temporary default until DingTalk scan login writes the real user id into runs.ding_talk_user_id.
     private const string DefaultDingTalkId = "11464769";
     private const int NotificationWorkerTimeoutSeconds = 12;
@@ -46,6 +49,8 @@ static class Program
     private static readonly string ExecutorId = $"{Environment.MachineName}\\{Environment.UserName}";
     private static readonly object DatabaseInitLock = new();
     private static bool DatabaseInitialized;
+    private static readonly object ActiveRunLock = new();
+    private static readonly HashSet<string> ActiveExecutingRunIds = new(StringComparer.OrdinalIgnoreCase);
     private static readonly HttpClient NotificationHttpClient = new()
     {
         Timeout = TimeSpan.FromSeconds(8)
@@ -423,7 +428,8 @@ static class Program
             Field2Name = First(query, "field2", "field2name") ?? "",
             Field2Value = First(query, "value2", "field2value") ?? "",
             ButtonId = First(query, "button", "buttonid") ?? "",
-            RunId = First(query, "runid", "run_id") ?? ""
+            RunId = First(query, "runid", "run_id") ?? "",
+            TimeoutSeconds = ParseOptionalPositiveInt(First(query, "timeoutseconds", "timeout", "vbstimeoutseconds"))
         };
 
         ApplyScriptDefaults(p);
@@ -479,6 +485,14 @@ static class Program
         return NormalizeCsv(value).Split(',', StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
     }
 
+    static int? ParseOptionalPositiveInt(string? value)
+    {
+        if (int.TryParse(value, out int parsed) && parsed > 0)
+            return parsed;
+
+        return null;
+    }
+
     static void ApplyTransactionConfigForRun(SapRunParams p)
     {
         if (string.IsNullOrWhiteSpace(p.TCode))
@@ -489,11 +503,12 @@ static class Program
         string scriptFile = "";
         string automation = "";
         string defaultGroup = "";
+        int timeoutSeconds = 0;
 
         using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-SELECT script_file, automation, default_group
+SELECT script_file, automation, default_group, timeout_seconds
 FROM transactions
 WHERE tcode=$tcode AND enabled=1;
 """;
@@ -504,8 +519,12 @@ WHERE tcode=$tcode AND enabled=1;
                 scriptFile = reader.GetString(0);
                 automation = reader.GetString(1);
                 defaultGroup = reader.GetString(2);
+                timeoutSeconds = reader.GetInt32(3);
             }
         }
+
+        if (timeoutSeconds > 0 && (!p.TimeoutSeconds.HasValue || p.TimeoutSeconds.Value <= 0))
+            p.TimeoutSeconds = timeoutSeconds;
 
         bool mustRunScript =
             automation.Equals("script", StringComparison.OrdinalIgnoreCase) ||
@@ -636,6 +655,14 @@ WHERE tcode=$tcode AND enabled=1;
             worker.Start();
             Log("串行执行队列后台线程已启动");
         }
+
+        var scheduleWorker = new Thread(ProcessScheduleLoop)
+        {
+            IsBackground = true,
+            Name = "SapRpaScheduleWorker"
+        };
+        scheduleWorker.Start();
+        Log("定时任务调度后台线程已启动");
 
         while (true)
         {
@@ -827,23 +854,25 @@ WHERE tcode=$tcode AND enabled=1;
                 return;
             }
 
-            if (path.Equals("/api/schedules", StringComparison.OrdinalIgnoreCase) &&
+            if ((path.Equals("/api/schedules", StringComparison.OrdinalIgnoreCase) ||
+                 path.Equals("/api/config/schedule-tasks", StringComparison.OrdinalIgnoreCase)) &&
                 context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase))
             {
                 WriteJson(context.Response, LoadScheduleTasks());
                 return;
             }
 
-            if (path.Equals("/api/schedules", StringComparison.OrdinalIgnoreCase) &&
+            if ((path.Equals("/api/schedules", StringComparison.OrdinalIgnoreCase) ||
+                 path.Equals("/api/config/schedule-tasks", StringComparison.OrdinalIgnoreCase)) &&
                 context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
             {
                 var item = ReadJson<ScheduleTaskRequest>(context.Request);
                 string id = UpsertScheduleTask(item, routeId: "");
-                WriteJson(context.Response, new { ok = true, id });
+                WriteJson(context.Response, new { ok = true, id, schedule = LoadScheduleTask(id) });
                 return;
             }
 
-            Match scheduleMatch = Regex.Match(path, @"^/api/schedules/([A-Za-z0-9_.-]+)$", RegexOptions.IgnoreCase);
+            Match scheduleMatch = Regex.Match(path, @"^/api/(?:schedules|config/schedule-tasks)/([A-Za-z0-9_.-]+)$", RegexOptions.IgnoreCase);
             if (scheduleMatch.Success &&
                 context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase))
             {
@@ -863,7 +892,7 @@ WHERE tcode=$tcode AND enabled=1;
             {
                 var item = ReadJson<ScheduleTaskRequest>(context.Request);
                 string id = UpsertScheduleTask(item, scheduleMatch.Groups[1].Value);
-                WriteJson(context.Response, new { ok = true, id });
+                WriteJson(context.Response, new { ok = true, id, schedule = LoadScheduleTask(id) });
                 return;
             }
 
@@ -2117,10 +2146,11 @@ ON CONFLICT(tcode) DO UPDATE SET
         var rules = LoadTransactionRuleConfig(connection);
         var robotBindings = LoadNotificationRobotBindingsConfig(connection);
         var robots = LoadNotificationRobotConfig(connection);
+        var schedules = LoadScheduleTaskConfig(connection);
 
         return new
         {
-            version = 1,
+            version = 2,
             source = "sqlite",
             database = DatabaseFilePath,
             transactions,
@@ -2130,7 +2160,9 @@ ON CONFLICT(tcode) DO UPDATE SET
             transactionRules = rules,
             notificationRobots = robots,
             notificationRobotBindings = robotBindings,
-            notificationBindings = robotBindings
+            notificationBindings = robotBindings,
+            scheduleTasks = schedules,
+            schedules
         };
     }
 
@@ -3008,8 +3040,22 @@ WHERE LOWER(rp.param_key) IN ('plants', 'plant', 'werks', 'werkslist', 'plantlis
     static object LoadScheduleTasks()
     {
         InitializeDatabase(seedFromScripts: true);
-        var items = new List<object>();
         using var connection = OpenDatabaseConnection();
+        var items = LoadScheduleTaskConfig(connection);
+
+        return new
+        {
+            version = 2,
+            source = "sqlite",
+            database = DatabaseFilePath,
+            scheduleTasks = items,
+            schedules = items
+        };
+    }
+
+    static List<object> LoadScheduleTaskConfig(SqliteConnection connection)
+    {
+        var items = new List<object>();
         using var command = connection.CreateCommand();
         command.CommandText = """
 SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time,
@@ -3022,13 +3068,7 @@ ORDER BY enabled DESC, updated_at DESC, id;
         while (reader.Read())
             items.Add(ReadScheduleTask(reader));
 
-        return new
-        {
-            version = 1,
-            source = "sqlite",
-            database = DatabaseFilePath,
-            schedules = items
-        };
+        return items;
     }
 
     static object? LoadScheduleTask(string id)
@@ -3058,8 +3098,20 @@ WHERE id=$id;
 
         string id = SanitizeConfigId(FirstNonEmpty(routeId, item.Id, $"sched-{tcode.ToLowerInvariant()}-{DateTime.Now:yyyyMMddHHmmss}"), "schedule id");
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        string plantsJson = CsvToJsonArray(FirstNonEmpty(item.PlantsCsv, JsonElementArrayToCsv(item.Plants)));
-        string paramsJson = item.Params.ValueKind == JsonValueKind.Object ? item.Params.GetRawText() : "{}";
+        string defaultBusinessScope = FirstNonEmpty(item.DefaultBusinessScope, item.FactoryGroup, item.PlantGroupId, item.GroupId, item.DefaultPlantGroup);
+        string plantsCsv = FirstNonEmpty(item.PlantsCsv, JsonElementArrayToCsv(item.Plants));
+        if (string.IsNullOrWhiteSpace(plantsCsv))
+            plantsCsv = ResolveSchedulePlants(tcode, defaultBusinessScope);
+        string plantsJson = CsvToJsonArray(plantsCsv);
+        string paramsJson = BuildScheduleParamsJson(item, tcode, defaultBusinessScope, plantsCsv);
+        string rawFrequency = FirstNonEmpty(item.Frequency, item.ScheduleType, item.FrequencyCode);
+        string frequency = string.IsNullOrWhiteSpace(rawFrequency) && !string.IsNullOrWhiteSpace(item.Cron)
+            ? ""
+            : NormalizeScheduleFrequency(FirstNonEmpty(rawFrequency, "daily"));
+        string runTime = NormalizeScheduleRunTime(FirstNonEmpty(item.Time, item.RunTime, item.ExecTime, item.RunAt, item.StartTime));
+        bool notifyOnSuccess = item.NotifyOnSuccess ?? item.NotifySuccess ?? false;
+        bool notifyOnFailure = item.NotifyOnFailure ?? item.NotifyFail ?? true;
+        bool notifyEnabled = item.NotifyEnabled ?? item.Notify ?? item.NotifyStart ?? (notifyOnSuccess || notifyOnFailure);
 
         using var connection = OpenDatabaseConnection();
         using var command = connection.CreateCommand();
@@ -3094,14 +3146,14 @@ ON CONFLICT(id) DO UPDATE SET
         command.Parameters.AddWithValue("$name", FirstNonEmpty(item.Name, tcode));
         command.Parameters.AddWithValue("$tcode", tcode);
         command.Parameters.AddWithValue("$plantsJson", plantsJson);
-        command.Parameters.AddWithValue("$defaultBusinessScope", item.DefaultBusinessScope ?? "");
+        command.Parameters.AddWithValue("$defaultBusinessScope", defaultBusinessScope);
         command.Parameters.AddWithValue("$cron", item.Cron ?? "");
-        command.Parameters.AddWithValue("$frequency", FirstNonEmpty(item.Frequency, string.IsNullOrWhiteSpace(item.Cron) ? "daily" : ""));
-        command.Parameters.AddWithValue("$runTime", FirstNonEmpty(item.Time, item.RunTime));
+        command.Parameters.AddWithValue("$frequency", frequency);
+        command.Parameters.AddWithValue("$runTime", runTime);
         command.Parameters.AddWithValue("$enabled", item.Enabled.GetValueOrDefault(true) ? 1 : 0);
-        command.Parameters.AddWithValue("$notifyEnabled", item.NotifyEnabled.GetValueOrDefault(false) ? 1 : 0);
-        command.Parameters.AddWithValue("$notifyOnSuccess", item.NotifyOnSuccess.GetValueOrDefault(false) ? 1 : 0);
-        command.Parameters.AddWithValue("$notifyOnFailure", item.NotifyOnFailure.GetValueOrDefault(true) ? 1 : 0);
+        command.Parameters.AddWithValue("$notifyEnabled", notifyEnabled ? 1 : 0);
+        command.Parameters.AddWithValue("$notifyOnSuccess", notifyOnSuccess ? 1 : 0);
+        command.Parameters.AddWithValue("$notifyOnFailure", notifyOnFailure ? 1 : 0);
         command.Parameters.AddWithValue("$notifyTarget", item.NotifyTarget ?? "");
         command.Parameters.AddWithValue("$paramsJson", paramsJson);
         command.Parameters.AddWithValue("$createdAt", now);
@@ -3130,18 +3182,38 @@ WHERE id=$id;
 
     static object ReadScheduleTask(SqliteDataReader reader)
     {
+        string id = reader.GetString(0);
+        string tcode = reader.GetString(2);
+        string defaultBusinessScope = reader.GetString(4);
+        string frequency = reader.GetString(6);
+        string runTime = reader.GetString(7);
+        bool enabled = reader.GetInt32(8) == 1;
+        string createdAt = reader.GetString(14);
+        string updatedAt = reader.GetString(15);
+        string nextRunAt = enabled ? CalculateNextScheduleRunAt(frequency, runTime, createdAt) : "";
         return new
         {
-            id = reader.GetString(0),
+            id,
+            taskId = id,
             name = reader.GetString(1),
-            tcode = reader.GetString(2),
-            code = reader.GetString(2),
+            tcode,
+            transactionCode = tcode,
+            code = tcode,
             plants = SafeJsonArray(reader.GetString(3)),
-            defaultBusinessScope = reader.GetString(4),
+            defaultBusinessScope,
+            factoryGroup = defaultBusinessScope,
+            plantGroupId = defaultBusinessScope,
+            defaultPlantGroup = defaultBusinessScope,
             cron = reader.GetString(5),
-            frequency = reader.GetString(6),
-            time = reader.GetString(7),
-            enabled = reader.GetInt32(8) == 1,
+            frequency,
+            scheduleType = frequency,
+            time = runTime,
+            execTime = runTime,
+            runTime,
+            enabled,
+            status = enabled ? "enabled" : "disabled",
+            nextRunAt,
+            nextExecutionTime = nextRunAt,
             notify = new
             {
                 enabled = reader.GetInt32(9) == 1,
@@ -3150,11 +3222,418 @@ WHERE id=$id;
                 target = reader.GetString(12)
             },
             paramsJson = reader.GetString(13),
-            createdAt = reader.GetString(14),
-            updatedAt = reader.GetString(15),
+            createdAt,
+            updatedAt,
             createdBy = reader.GetString(16),
             updatedBy = reader.GetString(17)
         };
+    }
+
+    static string ResolveSchedulePlants(string tcode, string plantGroupId)
+    {
+        if (string.IsNullOrWhiteSpace(plantGroupId))
+            return "";
+
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        if (tcode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase))
+        {
+            command.CommandText = """
+SELECT zfi072_plants_json
+FROM plant_groups
+WHERE id=$id AND enabled=1;
+""";
+            command.Parameters.AddWithValue("$id", plantGroupId);
+            string zfi072PlantsJson = command.ExecuteScalar() as string ?? "";
+            string zfi072Plants = string.Join(",", SafeJsonArray(zfi072PlantsJson));
+            if (!string.IsNullOrWhiteSpace(zfi072Plants))
+                return zfi072Plants;
+        }
+
+        command.CommandText = """
+SELECT plant_code
+FROM plant_group_members
+WHERE group_id=$id
+ORDER BY sort_order, plant_code;
+""";
+        command.Parameters.Clear();
+        command.Parameters.AddWithValue("$id", plantGroupId);
+        var plants = new List<string>();
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+            plants.Add(reader.GetString(0));
+
+        return string.Join(",", plants);
+    }
+
+    static string BuildScheduleParamsJson(ScheduleTaskRequest item, string tcode, string defaultBusinessScope, string plantsCsv)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (item.Params.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var prop in item.Params.EnumerateObject())
+            {
+                string value = JsonValueToString(prop.Value);
+                if (!string.IsNullOrWhiteSpace(value))
+                    values[prop.Name] = value;
+            }
+        }
+
+        string plants = NormalizeCsv(FirstNonEmpty(plantsCsv, values.TryGetValue("plants", out string? existingPlants) ? existingPlants ?? "" : ""));
+        if (!string.IsNullOrWhiteSpace(plants))
+        {
+            values["plants"] = plants;
+            values["plant"] = FirstCsvValue(plants);
+        }
+
+        if (!string.IsNullOrWhiteSpace(defaultBusinessScope))
+            values["factoryGroup"] = defaultBusinessScope;
+
+        string businessAreas = FirstNonEmpty(
+            JsonElementArrayToCsv(item.BusinessAreas),
+            item.BusinessAreasCsv,
+            values.TryGetValue("businessAreas", out string? existingAreas) ? existingAreas ?? "" : "");
+        businessAreas = NormalizeCsv(businessAreas);
+        if (!string.IsNullOrWhiteSpace(businessAreas))
+        {
+            values["businessAreas"] = businessAreas;
+            values["businessArea"] = FirstCsvValue(businessAreas);
+        }
+
+        values["tcode"] = tcode;
+        return JsonSerializer.Serialize(values, JsonOptions);
+    }
+
+    static string NormalizeScheduleFrequency(string value)
+    {
+        value = (value ?? "").Trim().ToLowerInvariant();
+        return value switch
+        {
+            "day" or "daily" or "everyday" => "daily",
+            "week" or "weekly" => "weekly",
+            "month" or "monthly" => "monthly",
+            _ => string.IsNullOrWhiteSpace(value) ? "daily" : value
+        };
+    }
+
+    static string NormalizeScheduleRunTime(string value)
+    {
+        value = (value ?? "").Trim();
+        if (string.IsNullOrWhiteSpace(value))
+            return "08:00";
+
+        if (TimeSpan.TryParse(value, out TimeSpan parsed))
+            return new TimeSpan(parsed.Hours, parsed.Minutes, 0).ToString(@"hh\:mm");
+
+        if (DateTime.TryParse(value, out DateTime parsedDate))
+            return parsedDate.ToString("HH:mm");
+
+        return value;
+    }
+
+    static string CalculateNextScheduleRunAt(string frequency, string runTime, string anchorText)
+    {
+        if (string.IsNullOrWhiteSpace(frequency))
+            return "";
+
+        if (!TryResolveScheduleSlot(frequency, runTime, anchorText, DateTime.Now, out DateTime slot))
+            return "";
+
+        DateTime now = DateTime.Now;
+        if (slot <= now)
+        {
+            string normalized = NormalizeScheduleFrequency(frequency);
+            slot = normalized switch
+            {
+                "weekly" => slot.AddDays(7),
+                "monthly" => AddOneScheduleMonth(slot, anchorText),
+                _ => slot.AddDays(1)
+            };
+        }
+
+        return slot.ToString("yyyy-MM-dd HH:mm:ss");
+    }
+
+    static void ProcessScheduleLoop()
+    {
+        while (true)
+        {
+            try
+            {
+                TriggerDueScheduleTasks();
+            }
+            catch (Exception ex)
+            {
+                Log($"schedule worker failed: {ex}");
+            }
+
+            Thread.Sleep(SchedulePollIntervalMilliseconds);
+        }
+    }
+
+    static void TriggerDueScheduleTasks()
+    {
+        InitializeDatabase(seedFromScripts: true);
+        DateTime now = DateTime.Now;
+        var dueTasks = LoadDueScheduleTasks(now);
+        foreach (var task in dueTasks)
+            TriggerScheduleTask(task, now);
+    }
+
+    static List<ScheduleTaskDue> LoadDueScheduleTasks(DateTime now)
+    {
+        var due = new List<ScheduleTaskDue>();
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time,
+       notify_enabled, notify_on_success, notify_on_failure, notify_target, params_json, created_at
+FROM schedule_tasks
+WHERE enabled=1
+ORDER BY run_time, id;
+""";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            string cron = reader.GetString(5);
+            string frequency = reader.GetString(6);
+            string runTime = reader.GetString(7);
+            string createdAt = reader.GetString(13);
+            if (!string.IsNullOrWhiteSpace(cron) && string.IsNullOrWhiteSpace(frequency))
+                continue;
+            if (!TryResolveScheduleSlot(frequency, runTime, createdAt, now, out DateTime scheduledAt))
+                continue;
+
+            DateTime lowerBound = now.AddMinutes(-ScheduleTriggerLookbackMinutes);
+            if (scheduledAt > now || scheduledAt < lowerBound)
+                continue;
+
+            string scheduledAtText = scheduledAt.ToString("yyyy-MM-dd HH:mm:ss");
+            string taskId = reader.GetString(0);
+            if (ScheduleTriggerExists(taskId, scheduledAtText))
+                continue;
+
+            due.Add(new ScheduleTaskDue
+            {
+                Id = taskId,
+                Name = reader.GetString(1),
+                TCode = reader.GetString(2),
+                Plants = string.Join(",", SafeJsonArray(reader.GetString(3))),
+                DefaultBusinessScope = reader.GetString(4),
+                Cron = cron,
+                Frequency = frequency,
+                RunTime = runTime,
+                NotifyEnabled = reader.GetInt32(8) == 1,
+                NotifyOnSuccess = reader.GetInt32(9) == 1,
+                NotifyOnFailure = reader.GetInt32(10) == 1,
+                NotifyTarget = reader.GetString(11),
+                ParamsJson = reader.GetString(12),
+                ScheduledAt = scheduledAtText
+            });
+        }
+
+        return due;
+    }
+
+    static bool ScheduleTriggerExists(string taskId, string scheduledAt)
+    {
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT COUNT(*)
+FROM schedule_task_runs
+WHERE task_id=$taskId
+  AND scheduled_at=$scheduledAt
+  AND trigger_type='schedule';
+""";
+        command.Parameters.AddWithValue("$taskId", taskId);
+        command.Parameters.AddWithValue("$scheduledAt", scheduledAt);
+        return Convert.ToInt64(command.ExecuteScalar() ?? 0L) > 0;
+    }
+
+    static void TriggerScheduleTask(ScheduleTaskDue task, DateTime triggeredAt)
+    {
+        long triggerId = InsertScheduleTaskRun(task.Id, "", "schedule", task.ScheduledAt, triggeredAt, "triggering", "");
+        try
+        {
+            var request = BuildRunRequestFromSchedule(task);
+            var run = CreateRun(request);
+            UpdateScheduleTaskRun(triggerId, run.RunId, "queued", $"queued run {run.RunId}");
+            AppendRunLog(run.RunId, "INFO", $"scheduled task triggered: {task.Id}, scheduledAt={task.ScheduledAt}");
+            Log($"schedule task triggered: task={task.Id}, run={run.RunId}, scheduledAt={task.ScheduledAt}");
+        }
+        catch (Exception ex)
+        {
+            UpdateScheduleTaskRun(triggerId, "", "failed", ex.Message);
+            Log($"schedule task trigger failed: task={task.Id}, scheduledAt={task.ScheduledAt}, {ex}");
+        }
+    }
+
+    static CreateRunRequest BuildRunRequestFromSchedule(ScheduleTaskDue task)
+    {
+        var request = new CreateRunRequest
+        {
+            TransactionCode = task.TCode,
+            TCode = task.TCode,
+            Code = task.TCode,
+            Source = $"schedule:{task.Id}",
+            NotifyTarget = task.NotifyEnabled ? task.NotifyTarget : "",
+            Operator = new OperatorIdentity
+            {
+                Id = "schedule",
+                Name = "Schedule Worker",
+                Dept = "SapRpa"
+            },
+            Params = ParseScheduleParams(task.ParamsJson)
+        };
+
+        string plants = NormalizeCsv(FirstNonEmpty(task.Plants, GetParamValue(request.Params, "plants")));
+        if (!string.IsNullOrWhiteSpace(plants))
+        {
+            request.Params["plants"] = plants;
+            request.Params["plant"] = FirstCsvValue(plants);
+        }
+
+        if (!string.IsNullOrWhiteSpace(task.DefaultBusinessScope))
+            request.Params["factoryGroup"] = task.DefaultBusinessScope;
+
+        return request;
+    }
+
+    static Dictionary<string, string> ParseScheduleParams(string json)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(json))
+            return values;
+
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return values;
+
+            foreach (var prop in doc.RootElement.EnumerateObject())
+            {
+                string value = JsonValueToString(prop.Value);
+                if (!string.IsNullOrWhiteSpace(value))
+                    values[prop.Name] = value;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"parse schedule params failed: {ex.Message}");
+        }
+
+        return values;
+    }
+
+    static long InsertScheduleTaskRun(string taskId, string runId, string triggerType, string scheduledAt, DateTime triggeredAt, string status, string message)
+    {
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+INSERT INTO schedule_task_runs(task_id, run_id, trigger_type, scheduled_at, triggered_at, status, message, created_at)
+VALUES($taskId, $runId, $triggerType, $scheduledAt, $triggeredAt, $status, $message, $createdAt);
+SELECT last_insert_rowid();
+""";
+        string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        command.Parameters.AddWithValue("$taskId", taskId);
+        command.Parameters.AddWithValue("$runId", runId);
+        command.Parameters.AddWithValue("$triggerType", triggerType);
+        command.Parameters.AddWithValue("$scheduledAt", scheduledAt);
+        command.Parameters.AddWithValue("$triggeredAt", triggeredAt.ToString("yyyy-MM-dd HH:mm:ss"));
+        command.Parameters.AddWithValue("$status", status);
+        command.Parameters.AddWithValue("$message", message);
+        command.Parameters.AddWithValue("$createdAt", now);
+        return Convert.ToInt64(command.ExecuteScalar() ?? 0L);
+    }
+
+    static void UpdateScheduleTaskRun(long id, string runId, string status, string message)
+    {
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+UPDATE schedule_task_runs
+SET run_id=CASE WHEN $runId='' THEN run_id ELSE $runId END,
+    status=$status,
+    message=$message
+WHERE id=$id;
+""";
+        command.Parameters.AddWithValue("$id", id);
+        command.Parameters.AddWithValue("$runId", runId);
+        command.Parameters.AddWithValue("$status", status);
+        command.Parameters.AddWithValue("$message", message);
+        command.ExecuteNonQuery();
+    }
+
+    static void UpdateScheduleRunStatusForRun(string runId, string status, string message)
+    {
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+UPDATE schedule_task_runs
+SET status=$status,
+    message=$message
+WHERE run_id=$runId;
+""";
+        command.Parameters.AddWithValue("$runId", runId);
+        command.Parameters.AddWithValue("$status", status);
+        command.Parameters.AddWithValue("$message", message);
+        command.ExecuteNonQuery();
+    }
+
+    static bool TryResolveScheduleSlot(string frequency, string runTime, string anchorText, DateTime now, out DateTime slot)
+    {
+        slot = default;
+        if (!TimeSpan.TryParse(NormalizeScheduleRunTime(runTime), out TimeSpan timeOfDay))
+            return false;
+
+        string normalized = NormalizeScheduleFrequency(frequency);
+        DateTime anchor = ParseDateOrDefault(anchorText, now);
+        slot = normalized switch
+        {
+            "weekly" => ResolveWeeklyScheduleSlot(anchor, now, timeOfDay),
+            "monthly" => ResolveMonthlyScheduleSlot(anchor, now, timeOfDay),
+            "daily" => now.Date.Add(timeOfDay),
+            _ => default
+        };
+
+        return slot != default;
+    }
+
+    static DateTime ResolveWeeklyScheduleSlot(DateTime anchor, DateTime now, TimeSpan timeOfDay)
+    {
+        int diff = ((int)anchor.DayOfWeek - (int)now.DayOfWeek + 7) % 7;
+        DateTime slot = now.Date.AddDays(diff).Add(timeOfDay);
+        if (slot > now.AddDays(1))
+            slot = slot.AddDays(-7);
+        return slot;
+    }
+
+    static DateTime ResolveMonthlyScheduleSlot(DateTime anchor, DateTime now, TimeSpan timeOfDay)
+    {
+        int day = Math.Max(1, Math.Min(anchor.Day, DateTime.DaysInMonth(now.Year, now.Month)));
+        DateTime slot = new DateTime(now.Year, now.Month, day).Add(timeOfDay);
+        if (slot > now)
+        {
+            DateTime previous = now.AddMonths(-1);
+            day = Math.Max(1, Math.Min(anchor.Day, DateTime.DaysInMonth(previous.Year, previous.Month)));
+            slot = new DateTime(previous.Year, previous.Month, day).Add(timeOfDay);
+        }
+        return slot;
+    }
+
+    static DateTime AddOneScheduleMonth(DateTime slot, string anchorText)
+    {
+        DateTime anchor = ParseDateOrDefault(anchorText, slot);
+        DateTime next = slot.AddMonths(1);
+        int day = Math.Max(1, Math.Min(anchor.Day, DateTime.DaysInMonth(next.Year, next.Month)));
+        return new DateTime(next.Year, next.Month, day, slot.Hour, slot.Minute, slot.Second);
+    }
+
+    static DateTime ParseDateOrDefault(string value, DateTime fallback)
+    {
+        return DateTime.TryParse(value, out DateTime parsed) ? parsed : fallback;
     }
 
     static void NormalizeCreateRunParams(CreateRunRequest request)
@@ -3522,7 +4001,8 @@ WHERE child_run_id=$childRunId;
 
         var latestItems = LatestBatchItemsByPlant(items);
         int finishedCount = latestItems.Count(i => IsTerminalRunStatus(i.Status));
-        int total = batchTotalHint > 0 ? batchTotalHint : latestItems.Count;
+        int expectedTotal = LoadParentBatchTotal(parentRunId);
+        int total = Math.Max(expectedTotal, Math.Max(batchTotalHint, latestItems.Count));
         string parentStatus = finishedCount >= total ? ResolveBatchParentStatus(latestItems) : "running";
         string[] plants = latestItems.OrderBy(i => i.BatchIndex).Select(i => i.Plant).Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         string summaryJson = BuildBatchSummaryJson(parentRunId, plants, latestItems, parentStatus);
@@ -3562,7 +4042,24 @@ WHERE run_id=$parentRunId
         int updatedRows = command.ExecuteNonQuery();
 
         if (updatedRows > 0)
+        {
+            CleanupSapGuiSessionAfterRunId(parentRunId);
+            UpdateScheduleRunStatusForRun(parentRunId, parentStatus, message);
             NotifyRunEvent(parentRunId, parentStatus.Equals("success", StringComparison.OrdinalIgnoreCase) ? "success" : "failure", message);
+        }
+    }
+
+    static int LoadParentBatchTotal(string parentRunId)
+    {
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT batch_total
+FROM runs
+WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
+""";
+        command.Parameters.AddWithValue("$runId", parentRunId);
+        return Convert.ToInt32(command.ExecuteScalar() ?? 0);
     }
 
     static bool IsTerminalRunStatus(string status)
@@ -3989,7 +4486,11 @@ WHERE status='running'
                 select.Parameters.AddWithValue("$threshold", threshold);
                 using var reader = select.ExecuteReader();
                 while (reader.Read())
-                    staleRunIds.Add(reader.GetString(0));
+                {
+                    string runId = reader.GetString(0);
+                    if (!IsRunActiveInCurrentProcess(runId))
+                        staleRunIds.Add(runId);
+                }
             }
 
             if (staleRunIds.Count == 0)
@@ -4182,6 +4683,7 @@ WHERE run_id=$runId;
     static void ExecuteQueuedRun(QueuedRunWorkItem item)
     {
         var started = DateTime.UtcNow;
+        using var heartbeat = StartRunHeartbeat(item.RunId);
         try
         {
             var request = JsonSerializer.Deserialize<CreateRunRequest>(item.RequestJson, new JsonSerializerOptions(JsonOptions)
@@ -4201,6 +4703,62 @@ WHERE run_id=$runId;
         {
             Log($"队列执行失败: runId={item.RunId}, {ex}");
             CompleteRun(item.RunId, FailedRunResult(ex.Message, started));
+        }
+    }
+
+    static IDisposable StartRunHeartbeat(string runId)
+    {
+        lock (ActiveRunLock)
+            ActiveExecutingRunIds.Add(runId);
+
+        var stop = new ManualResetEventSlim(false);
+        var thread = new Thread(() =>
+        {
+            while (!stop.Wait(TimeSpan.FromSeconds(QueueHeartbeatIntervalSeconds)))
+                RefreshRunHeartbeat(runId);
+        })
+        {
+            IsBackground = true,
+            Name = $"SapRpaRunHeartbeat-{runId}"
+        };
+        thread.Start();
+        RefreshRunHeartbeat(runId);
+        return new RunHeartbeatScope(runId, stop, thread, CompleteRunHeartbeat);
+    }
+
+    static void CompleteRunHeartbeat(string runId)
+    {
+        lock (ActiveRunLock)
+            ActiveExecutingRunIds.Remove(runId);
+    }
+
+    static bool IsRunActiveInCurrentProcess(string runId)
+    {
+        lock (ActiveRunLock)
+            return ActiveExecutingRunIds.Contains(runId);
+    }
+
+    static void RefreshRunHeartbeat(string runId)
+    {
+        try
+        {
+            using var connection = OpenDatabaseConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+UPDATE runs
+SET locked_at=$lockedAt,
+    locked_by=$lockedBy
+WHERE run_id=$runId
+  AND status='running';
+""";
+            command.Parameters.AddWithValue("$runId", runId);
+            command.Parameters.AddWithValue("$lockedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+            command.Parameters.AddWithValue("$lockedBy", ExecutorId);
+            command.ExecuteNonQuery();
+        }
+        catch (Exception ex)
+        {
+            Log($"refresh run heartbeat failed: runId={runId}, {ex.Message}");
         }
     }
 
@@ -4353,6 +4911,8 @@ VALUES($runId, $type, $name, $path, $size);
         string notifyMessage = status == "success"
             ? "任务执行完成"
             : $"任务执行失败：{FirstNonEmpty(result.Message ?? "", result.SapStatusText ?? "", status)}";
+        CleanupSapGuiSessionAfterRunId(runId);
+        UpdateScheduleRunStatusForRun(runId, status, notifyMessage);
         bool vbsAlreadySentSapDingTalk = HasVbsSapDingTalkNotifyResult(result);
         NotifyRunEvent(runId, status == "success" ? "success" : "failure", notifyMessage, vbsAlreadySentSapDingTalk);
     }
@@ -4374,6 +4934,47 @@ VALUES($runId, $type, $name, $path, $size);
         }
 
         return new TransactionScriptInfo { ScriptFile = $"{tcode.ToUpperInvariant()}.vbs" };
+    }
+
+    static void CleanupSapGuiSessionAfterRunId(string runId)
+    {
+        try
+        {
+            var run = LoadRun(runId, includeDetails: false);
+            if (run == null)
+                return;
+            if (!run.TransactionCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase))
+                return;
+            if (run.RunType.Equals("child", StringComparison.OrdinalIgnoreCase))
+            {
+                AppendRunLog(runId, "INFO", "SAP cleanup deferred to parent batch completion");
+                return;
+            }
+
+            var request = JsonSerializer.Deserialize<CreateRunRequest>(run.RequestJson, new JsonSerializerOptions(JsonOptions)
+            {
+                PropertyNameCaseInsensitive = true
+            }) ?? new CreateRunRequest { TransactionCode = run.TransactionCode };
+            EnsureCreateRunRequestDefaults(request);
+            var query = BuildQueryFromRunRequest(request, new QueuedRunWorkItem
+            {
+                RunId = run.RunId,
+                TransactionCode = run.TransactionCode,
+                RequestJson = run.RequestJson,
+                ScriptFile = run.ScriptFile,
+                RunType = run.RunType,
+                ParentRunId = run.ParentRunId
+            });
+            var pars = BuildParams(query, PrimaryProtocolName);
+            pars.RunId = runId;
+            CleanupSapGuiSessionAfterRun(pars);
+            AppendRunLog(runId, "INFO", "SAP cleanup requested after final ZFI072A completion");
+        }
+        catch (Exception ex)
+        {
+            AppendRunLog(runId, "WARN", $"SAP cleanup after final completion failed: {ex.Message}");
+            Log($"SAP cleanup after final completion failed: runId={runId}, {ex}");
+        }
     }
 
     static RunRecordView ReadRunRecord(SqliteDataReader reader)
@@ -6104,6 +6705,22 @@ WScript.Quit 0
         return null;
     }
 
+    static int ResolveVbsTimeoutSeconds(SapRunParams p, string effectivePlants)
+    {
+        int configured = p.TimeoutSeconds.GetValueOrDefault(0);
+        int fallback = p.TCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) ? 3900 : 300;
+        int timeoutSeconds = configured > 0 ? configured : fallback;
+
+        if (p.TCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase))
+        {
+            timeoutSeconds = Math.Max(timeoutSeconds, 3900);
+            if (NormalizeStringArray(effectivePlants).Contains("9301", StringComparer.OrdinalIgnoreCase))
+                timeoutSeconds = Math.Max(timeoutSeconds, 14_400);
+        }
+
+        return Math.Clamp(timeoutSeconds, 30, 14_400);
+    }
+
     static RunResultRequest ExecuteViaGuiScripting(SapRunParams p)
     {
         var started = DateTime.UtcNow;
@@ -6146,7 +6763,8 @@ WScript.Quit 0
             File.WriteAllText(tmpFile, vbsScript, Encoding.Unicode);
             Log($"执行 VBS: {tmpFile}, tcode={p.TCode}, script={p.Script}, plants={effectivePlants}");
 
-            var psi = new ProcessStartInfo("cscript.exe", $"//T:35 //nologo \"{tmpFile}\"")
+            int timeoutSeconds = ResolveVbsTimeoutSeconds(p, effectivePlants);
+            var psi = new ProcessStartInfo("cscript.exe", $"//T:{timeoutSeconds} //nologo \"{tmpFile}\"")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -6157,7 +6775,9 @@ WScript.Quit 0
             if (proc == null)
                 return FailedRunResult("无法启动 cscript.exe 执行 VBS", started);
 
-            if (!proc.WaitForExit(45_000))
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+            if (!proc.WaitForExit(TimeSpan.FromSeconds(timeoutSeconds + 10)))
             {
                 keepTempFile = true;
                 try
@@ -6169,17 +6789,17 @@ WScript.Quit 0
                     Log($"VBS 超时后终止失败: {killEx.Message}");
                 }
 
-                var timedOut = FailedRunResult($"VBS 执行超过 45 秒，已终止；脚本已保留: {tmpFile}", started);
+                var timedOut = FailedRunResult($"VBS 执行超过 {timeoutSeconds} 秒，已终止；脚本已保留: {tmpFile}", started);
                 timedOut.Logs.Add(new RunLogLine
                 {
                     Level = "ERROR",
-                    Message = $"VBS timeout after 45 seconds; temp script retained: {tmpFile}"
+                    Message = $"VBS timeout after {timeoutSeconds} seconds; temp script retained: {tmpFile}"
                 });
                 return timedOut;
             }
 
-            string stdOut = proc?.StandardOutput.ReadToEnd() ?? string.Empty;
-            string stdErr = proc?.StandardError.ReadToEnd() ?? string.Empty;
+            string stdOut = stdoutTask.GetAwaiter().GetResult();
+            string stdErr = stderrTask.GetAwaiter().GetResult();
             string mergedOutput = string.Join(Environment.NewLine,
                 new[] { stdOut.Trim(), stdErr.Trim() }.Where(s => !string.IsNullOrWhiteSpace(s)));
 
@@ -6252,9 +6872,6 @@ WScript.Quit 0
         }
         finally
         {
-            if (p.TCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase))
-                CleanupSapGuiSessionAfterRun(p);
-
             try
             {
                 if (!keepTempFile && File.Exists(tmpFile))
@@ -6267,13 +6884,16 @@ WScript.Quit 0
     static void CleanupSapGuiSessionAfterRun(SapRunParams p)
     {
         string cleanupFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_cleanup_{Guid.NewGuid():N}.vbs");
+        string cleanupTargetSystem = StrictSapSessionMatching ? p.System : "";
+        string cleanupTargetClient = StrictSapSessionMatching ? p.Client : "";
+        string cleanupTargetUser = StrictSapSessionMatching ? p.User : "";
         string cleanupScript = $"""
 On Error Resume Next
 Dim SapGuiAuto, application, connection, session, i, j, okcd
 Dim targetSystem, targetClient, targetUser, currentSystem, currentClient, currentUser
-targetSystem = "{VbsEscape(p.System)}"
-targetClient = "{VbsEscape(p.Client)}"
-targetUser = "{VbsEscape(p.User)}"
+targetSystem = "{VbsEscape(cleanupTargetSystem)}"
+targetClient = "{VbsEscape(cleanupTargetClient)}"
+targetUser = "{VbsEscape(cleanupTargetUser)}"
 Set SapGuiAuto = GetObject("SAPGUI")
 If Err.Number <> 0 Or Not IsObject(SapGuiAuto) Then
    WScript.Echo "CLEANUP: SAPGUI object not found"
@@ -6296,7 +6916,7 @@ For i = 0 To application.Children.Count - 1
              currentSystem = Trim(CStr(session.Info.SystemName))
              currentClient = Trim(CStr(session.Info.Client))
              currentUser = Trim(CStr(session.Info.User))
-             If UCase(currentSystem) <> UCase(Trim(CStr(targetSystem))) Or currentClient <> Trim(CStr(targetClient)) Or UCase(currentUser) <> UCase(Trim(CStr(targetUser))) Then
+             If (Trim(CStr(targetSystem)) <> "" And UCase(currentSystem) <> UCase(Trim(CStr(targetSystem)))) Or (Trim(CStr(targetClient)) <> "" And currentClient <> Trim(CStr(targetClient))) Or (Trim(CStr(targetUser)) <> "" And UCase(currentUser) <> UCase(Trim(CStr(targetUser)))) Then
                 WScript.Echo "CLEANUP: skip non-target session system=" & currentSystem & ", client=" & currentClient & ", user=" & currentUser & ", transaction=" & session.Info.Transaction
              Else
              Err.Clear
@@ -6867,6 +7487,7 @@ class SapRunParams
     public string CaretPos { get; set; } = "0";
     public string ButtonId { get; set; } = "";
     public string RunId { get; set; } = "";
+    public int? TimeoutSeconds { get; set; }
 }
 
 class SapLocalConfig
@@ -7013,18 +7634,51 @@ class ScheduleTaskRequest
     public JsonElement Plants { get; set; }
     public string PlantsCsv { get; set; } = "";
     public string DefaultBusinessScope { get; set; } = "";
+    public string FactoryGroup { get; set; } = "";
+    public string PlantGroupId { get; set; } = "";
+    public string GroupId { get; set; } = "";
+    public string DefaultPlantGroup { get; set; } = "";
     public string Cron { get; set; } = "";
     public string Frequency { get; set; } = "";
+    public string ScheduleType { get; set; } = "";
+    public string FrequencyCode { get; set; } = "";
     public string Time { get; set; } = "";
     public string RunTime { get; set; } = "";
+    public string ExecTime { get; set; } = "";
+    public string RunAt { get; set; } = "";
+    public string StartTime { get; set; } = "";
+    public JsonElement BusinessAreas { get; set; }
+    public string BusinessAreasCsv { get; set; } = "";
     public bool? Enabled { get; set; }
     public bool? NotifyEnabled { get; set; }
+    public bool? Notify { get; set; }
+    public bool? NotifyStart { get; set; }
     public bool? NotifyOnSuccess { get; set; }
+    public bool? NotifySuccess { get; set; }
     public bool? NotifyOnFailure { get; set; }
+    public bool? NotifyFail { get; set; }
     public string NotifyTarget { get; set; } = "";
     public JsonElement Params { get; set; }
     public string CreatedBy { get; set; } = "";
     public string UpdatedBy { get; set; } = "";
+}
+
+class ScheduleTaskDue
+{
+    public string Id { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string TCode { get; set; } = "";
+    public string Plants { get; set; } = "";
+    public string DefaultBusinessScope { get; set; } = "";
+    public string Cron { get; set; } = "";
+    public string Frequency { get; set; } = "";
+    public string RunTime { get; set; } = "";
+    public bool NotifyEnabled { get; set; }
+    public bool NotifyOnSuccess { get; set; }
+    public bool NotifyOnFailure { get; set; }
+    public string NotifyTarget { get; set; } = "";
+    public string ParamsJson { get; set; } = "";
+    public string ScheduledAt { get; set; } = "";
 }
 
 class CreateRunRequest
@@ -7232,6 +7886,36 @@ class QueuedRunWorkItem
     public string ScriptFile { get; set; } = "";
     public string RunType { get; set; } = "single";
     public string ParentRunId { get; set; } = "";
+}
+
+class RunHeartbeatScope : IDisposable
+{
+    private readonly string runId;
+    private readonly ManualResetEventSlim stop;
+    private readonly Thread thread;
+    private readonly Action<string> onDispose;
+    private bool disposed;
+
+    public RunHeartbeatScope(string runId, ManualResetEventSlim stop, Thread thread, Action<string> onDispose)
+    {
+        this.runId = runId;
+        this.stop = stop;
+        this.thread = thread;
+        this.onDispose = onDispose;
+    }
+
+    public void Dispose()
+    {
+        if (disposed)
+            return;
+
+        disposed = true;
+        stop.Set();
+        if (thread.IsAlive)
+            thread.Join(TimeSpan.FromSeconds(2));
+        stop.Dispose();
+        onDispose(runId);
+    }
 }
 
 class PlantReportAccumulator

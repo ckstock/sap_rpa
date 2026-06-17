@@ -802,6 +802,7 @@
       ],
       logs: [],
       scheduleForm: {
+        id: "",
         name: "周一 ZFI019NL 周损益链路",
         tCode: "ZFI019NL",
         factoryGroup: "PINGHU_ALL",
@@ -811,6 +812,7 @@
         notifyStart: true,
         notifySuccess: true,
         notifyFail: true,
+        enabled: true,
         nameEdited: false
       }
     };
@@ -821,7 +823,8 @@
       plants: code => "/api/config/plants/" + encodeURIComponent(code),
       plantGroups: id => "/api/config/plant-groups/" + encodeURIComponent(id),
       transactionRules: tcode => "/api/config/transaction-rules/" + encodeURIComponent(tcode),
-      notificationRobots: id => "/api/config/notification-robots/" + encodeURIComponent(id)
+      notificationRobots: id => "/api/config/notification-robots/" + encodeURIComponent(id),
+      schedules: id => "/api/schedules/" + encodeURIComponent(id)
     };
     let tCodes = [
       { code: "ZFI072A", name: "采购价月表", module: "FI", stage: "并行启动", script: "ZFI072A.vbs", icon: "circle-dollar-sign", params: ["year", "week", "plants"], factoryRule: "先四个集采工厂，再其他工厂", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 300, retry: 2, enabled: true },
@@ -938,7 +941,7 @@
       { id: "rbt-001", name: "财务通知群", group: "SAP 自动化执行通知", events: ["执行完成", "执行失败"], enabled: true, lastPush: "2026/06/07 08:05", hasWebhook: true, hasSecret: true },
       { id: "rbt-002", name: "IT 运维告警群", group: "SAP 运维告警", events: ["系统异常", "脚本失败"], enabled: true, lastPush: "2026/06/07 14:30", hasWebhook: true, hasSecret: true }
     ];
-    const scheduleTasks = [
+    let scheduleTasks = [
       { id: "SCH-001", name: "周一 ZFI019NL 周损益链路", tCode: "ZFI019NL", factoryGroup: "PINGHU_ALL", plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"], time: "08:00", frequency: "每周一", status: "启用", next: "2026/06/15 08:00" }
     ];
     let history = [
@@ -956,7 +959,8 @@
       tCodes,
       plants,
       factoryGroups,
-      robots
+      robots,
+      scheduleTasks
     }));
 
     const icon = (name, cls = "icon") => `<i class="${cls}" data-lucide="${name}"></i>`;
@@ -980,11 +984,44 @@
       return fallback;
     }
 
+    function formatScheduleFrequency(value) {
+      const map = {
+        daily: "每天",
+        weekly: "每周",
+        monthly: "每月",
+        "每天": "每天",
+        "每周": "每周",
+        "每月": "每月",
+        "每周一": "每周一"
+      };
+      return map[value] || value || "每周";
+    }
+
+    function scheduleFrequencyCode(value) {
+      const map = {
+        "每天": "daily",
+        "每周": "weekly",
+        "每周一": "weekly",
+        "每月": "monthly"
+      };
+      return map[value] || value || "weekly";
+    }
+
+    function formatScheduleStatus(value, enabled = true) {
+      const raw = String(value || "").trim();
+      const lower = raw.toLowerCase();
+      if (enabled === false || ["disabled", "inactive", "stopped", "停用"].includes(lower)) return "停用";
+      if (["pending", "draft", "未落库"].includes(lower)) return "未落库";
+      if (["failed", "error", "异常"].includes(lower)) return "异常";
+      return raw || "启用";
+    }
+
     function restoreFallbackConfig({ includeTransactions = true } = {}) {
       if (includeTransactions) tCodes = clonePlain(fallbackConfig.tCodes);
       plants = clonePlain(fallbackConfig.plants);
       factoryGroups = clonePlain(fallbackConfig.factoryGroups);
       robots = clonePlain(fallbackConfig.robots);
+      scheduleTasks = clonePlain(fallbackConfig.scheduleTasks);
       Object.keys(plantCatalog).forEach(code => delete plantCatalog[code]);
       plants.forEach(plant => { plantCatalog[plant.code] = plant; });
     }
@@ -1089,11 +1126,37 @@
       };
     }
 
+    function normalizeScheduleTaskFromApi(item) {
+      const tCode = String(item.tCode || item.tcode || item.transactionCode || item.code || "").trim().toUpperCase();
+      const factoryGroup = item.factoryGroup || item.plantGroupId || item.groupId || item.defaultPlantGroup || getTCode(tCode)?.defaultPlantGroup || state.scheduleForm.factoryGroup || "";
+      const plantsValue = toArray(item.plants || item.plantCodes || item.factoryCodes || item.params?.plants);
+      const plantsForTask = plantsValue.length ? plantsValue : getDefaultPlantsForTCode(tCode, factoryGroup);
+      const enabled = boolValue(item.enabled ?? item.isActive, true);
+      return {
+        id: String(item.id || item.taskId || item.scheduleId || "").trim(),
+        name: item.name || item.taskName || item.title || defaultScheduleName(tCode),
+        tCode,
+        factoryGroup,
+        factoryGroupName: item.factoryGroupName || item.plantGroupName || "",
+        plants: plantsForTask,
+        businessAreas: toArray(item.businessAreas || item.businessAreaCodes || item.params?.businessAreas),
+        time: item.time || item.execTime || item.runAt || item.startTime || "08:00",
+        frequency: formatScheduleFrequency(item.frequency || item.frequencyText || item.scheduleType || item.cronLabel || "weekly"),
+        frequencyCode: scheduleFrequencyCode(item.frequency || item.scheduleType || "weekly"),
+        status: formatScheduleStatus(item.status, enabled),
+        next: item.next || item.nextRunAt || item.nextFireTime || item.nextExecutionTime || "-",
+        enabled,
+        source: item.source || "api"
+      };
+    }
+
     function applyConfigData(data) {
       const hasPlants = Array.isArray(data.plants);
       const hasGroups = Array.isArray(data.plantGroups);
       const hasRules = Array.isArray(data.transactionRules);
       const hasRobots = Array.isArray(data.notificationRobots);
+      const scheduleSource = data.scheduleTasks || data.schedules || data.scheduledTasks;
+      const hasSchedules = Array.isArray(scheduleSource);
       const nextPlants = hasPlants ? data.plants.map(normalizePlantFromApi).filter(item => item.code) : [];
       const nextGroups = hasGroups ? data.plantGroups.map(normalizePlantGroupFromApi).filter(item => item.id) : [];
       const nextRules = hasRules ? data.transactionRules.map(normalizeTransactionRuleFromApi).filter(item => item.code) : [];
@@ -1111,6 +1174,9 @@
         tCodes = nextRules.length ? Array.from(byCode.values()) : tCodes;
       }
       if (hasRobots) robots = nextRobots;
+      if (hasSchedules) {
+        scheduleTasks = scheduleSource.map(normalizeScheduleTaskFromApi).filter(item => item.id && item.tCode);
+      }
 
       state.config = {
         online: true,
@@ -1813,6 +1879,11 @@
     }
 
     function renderSchedule() {
+      const online = state.bridge.online && state.config.online;
+      const noticeClass = online ? "ok" : "warn";
+      const noticeText = online
+        ? `API 已连接，保存定时任务会写入 ${BRIDGE_API}${CONFIG_API_PATHS.root} 并刷新列表。`
+        : `本机 API 未启动或配置接口不可用，当前仅显示只读示例/缓存列表；保存不会生效，请启动 API 后再保存。${state.config.error ? "原因：" + state.config.error : ""}`;
       return `
         <section class="panel">
           <div class="panel-header">
@@ -1821,16 +1892,26 @@
           </div>
           <div class="panel-body">
             <div class="notice">定时任务真正落地时，需要本机常驻服务或服务器后台调度。静态网页本身不能在无人值守时自动执行 SAP。</div>
+            <div style="height:10px"></div>
+            <div class="notice ${noticeClass}">${esc(noticeText)}</div>
             <div style="height:14px"></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>任务 ID</th><th>任务名称</th><th>事务码</th><th>工厂</th><th>时间</th><th>频率</th><th>状态</th><th>下次执行</th><th>操作</th></tr></thead>
-                <tbody>${scheduleTasks.map(task => `
+                <thead><tr><th>任务 ID</th><th>任务名称</th><th>事务码</th><th>业务范围</th><th>业务范围代码</th><th>工厂</th><th>时间</th><th>频率</th><th>状态</th><th>下次执行</th><th>操作</th></tr></thead>
+                <tbody>${scheduleTasks.length ? scheduleTasks.map(task => `
                   <tr>
-                    <td>${task.id}</td><td>${task.name}</td><td>${task.tCode}</td><td>${task.plants.join(",")}</td>
-                    <td>${task.time}</td><td>${task.frequency}</td><td><span class="tag ok">${task.status}</span></td><td>${task.next}</td>
-                    <td><button class="btn small" data-action="open-schedule-modal">${icon("pencil")}编辑</button></td>
-                  </tr>`).join("")}</tbody>
+                    <td>${esc(task.id)}</td>
+                    <td>${esc(task.name)}</td>
+                    <td>${esc(task.tCode)}</td>
+                    <td>${esc(getScheduleFactoryGroupName(task))}</td>
+                    <td>${renderCodeChips(getScheduleBusinessAreas(task))}</td>
+                    <td>${renderCodeChips(task.plants)}</td>
+                    <td>${esc(task.time || "-")}</td>
+                    <td>${esc(task.frequency || "-")}</td>
+                    <td><span class="tag ${getScheduleStatusClass(task.status)}">${esc(task.status || "-")}</span></td>
+                    <td>${esc(task.next || "-")}</td>
+                    <td><button class="btn small" data-action="open-schedule-modal" data-schedule-id="${esc(task.id)}">${icon("pencil")}编辑</button></td>
+                  </tr>`).join("") : `<tr><td colspan="11" class="empty-cell">暂无定时任务配置</td></tr>`}</tbody>
               </table>
             </div>
           </div>
@@ -2069,6 +2150,72 @@
       return names.length ? esc(names.join(",")) : `<span class="table-hint">-</span>`;
     }
 
+    function getScheduleBusinessAreas(task) {
+      const explicitAreas = toArray(task?.businessAreas);
+      if (explicitAreas.length) return explicitAreas;
+      return getBusinessAreasForSelection(task?.tCode || "", toArray(task?.plants), task?.factoryGroup || state.scheduleForm.factoryGroup);
+    }
+
+    function getScheduleFactoryGroupName(task) {
+      const id = task?.factoryGroup || "";
+      const group = factoryGroups.find(item => item.id === id);
+      if (!group) return id || "-";
+      return legacyBusinessRangeNames[group.name] || businessRangeLabels[group.id] || group.name || id;
+    }
+
+    function getScheduleStatusClass(status) {
+      if (status === "启用") return "ok";
+      if (status === "停用" || status === "未落库" || status === "异常") return "warn";
+      return "info";
+    }
+
+    function buildScheduleConfigPayload() {
+      const tCode = readInputValue("scheduleTCode") || state.scheduleForm.tCode || tCodes[0]?.code || "";
+      const factoryGroup = readInputValue("scheduleFactoryGroup") || state.scheduleForm.factoryGroup || getTCode(tCode)?.defaultPlantGroup || factoryGroups[0]?.id || "";
+      const plantsValue = getDefaultPlantsForTCode(tCode, factoryGroup);
+      const frequency = readInputValue("scheduleFrequency") || state.scheduleForm.frequency || "weekly";
+      const enabled = readInputChecked("scheduleEnabled");
+      const task = {
+        id: state.scheduleForm.id || nextScheduleTaskId(),
+        name: readInputValue("scheduleName") || defaultScheduleName(tCode),
+        tCode,
+        transactionCode: tCode,
+        factoryGroup,
+        plantGroupId: factoryGroup,
+        factoryGroupName: getFactoryGroup(factoryGroup).name,
+        plants: plantsValue,
+        plantsCsv: plantsValue.join(","),
+        businessAreas: getBusinessAreasForSelection(tCode, plantsValue, factoryGroup),
+        businessAreasCsv: getBusinessAreasForSelection(tCode, plantsValue, factoryGroup).join(","),
+        time: readInputValue("scheduleTime") || "08:00",
+        execTime: readInputValue("scheduleTime") || "08:00",
+        frequency,
+        frequencyText: formatScheduleFrequency(frequency),
+        defaultBusinessScope: factoryGroup,
+        params: {
+          plants: plantsValue.join(","),
+          plant: plantsValue[0] || "",
+          businessAreas: getBusinessAreasForSelection(tCode, plantsValue, factoryGroup).join(","),
+          factoryGroup
+        },
+        enabled,
+        status: enabled ? "启用" : "停用",
+        notifyEnabled: readInputChecked("scheduleNotifyStart") || readInputChecked("scheduleNotifySuccess") || readInputChecked("scheduleNotifyFail"),
+        notifyStart: readInputChecked("scheduleNotifyStart"),
+        notifySuccess: readInputChecked("scheduleNotifySuccess"),
+        notifyFail: readInputChecked("scheduleNotifyFail"),
+        notifyOnSuccess: readInputChecked("scheduleNotifySuccess"),
+        notifyOnFailure: readInputChecked("scheduleNotifyFail"),
+        updatedBy: state.user.name || "portal"
+      };
+      return task;
+    }
+
+    function nextScheduleTaskId() {
+      const next = scheduleTasks.length + 1;
+      return "SCH-" + String(next).padStart(3, "0");
+    }
+
     function renderSecretState(value) {
       return `<span class="secret-state">${value ? "已配置（已隐藏）" : "未配置"}</span>`;
     }
@@ -2108,22 +2255,28 @@
       }
       if (state.modal === "schedule") {
         const schedulePlants = getDefaultPlantsForTCode(state.scheduleForm.tCode, state.scheduleForm.factoryGroup);
+        const scheduleAreas = getBusinessAreasForSelection(state.scheduleForm.tCode, schedulePlants, state.scheduleForm.factoryGroup);
         return `
           <div class="modal-backdrop">
             <div class="modal">
-              <div class="modal-header"><strong>新建定时任务</strong><button class="btn small" data-action="close-modal">${icon("x")}关闭</button></div>
+              <div class="modal-header"><strong>${state.scheduleForm.id ? "编辑定时任务" : "新建定时任务"}</strong><button class="btn small" data-action="close-modal">${icon("x")}关闭</button></div>
               <div class="modal-body">
                 <div class="form-grid">
                   <div class="field"><label>事务码</label><select id="scheduleTCode">${tCodes.map(t => `<option value="${t.code}" ${state.scheduleForm.tCode === t.code ? "selected" : ""}>${t.code} - ${t.name}</option>`).join("")}</select></div>
                   <div class="field span-2"><label>任务名称</label><input id="scheduleName" value="${esc(state.scheduleForm.name)}" placeholder="选择事务码后自动带出，可继续补充"></div>
                   <div class="field"><label>业务范围</label><select id="scheduleFactoryGroup">${factoryGroups.map(group => `<option value="${group.id}" ${state.scheduleForm.factoryGroup === group.id ? "selected" : ""}>${getFactoryGroup(group.id).name}</option>`).join("")}</select></div>
                   <div class="field"><label>执行时间</label><input id="scheduleTime" type="time" value="${esc(state.scheduleForm.execTime)}"></div>
-                  <div class="field"><label>执行频率</label><select id="scheduleFrequency"><option value="daily">每天</option><option value="weekly" selected>每周</option><option value="monthly">每月</option></select></div>
+                  <div class="field"><label>执行频率</label><select id="scheduleFrequency"><option value="daily" ${state.scheduleForm.frequency === "daily" ? "selected" : ""}>每天</option><option value="weekly" ${state.scheduleForm.frequency === "weekly" ? "selected" : ""}>每周</option><option value="monthly" ${state.scheduleForm.frequency === "monthly" ? "selected" : ""}>每月</option></select></div>
+                  <div class="field"><label>状态</label><label class="radio-chip"><input id="scheduleEnabled" type="checkbox" ${state.scheduleForm.enabled === false ? "" : "checked"}>启用</label></div>
                   <div class="schedule-plant-preview">
                     <div class="schedule-plant-title">对应工厂</div>
                     ${renderCodeChips(schedulePlants)}
                   </div>
-                  <div class="field span-2"><label>通知规则</label><div class="check-row"><label class="radio-chip"><input type="checkbox" checked>执行前提醒</label><label class="radio-chip"><input type="checkbox" checked>成功通知</label><label class="radio-chip"><input type="checkbox" checked>失败告警</label></div></div>
+                  <div class="schedule-plant-preview">
+                    <div class="schedule-plant-title">业务范围代码</div>
+                    ${renderCodeChips(scheduleAreas)}
+                  </div>
+                  <div class="field span-2"><label>通知规则</label><div class="check-row"><label class="radio-chip"><input id="scheduleNotifyStart" type="checkbox" ${state.scheduleForm.notifyStart === false ? "" : "checked"}>执行前提醒</label><label class="radio-chip"><input id="scheduleNotifySuccess" type="checkbox" ${state.scheduleForm.notifySuccess === false ? "" : "checked"}>成功通知</label><label class="radio-chip"><input id="scheduleNotifyFail" type="checkbox" ${state.scheduleForm.notifyFail === false ? "" : "checked"}>失败告警</label></div></div>
                 </div>
               </div>
               <div class="modal-footer"><button class="btn" data-action="close-modal">取消</button><button class="btn primary" data-action="save-schedule">${icon("save")}保存任务</button></div>
@@ -2343,6 +2496,20 @@
         state.scheduleForm.name = scheduleName.value;
         state.scheduleForm.nameEdited = scheduleName.value.trim() !== defaultScheduleName(state.scheduleForm.tCode);
       });
+      const scheduleTime = document.getElementById("scheduleTime");
+      if (scheduleTime) scheduleTime.addEventListener("input", () => { state.scheduleForm.execTime = scheduleTime.value; });
+      const scheduleFrequency = document.getElementById("scheduleFrequency");
+      if (scheduleFrequency) scheduleFrequency.addEventListener("change", () => { state.scheduleForm.frequency = scheduleFrequency.value; });
+      const scheduleEnabled = document.getElementById("scheduleEnabled");
+      if (scheduleEnabled) scheduleEnabled.addEventListener("change", () => { state.scheduleForm.enabled = scheduleEnabled.checked; });
+      [
+        ["scheduleNotifyStart", "notifyStart"],
+        ["scheduleNotifySuccess", "notifySuccess"],
+        ["scheduleNotifyFail", "notifyFail"]
+      ].forEach(([id, key]) => {
+        const input = document.getElementById(id);
+        if (input) input.addEventListener("change", () => { state.scheduleForm[key] = input.checked; });
+      });
       const ruleGroup = document.getElementById("cfgRuleDefaultGroup");
       if (ruleGroup) ruleGroup.addEventListener("change", () => setRulePlantInput(getDefaultPlantsForTCode(readInputValue("cfgRuleCode"), ruleGroup.value)));
       document.querySelectorAll("[data-action]").forEach(el => el.addEventListener("click", () => handleAction(el)));
@@ -2392,9 +2559,9 @@
         return render();
       }
       if (action === "open-register-help") { state.modal = "register"; return render(); }
-      if (action === "open-schedule-modal") { openScheduleModal(); return render(); }
+      if (action === "open-schedule-modal") { openScheduleModal(el.dataset.scheduleId || ""); return render(); }
       if (action === "close-modal") { state.modal = null; return render(); }
-      if (action === "save-schedule") { state.modal = null; toast("定时任务已保存到本地示例配置", "ok"); return render(); }
+      if (action === "save-schedule") return saveScheduleFromModal();
       if (action === "open-config-modal") return openConfigModal(el.dataset.kind, el.dataset.mode, el.dataset.id || "");
       if (action === "save-config") return saveConfigFromModal(el.dataset.kind, el.dataset.mode, el.dataset.id || "");
       if (action === "delete-config") return deleteConfigItem(el.dataset.kind, el.dataset.id || "");
@@ -2409,15 +2576,108 @@
       if (action === "view-log") return openRunLog(el.dataset.run);
     }
 
-    function openScheduleModal() {
-      if (!state.scheduleForm.tCode) state.scheduleForm.tCode = tCodes[0]?.code || "";
-      state.scheduleForm.plants = getDefaultPlantsForTCode(state.scheduleForm.tCode, state.scheduleForm.factoryGroup);
-      const currentDefault = defaultScheduleName(state.scheduleForm.tCode);
-      if (!state.scheduleForm.nameEdited || !state.scheduleForm.name || state.scheduleForm.name.includes("周损益链路")) {
-        state.scheduleForm.name = currentDefault;
-        state.scheduleForm.nameEdited = false;
+    function openScheduleModal(id = "") {
+      const task = id ? scheduleTasks.find(item => item.id === id) : null;
+      if (task) {
+        state.scheduleForm = {
+          id: task.id,
+          name: task.name,
+          tCode: task.tCode,
+          factoryGroup: task.factoryGroup || getTCode(task.tCode)?.defaultPlantGroup || factoryGroups[0]?.id || "",
+          plants: toArray(task.plants),
+          execTime: task.time || "08:00",
+          frequency: scheduleFrequencyCode(task.frequencyCode || task.frequency),
+          notifyStart: task.notifyStart !== false,
+          notifySuccess: task.notifySuccess !== false,
+          notifyFail: task.notifyFail !== false,
+          enabled: task.enabled !== false && task.status !== "停用",
+          nameEdited: true
+        };
+      } else {
+        const tCode = state.scheduleForm.tCode || tCodes[0]?.code || "";
+        const defaultGroup = getTCode(tCode)?.defaultPlantGroup || state.scheduleForm.factoryGroup || factoryGroups[0]?.id || "";
+        state.scheduleForm = {
+          id: "",
+          name: defaultScheduleName(tCode),
+          tCode,
+          factoryGroup: defaultGroup,
+          plants: getDefaultPlantsForTCode(tCode, defaultGroup),
+          execTime: state.scheduleForm.execTime || "08:00",
+          frequency: state.scheduleForm.frequency || "weekly",
+          notifyStart: true,
+          notifySuccess: true,
+          notifyFail: true,
+          enabled: true,
+          nameEdited: false
+        };
       }
+      state.scheduleForm.plants = getDefaultPlantsForTCode(state.scheduleForm.tCode, state.scheduleForm.factoryGroup);
       state.modal = "schedule";
+    }
+
+    async function saveScheduleFromModal() {
+      if (!state.bridge.online || !state.config.online) {
+        toast("保存失败：本机 API 未启动或配置接口不可用，定时任务没有落库", "err");
+        return;
+      }
+      try {
+        const payload = buildScheduleConfigPayload();
+        if (!payload.tCode) throw new Error("缺少事务码");
+        if (!payload.factoryGroup) throw new Error("缺少业务范围");
+        await saveScheduleTask(payload);
+        state.modal = null;
+        await refreshConfigData({ silent: true });
+        if (!scheduleTasks.some(item => item.id === payload.id)) {
+          upsertScheduleTaskLocal(payload);
+        }
+        toast("定时任务已保存并刷新列表", "ok");
+        render();
+      } catch (err) {
+        toast("定时任务保存失败：" + err.message, "err");
+      }
+    }
+
+    async function saveScheduleTask(payload) {
+      try {
+        await bridgeFetch(CONFIG_API_PATHS.schedules(payload.id), {
+          method: "PUT",
+          body: JSON.stringify(payload)
+        });
+        return;
+      } catch (err) {
+        if (!/404|not found/i.test(err.message || "")) throw err;
+      }
+      const currentConfig = await bridgeFetch(CONFIG_API_PATHS.root);
+      const currentSchedules = Array.isArray(currentConfig.scheduleTasks)
+        ? currentConfig.scheduleTasks
+        : Array.isArray(currentConfig.schedules)
+          ? currentConfig.schedules
+          : Array.isArray(currentConfig.scheduledTasks)
+            ? currentConfig.scheduledTasks
+            : scheduleTasks;
+      const nextSchedules = currentSchedules.filter(item => String(item.id || item.taskId || item.scheduleId || "") !== payload.id);
+      nextSchedules.push(payload);
+      await bridgeFetch(CONFIG_API_PATHS.root, {
+        method: "POST",
+        body: JSON.stringify({
+          ...currentConfig,
+          scheduleTasks: nextSchedules,
+          schedules: nextSchedules,
+          scheduledTasks: nextSchedules
+        })
+      });
+    }
+
+    function upsertScheduleTaskLocal(payload) {
+      const normalized = normalizeScheduleTaskFromApi({
+        ...payload,
+        frequency: payload.frequencyText,
+        status: payload.status,
+        next: payload.next || "-"
+      });
+      const index = scheduleTasks.findIndex(item => item.id === normalized.id);
+      if (index >= 0) scheduleTasks[index] = normalized;
+      else scheduleTasks.push(normalized);
     }
 
     function openConfigModal(kind, mode, id = "") {
