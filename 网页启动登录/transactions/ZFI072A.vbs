@@ -902,8 +902,7 @@ Err.Clear
 WScript.Echo "OUTPUT_FILE="
 sapCloseOk = CloseSapSession()
 If Not sapCloseOk Then
-   EmitError "SAP GUI cleanup did not confirm /nex close"
-   WScript.Quit 11
+   WScript.Echo "WARN: SAP GUI cleanup did not confirm /nex close"
 End If
 WScript.Echo "INFO: transaction script executed"
 WScript.Quit 0

@@ -468,6 +468,7 @@
       <div class="nav-group">
         <button class="nav-main" type="button" data-target="frontend"><span class="num">3</span><span class="title">前端页面</span><span class="chev">›</span></button>
         <div class="nav-sub">
+          <a href="#frontend-communication">页面通信</a>
           <a href="#frontend-config">配置读取</a>
           <a href="#frontend-submit">任务提交</a>
         </div>
@@ -623,6 +624,36 @@
           <tr><td>输出文件</td><td><code>run_files</code></td><td>VBS 或执行器发现导出文件后写入数据库，页面在 run 详情中展示文件名、路径、类型和大小。</td></tr>
         </tbody>
       </table>
+      <h3 id="launcher-log-box">黑底日志框的数据合并</h3>
+      <p>页面黑底日志框是前端渲染组件，不等同于浏览器本地持久化。它通常维护 <code>state.logs</code> 或 <code>history</code> 这类内存数组，用于立刻显示“已提交”“排队中”“正在查询”等前端即时消息；真正的执行过程、SAP 状态栏、VBS stdout、文件和通知结果由 SapWebLauncher 写入 SQLite，再通过 <code>GET /api/runs/{runId}</code> 返回给页面。</p>
+      <div class="code-block" data-lang="前端轮询伪代码">const state = {
+  currentRunId: null,
+  logs: [],
+  history: []
+};
+
+async function pollRun(runId) {
+  const response = await fetch(`http://127.0.0.1:17890/api/runs/${runId}`);
+  const data = await response.json();
+  const apiLogs = [
+    ...(data.run?.logs || []),
+    ...(data.logs || []),
+    ...(data.resultLogs || [])
+  ];
+  state.logs = mergeLogs(state.history, apiLogs);
+  renderLogPanel(state.logs);
+}</div>
+      <table>
+        <thead>
+          <tr><th>数据层</th><th>保存位置</th><th>刷新后的表现</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>前端即时日志</td><td><code>state.logs</code> / <code>history</code> 内存变量</td><td>只在当前页面生命周期内存在，用于提升提交后的即时反馈；刷新页面后不会单独保留。</td></tr>
+          <tr><td>后端执行日志</td><td>SQLite <code>run_logs</code> 及 run 详情 API</td><td>刷新后页面按 <code>runId</code> 或历史列表重新调用 API 读取，重新渲染到黑底日志框。</td></tr>
+          <tr><td>汇总结果日志</td><td><code>summary_json</code>、<code>resultLogs</code>、<code>run_batch_items</code></td><td>parent run 可合并 child run 结果，展示多工厂成功数、失败工厂、输出文件和通知状态。</td></tr>
+        </tbody>
+      </table>
+      <div class="solution-box"><strong>渲染规则：</strong>页面定时轮询 <code>GET /api/runs/{runId}</code>，把 <code>run.logs</code>、<code>logs</code>、<code>resultLogs</code> 与本轮前端即时日志去重合并，再按时间顺序渲染到黑底日志框。它不是把日志永久保存到浏览器；持久状态以 SQLite 和 API 返回为准。</div>
       <div class="warning-box"><strong>运行方式：</strong>SAP GUI 自动化不能作为纯 Session 0 Windows Service 运行。生产建议用任务计划程序，在固定 Windows 执行账号登录后启动 <code>SapWebLauncher.exe --serve</code>。</div>
     </section>
 
@@ -632,6 +663,15 @@
         <h2>前端 index.html 设计</h2>
       </div>
       <p><code>index.html</code> 是 V2 的本地操作台入口。页面本身不直接维护生产主数据，而是优先通过本地 API 读取 SQLite 配置；当 API 不在线时可展示示例或本地 fallback 数据，但上线执行必须以 API 返回为准。</p>
+
+      <h3 id="frontend-communication">页面与 SapWebLauncher 通信机制</h3>
+      <p>页面可以直接以 <code>file://</code> 方式打开，但执行能力不在浏览器里。浏览器 JavaScript 通过 <code>http://127.0.0.1:17890</code> 调用本机 API，提交任务、查询 run、读取配置和展示历史；SapWebLauncher 是运行在本机 Windows 执行账号下的 C# / .NET HTTP 服务，负责访问 SQLite、调度 SAP GUI、执行 VBS 和发送 DingTalk 通知。</p>
+      <div class="priority">
+        <div class="item"><b>浏览器页面</b>只负责表单、按钮、日志框和结果展示；页面不直接连接 SQLite，不保存 SAP 密码，也不直接控制 SAP GUI。</div>
+        <div class="item"><b>本机 API</b>由 SapWebLauncher 监听 <code>127.0.0.1:17890</code>，接收 <code>POST /api/runs</code>，并通过 <code>GET /api/runs/{runId}</code> 返回状态、日志、文件和汇总。</div>
+        <div class="item"><b>状态源</b>SQLite 是运行状态和审计数据的来源，包含 <code>runs</code>、<code>run_logs</code>、<code>run_files</code>、<code>run_batch_items</code> 等表；页面刷新后仍从 API 读取这些数据恢复展示。</div>
+      </div>
+      <div class="tip-box"><strong>通信方向：</strong>进度和日志不是 SapWebLauncher 主动 <code>POST</code> 回页面。浏览器页面没有内置 HTTP 回调服务，页面通过定时 <code>GET</code> 轮询 API 获取最新 run 状态。</div>
 
       <h3 id="frontend-config">通过本地 API 读取配置</h3>
       <table>
