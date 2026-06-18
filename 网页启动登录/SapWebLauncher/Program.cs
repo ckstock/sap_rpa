@@ -2864,14 +2864,10 @@ WHERE id=$id;
     static object LoadExecutionReport(HttpListenerRequest request)
     {
         InitializeDatabase(seedFromScripts: true);
-        DateTime to = ParseReportDate(request.QueryString["to"], DateTime.Now);
-        DateTime from = ParseReportDate(request.QueryString["from"], to.AddDays(-30));
+        DateTime to = ParseReportDate(request.QueryString["to"], DateTime.Now, isEndDate: true);
+        DateTime from = ParseReportDate(request.QueryString["from"], to.AddDays(-30), isEndDate: false);
         if (from > to)
             (from, to) = (to, from);
-
-        double savedMinutesPerSuccess = 20;
-        if (double.TryParse(request.QueryString["savedMinutesPerSuccess"], out double parsedSavedMinutes))
-            savedMinutesPerSuccess = Math.Max(0, parsedSavedMinutes);
 
         string fromText = from.ToString("yyyy-MM-dd HH:mm:ss");
         string toText = to.ToString("yyyy-MM-dd HH:mm:ss");
@@ -2881,13 +2877,15 @@ WHERE id=$id;
         long successRuns = 0;
         long failedRuns = 0;
         double avgDurationSeconds = 0;
+        double totalDurationSeconds = 0;
         using (var summary = connection.CreateCommand())
         {
             summary.CommandText = """
 SELECT COUNT(*),
        SUM(CASE WHEN status='success' THEN 1 ELSE 0 END),
        SUM(CASE WHEN status IN ('failed', 'partial_failed') THEN 1 ELSE 0 END),
-       AVG(CASE WHEN duration_ms > 0 THEN duration_ms / 1000.0 ELSE NULL END)
+       AVG(CASE WHEN duration_ms > 0 THEN duration_ms / 1000.0 ELSE NULL END),
+       SUM(CASE WHEN duration_ms > 0 THEN duration_ms / 1000.0 ELSE 0 END)
 FROM runs
 WHERE COALESCE(NULLIF(finished_at, ''), queued_at) >= $from
   AND COALESCE(NULLIF(finished_at, ''), queued_at) <= $to
@@ -2903,6 +2901,7 @@ WHERE COALESCE(NULLIF(finished_at, ''), queued_at) >= $from
                 successRuns = reader.IsDBNull(1) ? 0 : reader.GetInt64(1);
                 failedRuns = reader.IsDBNull(2) ? 0 : reader.GetInt64(2);
                 avgDurationSeconds = reader.IsDBNull(3) ? 0 : Math.Round(reader.GetDouble(3), 1);
+                totalDurationSeconds = reader.IsDBNull(4) ? 0 : Math.Round(reader.GetDouble(4), 1);
             }
         }
 
@@ -2915,7 +2914,8 @@ SELECT r.transaction_code,
        COUNT(*) AS total_runs,
        SUM(CASE WHEN r.status='success' THEN 1 ELSE 0 END) AS success_runs,
        SUM(CASE WHEN r.status IN ('failed', 'partial_failed') THEN 1 ELSE 0 END) AS failed_runs,
-       AVG(CASE WHEN r.duration_ms > 0 THEN r.duration_ms / 1000.0 ELSE NULL END) AS avg_duration_seconds
+       AVG(CASE WHEN r.duration_ms > 0 THEN r.duration_ms / 1000.0 ELSE NULL END) AS avg_duration_seconds,
+       SUM(CASE WHEN r.duration_ms > 0 THEN r.duration_ms / 1000.0 ELSE 0 END) AS total_duration_seconds
 FROM runs r
 LEFT JOIN transactions t ON t.tcode = r.transaction_code
 WHERE COALESCE(NULLIF(r.finished_at, ''), r.queued_at) >= $from
@@ -2943,7 +2943,7 @@ LIMIT 20;
                     failedRuns = txFailed,
                     successRate = txTotal == 0 ? 0 : Math.Round(txSuccess * 1.0 / txTotal, 4),
                     avgDurationSeconds = reader.IsDBNull(5) ? 0 : Math.Round(reader.GetDouble(5), 1),
-                    savedHours = Math.Round(txSuccess * savedMinutesPerSuccess / 60.0, 2)
+                    totalDurationSeconds = reader.IsDBNull(6) ? 0 : Math.Round(reader.GetDouble(6), 1)
                 });
             }
         }
@@ -3020,7 +3020,7 @@ WHERE LOWER(rp.param_key) IN ('plants', 'plant', 'werks', 'werkslist', 'plantlis
                 failedRuns = p.Value.FailedRuns,
                 successRate = p.Value.TotalRuns == 0 ? 0 : Math.Round(p.Value.SuccessRuns * 1.0 / p.Value.TotalRuns, 4),
                 avgDurationSeconds = p.Value.DurationCount == 0 ? 0 : Math.Round(p.Value.DurationTotalMs / 1000.0 / p.Value.DurationCount, 1),
-                savedHours = Math.Round(p.Value.SuccessRuns * savedMinutesPerSuccess / 60.0, 2)
+                totalDurationSeconds = Math.Round(p.Value.DurationTotalMs / 1000.0, 1)
             })
             .ToList();
 
@@ -3032,7 +3032,6 @@ WHERE LOWER(rp.param_key) IN ('plants', 'plant', 'werks', 'werkslist', 'plantlis
             period = new { from = fromText, to = toText },
             assumptions = new
             {
-                savedMinutesPerSuccess,
                 grain = "transaction_execution",
                 includedRunTypes = new[] { "single", "child" },
                 includedStatuses = new[] { "success", "failed", "partial_failed" },
@@ -3046,19 +3045,27 @@ WHERE LOWER(rp.param_key) IN ('plants', 'plant', 'werks', 'werkslist', 'plantlis
                 failedRuns,
                 successRate = totalRuns == 0 ? 0 : Math.Round(successRuns * 1.0 / totalRuns, 4),
                 avgDurationSeconds,
-                savedHours = Math.Round(successRuns * savedMinutesPerSuccess / 60.0, 2)
+                totalDurationSeconds
             },
             transactionRanking,
             plantStats
         };
     }
 
-    static DateTime ParseReportDate(string? value, DateTime fallback)
+    static DateTime ParseReportDate(string? value, DateTime fallback, bool isEndDate)
     {
         if (string.IsNullOrWhiteSpace(value))
             return fallback;
 
-        return DateTime.TryParse(value, out DateTime parsed) ? parsed : fallback;
+        if (!DateTime.TryParse(value, out DateTime parsed))
+            return fallback;
+
+        string trimmed = value.Trim();
+        bool dateOnly = !trimmed.Contains(':') && !trimmed.Contains('T') && !trimmed.Contains(' ');
+        if (dateOnly)
+            return isEndDate ? parsed.Date.AddDays(1).AddTicks(-1) : parsed.Date;
+
+        return parsed;
     }
 
     static object LoadScheduleTasks()

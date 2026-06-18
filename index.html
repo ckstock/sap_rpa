@@ -1624,7 +1624,7 @@
               ${reportMetric("执行总次数", stats.total)}
               ${reportMetric("成功率", stats.successRate + "%")}
               ${reportMetric("平均耗时", stats.avgDuration)}
-              ${reportMetric("节省工时", stats.savedHours)}
+              ${reportMetric("累计耗时", stats.totalDuration)}
             </div>
             ${renderTCodeRankTable(stats.tcodes)}
           </div>
@@ -1641,11 +1641,12 @@
       const total = Number(summary.totalRuns || 0);
       const success = Number(summary.successRuns || 0);
       const ranking = Array.isArray(report?.transactionRanking) ? report.transactionRanking : [];
+      const totalDurationSeconds = Number(summary.totalDurationSeconds || 0);
       return {
         total,
         successRate: formatRate(summary.successRate),
         avgDuration: formatSeconds(summary.avgDurationSeconds),
-        savedHours: formatNumber(summary.savedHours),
+        totalDuration: formatSeconds(totalDurationSeconds),
         tcodes: ranking.map(row => ({
           code: row.transactionCode || "-",
           name: row.transactionName || row.transactionCode || "-",
@@ -1665,7 +1666,14 @@
 
     function formatSeconds(value) {
       const seconds = Number(value || 0);
-      return seconds > 0 ? Math.round(seconds) + "s" : "-";
+      if (!Number.isFinite(seconds) || seconds <= 0) return "-";
+      const rounded = Math.round(seconds);
+      if (rounded < 60) return rounded + "秒";
+      const hours = Math.floor(rounded / 3600);
+      const minutes = Math.floor((rounded % 3600) / 60);
+      const remainSeconds = rounded % 60;
+      if (hours > 0) return `${hours}小时${String(minutes).padStart(2, "0")}分`;
+      return `${minutes}分${String(remainSeconds).padStart(2, "0")}秒`;
     }
 
     function formatNumber(value) {
