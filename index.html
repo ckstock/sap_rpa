@@ -108,11 +108,6 @@
     }
     .nav button:hover { background: var(--nav-soft); color: #fff; }
     .nav button.active { background: var(--blue); color: #fff; box-shadow: none; }
-    .sidebar-footer {
-      margin-top: auto; padding: 16px;
-      border-top: 1px solid rgba(255,255,255,.1);
-      color: #94a3b8; font-size: 12px; line-height: 1.7;
-    }
     .main { min-width: 0; padding: 18px 22px 32px; }
     .topbar {
       min-height: 58px;
@@ -751,7 +746,6 @@
       .app-shell { grid-template-columns: 1fr; }
       .sidebar { position: static; height: auto; }
       .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .sidebar-footer { display: none; }
       .main { padding: 12px; }
       .topbar { align-items: flex-start; flex-direction: column; padding: 12px; }
       .quick-actions, .workflow-map, .grid.cols-4, .transaction-grid { grid-template-columns: 1fr; }
@@ -952,9 +946,9 @@
     const pages = {
       dashboard: "工作台",
       execute: "执行任务",
+      reports: "统计报表",
       schedule: "定时任务",
-      config: "基础配置",
-      schedule: "定时任务"
+      config: "基础配置"
     };
     const fallbackConfig = JSON.parse(JSON.stringify({
       tCodes,
@@ -1083,6 +1077,22 @@
       };
     }
 
+    function filterKnownPlantCodes(values, activePlantCodes) {
+      const list = toArray(values);
+      if (!activePlantCodes) return list;
+      return list.filter(code => activePlantCodes.has(String(code || "").trim().toUpperCase()));
+    }
+
+    function pruneInactivePlantRefs(item, activePlantCodes) {
+      return {
+        ...item,
+        plants: filterKnownPlantCodes(item.plants, activePlantCodes),
+        zfi072Plants: filterKnownPlantCodes(item.zfi072Plants, activePlantCodes),
+        zco019Plants: filterKnownPlantCodes(item.zco019Plants, activePlantCodes),
+        fixedPlants: filterKnownPlantCodes(item.fixedPlants, activePlantCodes)
+      };
+    }
+
     function normalizeTransactionRuleFromApi(item) {
       const code = String(item.code || item.tcode || item.tCode || item.transactionCode || "").trim().toUpperCase();
       const base = getTCode(code) || {};
@@ -1158,9 +1168,10 @@
       const hasRobots = Array.isArray(data.notificationRobots);
       const scheduleSource = data.scheduleTasks || data.schedules || data.scheduledTasks;
       const hasSchedules = Array.isArray(scheduleSource);
-      const nextPlants = hasPlants ? data.plants.map(normalizePlantFromApi).filter(item => item.code) : [];
-      const nextGroups = hasGroups ? data.plantGroups.map(normalizePlantGroupFromApi).filter(item => item.id) : [];
-      const nextRules = hasRules ? data.transactionRules.map(normalizeTransactionRuleFromApi).filter(item => item.code) : [];
+      const nextPlants = hasPlants ? data.plants.map(normalizePlantFromApi).filter(item => item.code && item.enabled !== false) : [];
+      const activePlantCodes = hasPlants ? new Set(nextPlants.map(item => item.code)) : null;
+      const nextGroups = hasGroups ? data.plantGroups.map(normalizePlantGroupFromApi).filter(item => item.id).map(item => pruneInactivePlantRefs(item, activePlantCodes)) : [];
+      const nextRules = hasRules ? data.transactionRules.map(normalizeTransactionRuleFromApi).filter(item => item.code).map(item => pruneInactivePlantRefs(item, activePlantCodes)) : [];
       const nextRobots = hasRobots ? data.notificationRobots.map(normalizeRobotFromApi).filter(item => item.id) : [];
 
       if (hasPlants) {
@@ -1544,15 +1555,11 @@
               ${navButton("schedule", "calendar-clock", "定时任务")}
               ${navButton("config", "sliders-horizontal", "基础配置")}
             </nav>
-            <div class="sidebar-footer">
-              <div>当前重点：事务码登录 + SAP GUI Script 执行</div>
-              <div>SAP 连接信息只保存在本机执行器</div>
-            </div>
           </aside>
           <main class="main">
             <header class="topbar">
               <div>
-                <div class="breadcrumb">首页 / <span class="page-title">${pages[state.page]}</span></div>
+                <div class="breadcrumb">首页 / <span class="page-title">${pages[state.page] || ""}</span></div>
                 <div class="panel-sub">${renderPageSubTitle()}</div>
               </div>
               <div class="top-actions">
@@ -1579,8 +1586,8 @@
         dashboard: "",
         execute: "选择事务码和工厂参数，提交到后台串行队列。",
         reports: "",
-        schedule: "只保留核心周损益任务，后续由常驻服务或后台调度承接。",
-        config: "维护工厂、业务范围、事务码、工厂规则和通知机器人参数。"
+        schedule: "",
+        config: "维护工厂、业务范围、事务码和工厂规则。"
       };
       return subtitles[state.page] || "";
     }
@@ -1624,7 +1631,7 @@
               ${reportMetric("执行总次数", stats.total)}
               ${reportMetric("成功率", stats.successRate + "%")}
               ${reportMetric("平均耗时", stats.avgDuration)}
-              ${reportMetric("累计耗时", stats.totalDuration)}
+              ${reportMetric("节省工时", stats.totalDuration)}
             </div>
             ${renderTCodeRankTable(stats.tcodes)}
           </div>
@@ -1970,12 +1977,10 @@
       return `
         <section class="panel">
           <div class="panel-header">
-            <div><div class="panel-title">${icon("calendar-clock")}定时自动执行配置</div><div class="panel-sub">当前只保留核心周损益任务，避免页面功能先于执行能力膨胀。</div></div>
+            <div><div class="panel-title">${icon("calendar-clock")}定时自动执行配置</div></div>
             <button class="btn primary" data-action="open-schedule-modal">${icon("plus")}新建定时任务</button>
           </div>
           <div class="panel-body">
-            <div class="notice">定时任务真正落地时，需要本机常驻服务或服务器后台调度。静态网页本身不能在无人值守时自动执行 SAP。</div>
-            <div style="height:10px"></div>
             <div class="notice ${noticeClass}">${esc(noticeText)}</div>
             <div style="height:14px"></div>
             <div class="table-wrap">
@@ -2003,6 +2008,7 @@
     }
 
     function renderConfig() {
+      if (state.activeConfigTab === "robot") state.activeConfigTab = "plant";
       return `
         <section class="panel">
           <div class="panel-header">
@@ -2018,7 +2024,6 @@
               ${tabButton("group", "layers", "业务范围配置")}
               ${tabButton("tcode", "terminal", "事务码配置")}
               ${tabButton("rule", "git-branch", "事务码与工厂/业务范围规则")}
-              ${tabButton("robot", "message-circle", "通知机器人")}
             </div>
             ${renderConfigTab()}
           </div>
