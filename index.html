@@ -783,6 +783,7 @@
       bridge: { online: false, lastChecked: "", database: "", queueMode: "" },
       queue: { online: false, runningRunId: "", queuedCount: null, queuePosition: null, runsAhead: null, workItemsAhead: null, lastChecked: "" },
       config: { online: false, source: "fallback", lastLoaded: "", error: "" },
+      report: { online: false, loading: false, from: "", to: "", summary: null, transactionRanking: [], error: "" },
       modal: null,
       form: {
         account: "",
@@ -1390,6 +1391,7 @@
 
         await refreshConfigData({ silent: true });
         await refreshQueueStatus({ silent: true });
+        await refreshReportData({ silent: true, renderAfter: false });
 
         const runData = await bridgeFetch("/api/runs?limit=20");
         if (Array.isArray(runData.runs)) {
@@ -1404,10 +1406,86 @@
         state.bridge.lastChecked = new Date().toLocaleTimeString("zh-CN", { hour12: false });
         state.queue = { online: false, runningRunId: "", queuedCount: null, queuePosition: null, runsAhead: null, workItemsAhead: null, lastChecked: state.bridge.lastChecked };
         state.config = { online: false, source: "fallback", lastLoaded: state.bridge.lastChecked, error: err.message || "本机 API 不可用" };
+        clearReportData("本机 API 不可用，请启动 API");
         restoreFallbackConfig();
         if (!silent) toast("本机执行器未启动，继续使用协议唤醒模式", "warn");
         render();
       }
+    }
+
+    function reportDefaultRange() {
+      const toDate = new Date();
+      const fromDate = new Date(toDate);
+      fromDate.setDate(fromDate.getDate() - 30);
+      return { from: formatDateInputValue(fromDate), to: formatDateInputValue(toDate) };
+    }
+
+    function formatDateInputValue(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function getReportRangeFromState() {
+      const defaults = reportDefaultRange();
+      return {
+        from: state.report.from || defaults.from,
+        to: state.report.to || defaults.to
+      };
+    }
+
+    function getReportRangeFromInputs() {
+      const defaults = getReportRangeFromState();
+      return {
+        from: readInputValue("reportStart") || defaults.from,
+        to: readInputValue("reportEnd") || defaults.to
+      };
+    }
+
+    function buildReportQuery(range) {
+      const params = new URLSearchParams();
+      if (range.from) params.set("from", `${range.from} 00:00:00`);
+      if (range.to) params.set("to", `${range.to} 23:59:59`);
+      const query = params.toString();
+      return "/api/reports/execution" + (query ? "?" + query : "");
+    }
+
+    async function refreshReportData({ silent = true, renderAfter = true, from = "", to = "" } = {}) {
+      const range = from || to ? { from, to } : getReportRangeFromState();
+      state.report = { ...state.report, loading: true, from: range.from, to: range.to, error: "" };
+      try {
+        const data = await bridgeFetch(buildReportQuery(range));
+        state.report = {
+          online: true,
+          loading: false,
+          from: data.period?.from ? String(data.period.from).slice(0, 10) : range.from,
+          to: data.period?.to ? String(data.period.to).slice(0, 10) : range.to,
+          summary: data.summary || null,
+          transactionRanking: Array.isArray(data.transactionRanking) ? data.transactionRanking : [],
+          error: ""
+        };
+        if (!silent) toast("报表数据已刷新", "ok");
+      } catch (err) {
+        clearReportData(err.message || "本机 API 不可用，请启动 API");
+        if (!silent) toast("报表接口不可用，请启动 API", "warn");
+      } finally {
+        state.report.loading = false;
+        if (renderAfter) render();
+      }
+    }
+
+    function clearReportData(error = "") {
+      const range = getReportRangeFromState();
+      state.report = {
+        online: false,
+        loading: false,
+        from: range.from,
+        to: range.to,
+        summary: null,
+        transactionRanking: [],
+        error
+      };
     }
 
     async function bridgeFetch(path, options = {}) {
@@ -1529,17 +1607,19 @@
     }
 
     function renderReports() {
-      const stats = buildReportStats(history);
+      const range = getReportRangeFromState();
+      const stats = buildReportStats(state.report);
       return `
         <section class="panel">
           <div class="panel-header"><div><div class="panel-title">${icon("bar-chart-3")}任务执行统计报表</div></div></div>
           <div class="panel-body">
             <div class="report-toolbar">
-              <div class="field"><label>统计周期</label><input id="reportStart" type="date"></div>
-              <div class="field"><label>至</label><input id="reportEnd" type="date"></div>
-              <button class="btn primary" data-action="refresh-bridge">${icon("search")}查询</button>
+              <div class="field"><label>统计周期</label><input id="reportStart" type="date" value="${esc(range.from)}"></div>
+              <div class="field"><label>至</label><input id="reportEnd" type="date" value="${esc(range.to)}"></div>
+              <button class="btn primary" data-action="refresh-report" ${state.report.loading ? "disabled" : ""}>${icon("search")}${state.report.loading ? "查询中" : "查询"}</button>
               <button class="btn" data-action="export-history">${icon("download")}导出报表</button>
             </div>
+            ${state.report.error ? `<div class="notice warn">${esc(state.report.error)}</div>` : ""}
             <div class="report-metrics">
               ${reportMetric("执行总次数", stats.total)}
               ${reportMetric("成功率", stats.successRate + "%")}
@@ -1556,50 +1636,45 @@
       return `<div class="report-metric"><div class="report-metric-value">${esc(value)}</div><div class="report-metric-label">${esc(label)}</div></div>`;
     }
 
-    function buildReportStats(rows) {
-      const list = rows || [];
-      const total = list.length;
-      const success = list.filter(row => row.status === "成功").length;
-      const durations = list.map(row => parseDurationSeconds(row.duration)).filter(value => value > 0);
-      const avgSeconds = durations.length ? Math.round(durations.reduce((sum, value) => sum + value, 0) / durations.length) : 0;
-      const byTCode = new Map();
-      const byPlant = new Map();
-      list.forEach(row => {
-        const t = byTCode.get(row.tCode) || { code: row.tCode || "-", total: 0, success: 0, failed: 0, seconds: [] };
-        t.total += 1;
-        if (row.status === "成功") t.success += 1;
-        if (row.status === "失败") t.failed += 1;
-        const seconds = parseDurationSeconds(row.duration);
-        if (seconds) t.seconds.push(seconds);
-        byTCode.set(t.code, t);
-        toArray(row.plant).forEach(plant => {
-          const p = byPlant.get(plant) || { plant, total: 0, success: 0, failed: 0, latest: "" };
-          p.total += 1;
-          if (row.status === "成功") p.success += 1;
-          if (row.status === "失败") p.failed += 1;
-          p.latest = row.time || p.latest;
-          byPlant.set(plant, p);
-        });
-      });
+    function buildReportStats(report) {
+      const summary = report?.summary || {};
+      const total = Number(summary.totalRuns || 0);
+      const success = Number(summary.successRuns || 0);
+      const ranking = Array.isArray(report?.transactionRanking) ? report.transactionRanking : [];
       return {
         total,
-        successRate: total ? Math.round(success * 1000 / total) / 10 : 0,
-        avgDuration: avgSeconds ? avgSeconds + "s" : "-",
-        savedHours: Math.round(total * 0.15 * 10) / 10,
-        tcodes: Array.from(byTCode.values()).sort((a, b) => b.total - a.total),
-        plants: Array.from(byPlant.values()).sort((a, b) => b.total - a.total)
+        successRate: formatRate(summary.successRate),
+        avgDuration: formatSeconds(summary.avgDurationSeconds),
+        savedHours: formatNumber(summary.savedHours),
+        tcodes: ranking.map(row => ({
+          code: row.transactionCode || "-",
+          name: row.transactionName || row.transactionCode || "-",
+          total: Number(row.totalRuns || 0),
+          success: Number(row.successRuns || 0),
+          failed: Number(row.failedRuns || 0),
+          successRate: formatRate(row.successRate),
+          avgDuration: formatSeconds(row.avgDurationSeconds)
+        }))
       };
     }
 
-    function parseDurationSeconds(text) {
-      const value = String(text || "");
-      const min = Number((value.match(/(\d+)\s*分/) || [])[1] || 0);
-      const sec = Number((value.match(/(\d+)\s*秒/) || [])[1] || 0);
-      return min * 60 + sec;
+    function formatRate(value) {
+      const rate = Number(value || 0);
+      return Math.round(rate * 1000) / 10;
+    }
+
+    function formatSeconds(value) {
+      const seconds = Number(value || 0);
+      return seconds > 0 ? Math.round(seconds) + "s" : "-";
+    }
+
+    function formatNumber(value) {
+      const number = Number(value || 0);
+      return Number.isInteger(number) ? String(number) : String(Math.round(number * 10) / 10);
     }
 
     function renderTCodeRankTable(rows) {
-      return `<section class="panel"><div class="panel-header"><div class="panel-title">${icon("trophy")}事务码执行排行</div></div><div class="panel-body table-wrap"><table><thead><tr><th>排名</th><th>事务码</th><th>执行次数</th><th>成功</th><th>失败</th><th>成功率</th><th>平均耗时</th></tr></thead><tbody>${rows.length ? rows.map((row, i) => `<tr><td>${i + 1}</td><td><span class="area-chip">${esc(row.code)}</span></td><td>${row.total}</td><td>${row.success}</td><td>${row.failed}</td><td>${row.total ? Math.round(row.success * 1000 / row.total) / 10 : 0}%</td><td>${row.seconds.length ? Math.round(row.seconds.reduce((s, v) => s + v, 0) / row.seconds.length) + "s" : "-"}</td></tr>`).join("") : `<tr><td colspan="7" class="empty-cell">暂无数据</td></tr>`}</tbody></table></div></section>`;
+      return `<section class="panel"><div class="panel-header"><div class="panel-title">${icon("trophy")}事务码执行排行</div></div><div class="panel-body table-wrap"><table><thead><tr><th>排名</th><th>事务码</th><th>执行次数</th><th>成功</th><th>失败</th><th>成功率</th><th>平均耗时</th></tr></thead><tbody>${rows.length ? rows.map((row, i) => `<tr><td>${i + 1}</td><td><span class="area-chip">${esc(row.code)}</span><span class="muted"> ${esc(row.name)}</span></td><td>${row.total}</td><td>${row.success}</td><td>${row.failed}</td><td>${row.successRate}%</td><td>${row.avgDuration}</td></tr>`).join("") : `<tr><td colspan="7" class="empty-cell">暂无数据</td></tr>`}</tbody></table></div></section>`;
     }
 
     function metric(label, value, hint) {
@@ -2572,6 +2647,7 @@
       if (action === "toast-edit") return toast("编辑弹窗后续接入后台保存", "info");
       if (action === "refresh-config") return refreshConfigWithRender();
       if (action === "refresh-bridge") return refreshBridgeData({ silent: false });
+      if (action === "refresh-report") return refreshReportData({ ...getReportRangeFromInputs(), silent: false });
       if (action === "export-history") return exportHistory();
       if (action === "view-log") return openRunLog(el.dataset.run);
     }

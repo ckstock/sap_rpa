@@ -716,7 +716,8 @@ WHERE tcode=$tcode AND enabled=1;
             }
 
             if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
-                path.Equals("/api/schema", StringComparison.OrdinalIgnoreCase))
+                (path.Equals("/api/schema", StringComparison.OrdinalIgnoreCase) ||
+                 path.Equals("/api/config/schema", StringComparison.OrdinalIgnoreCase)))
             {
                 WriteJson(context.Response, LoadDatabaseSchema());
                 return;
@@ -736,7 +737,7 @@ WHERE tcode=$tcode AND enabled=1;
                 return;
             }
 
-            Match tablePreviewMatch = Regex.Match(path, @"^/api/schema/tables/([A-Za-z0-9_]+)$", RegexOptions.IgnoreCase);
+            Match tablePreviewMatch = Regex.Match(path, @"^/api/(?:config/)?schema/tables/([A-Za-z0-9_]+)$", RegexOptions.IgnoreCase);
             if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) && tablePreviewMatch.Success)
             {
                 WriteJson(context.Response, LoadTablePreview(tablePreviewMatch.Groups[1].Value, context.Request));
@@ -2878,16 +2879,20 @@ WHERE id=$id;
 
         long totalRuns = 0;
         long successRuns = 0;
+        long failedRuns = 0;
         double avgDurationSeconds = 0;
         using (var summary = connection.CreateCommand())
         {
             summary.CommandText = """
 SELECT COUNT(*),
        SUM(CASE WHEN status='success' THEN 1 ELSE 0 END),
+       SUM(CASE WHEN status IN ('failed', 'partial_failed') THEN 1 ELSE 0 END),
        AVG(CASE WHEN duration_ms > 0 THEN duration_ms / 1000.0 ELSE NULL END)
 FROM runs
 WHERE COALESCE(NULLIF(finished_at, ''), queued_at) >= $from
-  AND COALESCE(NULLIF(finished_at, ''), queued_at) <= $to;
+  AND COALESCE(NULLIF(finished_at, ''), queued_at) <= $to
+  AND COALESCE(NULLIF(run_type, ''), 'single') IN ('single', 'child')
+  AND status IN ('success', 'failed', 'partial_failed');
 """;
             summary.Parameters.AddWithValue("$from", fromText);
             summary.Parameters.AddWithValue("$to", toText);
@@ -2896,7 +2901,8 @@ WHERE COALESCE(NULLIF(finished_at, ''), queued_at) >= $from
             {
                 totalRuns = reader.IsDBNull(0) ? 0 : reader.GetInt64(0);
                 successRuns = reader.IsDBNull(1) ? 0 : reader.GetInt64(1);
-                avgDurationSeconds = reader.IsDBNull(2) ? 0 : Math.Round(reader.GetDouble(2), 1);
+                failedRuns = reader.IsDBNull(2) ? 0 : reader.GetInt64(2);
+                avgDurationSeconds = reader.IsDBNull(3) ? 0 : Math.Round(reader.GetDouble(3), 1);
             }
         }
 
@@ -2908,11 +2914,14 @@ SELECT r.transaction_code,
        COALESCE(NULLIF(t.name, ''), r.transaction_code) AS transaction_name,
        COUNT(*) AS total_runs,
        SUM(CASE WHEN r.status='success' THEN 1 ELSE 0 END) AS success_runs,
+       SUM(CASE WHEN r.status IN ('failed', 'partial_failed') THEN 1 ELSE 0 END) AS failed_runs,
        AVG(CASE WHEN r.duration_ms > 0 THEN r.duration_ms / 1000.0 ELSE NULL END) AS avg_duration_seconds
 FROM runs r
 LEFT JOIN transactions t ON t.tcode = r.transaction_code
 WHERE COALESCE(NULLIF(r.finished_at, ''), r.queued_at) >= $from
   AND COALESCE(NULLIF(r.finished_at, ''), r.queued_at) <= $to
+  AND COALESCE(NULLIF(r.run_type, ''), 'single') IN ('single', 'child')
+  AND r.status IN ('success', 'failed', 'partial_failed')
 GROUP BY r.transaction_code, transaction_name
 ORDER BY total_runs DESC, success_runs DESC, r.transaction_code
 LIMIT 20;
@@ -2924,14 +2933,16 @@ LIMIT 20;
             {
                 long txTotal = reader.GetInt64(2);
                 long txSuccess = reader.IsDBNull(3) ? 0 : reader.GetInt64(3);
+                long txFailed = reader.IsDBNull(4) ? 0 : reader.GetInt64(4);
                 transactionRanking.Add(new
                 {
                     transactionCode = reader.GetString(0),
                     transactionName = reader.GetString(1),
                     totalRuns = txTotal,
                     successRuns = txSuccess,
+                    failedRuns = txFailed,
                     successRate = txTotal == 0 ? 0 : Math.Round(txSuccess * 1.0 / txTotal, 4),
-                    avgDurationSeconds = reader.IsDBNull(4) ? 0 : Math.Round(reader.GetDouble(4), 1),
+                    avgDurationSeconds = reader.IsDBNull(5) ? 0 : Math.Round(reader.GetDouble(5), 1),
                     savedHours = Math.Round(txSuccess * savedMinutesPerSuccess / 60.0, 2)
                 });
             }
@@ -2948,7 +2959,9 @@ FROM runs r
 JOIN run_params rp ON rp.run_id = r.run_id
 WHERE LOWER(rp.param_key) IN ('plants', 'plant', 'werks', 'werkslist', 'plantlist')
   AND COALESCE(NULLIF(r.finished_at, ''), r.queued_at) >= $from
-  AND COALESCE(NULLIF(r.finished_at, ''), r.queued_at) <= $to;
+  AND COALESCE(NULLIF(r.finished_at, ''), r.queued_at) <= $to
+  AND COALESCE(NULLIF(r.run_type, ''), 'single') IN ('single', 'child')
+  AND r.status IN ('success', 'failed', 'partial_failed');
 """;
             plants.Parameters.AddWithValue("$from", fromText);
             plants.Parameters.AddWithValue("$to", toText);
@@ -2985,6 +2998,8 @@ WHERE LOWER(rp.param_key) IN ('plants', 'plant', 'werks', 'werkslist', 'plantlis
                 item.TotalRuns++;
                 if (status.Equals("success", StringComparison.OrdinalIgnoreCase))
                     item.SuccessRuns++;
+                else
+                    item.FailedRuns++;
                 if (durationMs > 0)
                 {
                     item.DurationTotalMs += durationMs;
@@ -3002,6 +3017,7 @@ WHERE LOWER(rp.param_key) IN ('plants', 'plant', 'werks', 'werkslist', 'plantlis
                 plant = p.Key,
                 totalRuns = p.Value.TotalRuns,
                 successRuns = p.Value.SuccessRuns,
+                failedRuns = p.Value.FailedRuns,
                 successRate = p.Value.TotalRuns == 0 ? 0 : Math.Round(p.Value.SuccessRuns * 1.0 / p.Value.TotalRuns, 4),
                 avgDurationSeconds = p.Value.DurationCount == 0 ? 0 : Math.Round(p.Value.DurationTotalMs / 1000.0 / p.Value.DurationCount, 1),
                 savedHours = Math.Round(p.Value.SuccessRuns * savedMinutesPerSuccess / 60.0, 2)
@@ -3014,12 +3030,20 @@ WHERE LOWER(rp.param_key) IN ('plants', 'plant', 'werks', 'werkslist', 'plantlis
             source = "sqlite",
             database = DatabaseFilePath,
             period = new { from = fromText, to = toText },
-            assumptions = new { savedMinutesPerSuccess },
+            assumptions = new
+            {
+                savedMinutesPerSuccess,
+                grain = "transaction_execution",
+                includedRunTypes = new[] { "single", "child" },
+                includedStatuses = new[] { "success", "failed", "partial_failed" },
+                excludedRunTypes = new[] { "parent" },
+                excludedStatuses = new[] { "queued", "running", "canceled" }
+            },
             summary = new
             {
                 totalRuns,
                 successRuns,
-                failedRuns = Math.Max(0, totalRuns - successRuns),
+                failedRuns,
                 successRate = totalRuns == 0 ? 0 : Math.Round(successRuns * 1.0 / totalRuns, 4),
                 avgDurationSeconds,
                 savedHours = Math.Round(successRuns * savedMinutesPerSuccess / 60.0, 2)
@@ -7922,6 +7946,7 @@ class PlantReportAccumulator
 {
     public long TotalRuns { get; set; }
     public long SuccessRuns { get; set; }
+    public long FailedRuns { get; set; }
     public long DurationTotalMs { get; set; }
     public long DurationCount { get; set; }
 }
