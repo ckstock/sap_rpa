@@ -1,0 +1,731 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAP RPA V2 功能说明书</title>
+  <style>
+    :root {
+      --bg: #f4faed;
+      --sidebar: #e8f3e0;
+      --primary: #5b8c5a;
+      --accent: #7cb342;
+      --text: #2e3b2e;
+      --muted: #6b806b;
+      --soft: #eef7e8;
+      --line: #d6e7cc;
+      --code-bg: #1b2b1b;
+      --code: #c8e6c9;
+      --warn-bg: #fff8e1;
+      --warn: #e65100;
+      --err-bg: #ffebee;
+      --err: #c62828;
+      --info-bg: #e3f2fd;
+      --info: #1565c0;
+      --shadow: 0 12px 34px rgba(74, 104, 74, .12);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: var(--bg);
+      font: 15px/1.75 "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    }
+    a { color: inherit; text-decoration: none; }
+    code {
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: #edf5e9;
+      color: #315f31;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: .92em;
+    }
+    .sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      width: 280px;
+      background: var(--sidebar);
+      border-right: 1px solid var(--line);
+      overflow-y: auto;
+      z-index: 20;
+    }
+    .brand {
+      padding: 24px 20px 20px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      color: white;
+    }
+    .brand h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .brand .version {
+      display: inline-flex;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.2);
+      font-size: 12px;
+    }
+    .nav { padding: 14px 12px 26px; }
+    .nav-item { margin: 6px 0; }
+    .nav-main {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 10px;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+    }
+    .nav-main:hover, .nav-main.active { background: rgba(91, 140, 90, .12); }
+    .nav-main .num {
+      flex: 0 0 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: inline-grid;
+      place-items: center;
+      background: var(--primary);
+      color: white;
+      font-size: 12px;
+    }
+    .nav-main .title { flex: 1; font-weight: 700; }
+    .nav-main .chev { color: var(--muted); transition: transform .18s ease; }
+    .nav-item.open .chev { transform: rotate(90deg); }
+    .nav-sub {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height .22s ease;
+      padding-left: 42px;
+    }
+    .nav-item.open .nav-sub { max-height: 340px; }
+    .nav-sub a {
+      display: block;
+      padding: 5px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .nav-sub a:hover { color: var(--primary); }
+    .mobile-toggle { display: none; }
+    .content {
+      margin-left: 280px;
+      padding: 28px 34px 56px;
+      max-width: 1260px;
+    }
+    .hero {
+      padding: 32px;
+      border-radius: 16px;
+      background: white;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(214, 231, 204, .8);
+      margin-bottom: 22px;
+    }
+    .hero h1 {
+      margin: 0 0 12px;
+      font-size: 30px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+    .hero p { margin: 0; color: var(--muted); max-width: 920px; }
+    .status-row {
+      margin-top: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .status-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .status-tag.success { background: #e8f5e9; color: #2e7d32; }
+    .status-tag.warning { background: var(--warn-bg); color: var(--warn); }
+    .status-tag.info { background: var(--info-bg); color: var(--info); }
+    .status-tag.error { background: var(--err-bg); color: var(--err); }
+    .section {
+      margin: 22px 0;
+      padding: 26px;
+      border-radius: 14px;
+      background: white;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(214, 231, 204, .82);
+    }
+    .section:hover { box-shadow: 0 16px 42px rgba(74, 104, 74, .15); }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .section-num {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      color: white;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      flex: 0 0 44px;
+    }
+    h2 { margin: 0; font-size: 24px; line-height: 1.25; }
+    h3 {
+      margin: 24px 0 12px;
+      padding-left: 12px;
+      border-left: 4px solid var(--accent);
+      font-size: 18px;
+      line-height: 1.35;
+    }
+    p { margin: 10px 0; }
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .mini-card, .flow-step {
+      padding: 15px;
+      border-radius: 12px;
+      background: var(--soft);
+      border: 1px solid var(--line);
+    }
+    .mini-card strong, .flow-step strong { display: block; margin-bottom: 6px; color: #315f31; }
+    .flow {
+      display: grid;
+      gap: 10px;
+      counter-reset: step;
+    }
+    .flow-step {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+    .flow-step::before {
+      counter-increment: step;
+      content: counter(step);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--primary);
+      color: white;
+      font-weight: 800;
+      font-size: 13px;
+    }
+    .tip-box, .warning-box, .constraint-box, .error-box {
+      margin: 14px 0;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border-left: 5px solid var(--primary);
+      background: #f7fbf2;
+    }
+    .warning-box { border-left-color: var(--warn); background: var(--warn-bg); }
+    .error-box { border-left-color: var(--err); background: var(--err-bg); }
+    .constraint-box { border-left-color: var(--info); background: var(--info-bg); }
+    .table-wrap {
+      overflow: hidden;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      margin: 14px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+    }
+    thead th {
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      color: white;
+      font-weight: 700;
+      text-align: left;
+      padding: 11px 12px;
+    }
+    td {
+      padding: 11px 12px;
+      border-bottom: 1px solid #edf4e8;
+      vertical-align: top;
+    }
+    tbody tr:hover td { background: #f6fbf1; }
+    .nowrap { white-space: nowrap; }
+    .code-block {
+      position: relative;
+      margin: 14px 0;
+      padding: 18px;
+      border-radius: 12px;
+      background: var(--code-bg);
+      color: var(--code);
+      overflow-x: auto;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      white-space: pre;
+      line-height: 1.6;
+    }
+    .code-block::after {
+      content: attr(data-lang);
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      color: #a5d6a7;
+      font-size: 12px;
+    }
+    @media (max-width: 900px) {
+      .mobile-toggle {
+        display: block;
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 40;
+        border: 0;
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: var(--primary);
+        color: white;
+      }
+      .sidebar {
+        transform: translateX(-100%);
+        transition: transform .2s ease;
+      }
+      body.nav-open .sidebar { transform: translateX(0); }
+      .content { margin-left: 0; padding: 58px 14px 34px; }
+      .grid.cols-2, .grid.cols-3 { grid-template-columns: 1fr; }
+      .hero, .section { padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <button class="mobile-toggle" type="button" id="mobileToggle">目录</button>
+  <aside class="sidebar">
+    <div class="brand">
+      <h1>SAP RPA V2 功能说明书</h1>
+      <span class="version">Windows Server / 本地 API / SQLite</span>
+    </div>
+    <nav class="nav" aria-label="文档目录">
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="scope"><span class="num">1</span><span class="title">功能范围</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#scope-users">使用对象</a>
+          <a href="#scope-boundary">系统边界</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="entry"><span class="num">2</span><span class="title">页面入口</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#entry-login">登录入口</a>
+          <a href="#entry-nav">导航页签</a>
+          <a href="#entry-installer">本机安装入口</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="execute"><span class="num">3</span><span class="title">执行任务</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#execute-zfi072a">ZFI072A</a>
+          <a href="#execute-queue">排队与日志</a>
+          <a href="#execute-batch">分工厂拆批</a>
+          <a href="#execute-chain">跨事务 result 传参</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="config"><span class="num">4</span><span class="title">基础配置</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#config-plant">工厂与业务范围</a>
+          <a href="#config-rule">事务码规则</a>
+          <a href="#config-delete">删除与停用</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="report"><span class="num">5</span><span class="title">报表与历史</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#report-metrics">统计指标</a>
+          <a href="#report-history">历史与审计</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="schedule"><span class="num">6</span><span class="title">定时任务</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#schedule-save">保存规则</a>
+          <a href="#schedule-run">无人值守执行</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="notify"><span class="num">7</span><span class="title">钉钉通知</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#notify-target">通知对象</a>
+          <a href="#notify-template">消息内容</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="exception"><span class="num">8</span><span class="title">异常处理</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#exception-installer">一键安装器</a>
+          <a href="#exception-sop">处理 SOP</a>
+          <a href="#exception-validation">验收检查</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="handoff"><span class="num">9</span><span class="title">交接事项</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#handoff-files">关键文件</a>
+          <a href="#handoff-next">后续优先级</a>
+        </div>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <header class="hero">
+      <h1>SAP RPA V2 功能说明书</h1>
+      <p>本文面向业务使用者、实施人员和后续 AI 接手者，说明 SAP RPA V2 每个页面入口、按钮行为、数据落点、状态含义、执行链路、异常处理和验收方式。技术细节详见同目录的 <code>SapRpa_V2_技术设计说明.html</code>。</p>
+      <div class="status-row">
+        <span class="status-tag success">本地 API</span>
+        <span class="status-tag info">SQLite 主配置源</span>
+        <span class="status-tag warning">SAP GUI 串行执行</span>
+        <span class="status-tag info">钉钉通知</span>
+      </div>
+    </header>
+
+    <section id="scope" class="section">
+      <div class="section-header"><div class="section-num">1</div><h2>功能范围</h2></div>
+      <p>SAP RPA V2 用于在公司 Windows Server 上集中执行 SAP GUI 自动化任务。业务人员在页面选择事务码和工厂，系统把任务写入本地 API 队列，由服务器上的 SapWebLauncher 串行调用 VBS 和 SAP GUI 完成操作，并把结果、日志、文件和通知状态写入 SQLite。</p>
+      <p>V2 同时包含服务器上线安装包和部署步骤。安装包必须支持安装目录选择、<code>SAP_RPA_HOME</code> 或命令行参数，不得把当前开发机的 <code>D:\sap_ai</code>、<code>D:\工作\sap_rpa</code> 当作正式服务器前提。</p>
+      <h3 id="scope-users">使用对象</h3>
+      <div class="grid cols-3">
+        <div class="mini-card"><strong>业务执行人员</strong>发起事务码任务、查看执行进度、接收钉钉通知、下载或追溯结果。</div>
+        <div class="mini-card"><strong>配置维护人员</strong>维护工厂、业务范围、事务码、事务码与工厂规则、定时任务。</div>
+        <div class="mini-card"><strong>系统管理员</strong>通过服务器一键安装器部署 SapWebLauncher、配置 SAP 登录信息、初始化 SQLite、检查队列、复制诊断日志和服务状态。</div>
+      </div>
+      <h3 id="scope-boundary">系统边界</h3>
+      <div class="constraint-box"><strong>安全边界：</strong>浏览器页面不保存、不接收 SAP 密码；钉钉 appKey、appSecret、agentId 和 SAP 登录配置只允许保存在服务器本机环境变量、<code>config.local.json</code> 或 DPAPI/Windows 凭据管理器中，不返回前端，不提交 Git。</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>范围</th><th>V2 当前支持</th><th>不做或后续再做</th></tr></thead>
+          <tbody>
+            <tr><td>事务执行</td><td>ZFI072A 优先打通；其他事务码可配置展示，但脚本未验证前不作为生产自动化承诺。</td><td>不并发操作同一个 SAP GUI 桌面会话。</td></tr>
+            <tr><td>配置源</td><td>SQLite 是当前主配置源，页面从 API 读取。</td><td>SQL Server/PostgreSQL 可作为后续迁移目标。</td></tr>
+            <tr><td>身份与通知</td><td>页面临时保存钉钉 ID；执行结果由后端调用 HTTP 接口发钉钉消息。</td><td>正式身份应接公司门户/钉钉扫码/SSO，由 API 侧确认用户。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="entry" class="section">
+      <div class="section-header"><div class="section-num">2</div><h2>页面入口</h2></div>
+      <p>用户打开 <code>D:\sap_ai\index.html</code> 后进入本地操作台。页面可用 <code>file://</code> 打开，但所有真实配置、执行和历史数据都通过 <code>http://127.0.0.1:17890</code> 的本地 API 获取。</p>
+      <h3 id="entry-login">登录入口</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>入口/控件</th><th>用户可见行为</th><th>数据落点</th></tr></thead>
+          <tbody>
+            <tr><td>钉钉扫码登录</td><td>当前阶段进入同一登录流程，默认写入临时钉钉 ID。</td><td>浏览器 <code>localStorage.portalDingTalkUserId</code>，当前联调默认 <code>11464769</code>。</td></tr>
+            <tr><td>账号登录</td><td>输入钉钉账号/手机号和密码后登录页面；该密码是页面演示字段，不是 SAP 密码。</td><td>页面只保存展示用用户名称和登录状态。</td></tr>
+            <tr><td>退出</td><td>清除页面登录态，返回登录页。</td><td>清理浏览器本地页面状态，不影响服务器 SAP 登录配置。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="entry-nav">导航页签</h3>
+      <div class="grid cols-2">
+        <div class="mini-card"><strong>工作台</strong>展示事务码卡片入口，用户可直接进入对应事务执行。</div>
+        <div class="mini-card"><strong>执行任务</strong>选择事务码和参数，提交到后台串行队列。</div>
+        <div class="mini-card"><strong>统计报表</strong>按统计周期查看执行总次数、成功率、平均耗时、节省工时和事务码排行。</div>
+        <div class="mini-card"><strong>定时任务</strong>维护定时任务配置，保存到 API/SQLite，真正执行依赖后端常驻队列或调度。</div>
+        <div class="mini-card"><strong>基础配置</strong>维护工厂、业务范围、事务码和事务码与工厂/业务范围规则。</div>
+      </div>
+      <h3 id="entry-installer">本机启动与安装入口</h3>
+      <p>管理员部署或排错时优先使用服务器一键安装器，而不是手工猜命令。运行目录中的入口是 <code>D:\sap_ai\上线安装包\服务器一键安装包\启动一键安装器.bat</code>，源码仓库副本是 <code>D:\工作\sap_rpa\上线安装包\服务器一键安装包</code>。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>入口</th><th>作用</th><th>注意事项</th></tr></thead>
+          <tbody>
+            <tr><td><code>启动一键安装器.bat</code></td><td>打开 WinForms 图形安装器，填写运行根目录和源码/发布包根目录。</td><td>兼容执行策略限制，入口读取 ps1 文本后用 <code>ScriptBlock::Create(...)</code> 执行，不依赖直接 <code>-File</code> 未签名脚本。</td></tr>
+            <tr><td><code>SapRpaServerSetup.ps1 -Cli</code></td><td>支持命令行部署、检测、启动 API、初始化 SQLite、备份和重建数据库。</td><td><code>reset-db</code> 必须显式追加 <code>-ForceResetDb</code>，避免误清历史。</td></tr>
+            <tr><td><code>一键复制日志</code> / <code>保存诊断日志</code></td><td>复制或保存安装器诊断信息，包含关键路径、API 地址、日志文件路径和命令输出。</td><td>诊断日志不得包含 SAP 密码、钉钉 appSecret 或 token。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="execute" class="section">
+      <div class="section-header"><div class="section-num">3</div><h2>执行任务</h2></div>
+      <p>执行任务是 V2 的核心功能。页面提交后，API 创建 run，SQLite 记录参数快照，后台串行 worker 领取任务，SapWebLauncher 调用 VBS 和 SAP GUI 执行，结束后回写状态和通知。</p>
+      <h3 id="execute-zfi072a">ZFI072A 当前业务规则</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>项目</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>事务码</td><td><code>ZFI072A</code>，当前优先打通的采购价月表自动化事务。</td></tr>
+            <tr><td>输入参数</td><td>年度、周、工厂列表、业务范围、备注等由页面/API 传给执行器，再由执行器传入 VBS。</td></tr>
+            <tr><td>工厂来源</td><td>来自 SQLite 配置中的事务码规则和业务范围，不允许在 VBS 中硬编码固定工厂。</td></tr>
+            <tr><td>成功判断</td><td>当前以 VBS 完成流程、SAP 状态栏消息、脚本退出码和执行器记录为依据；若无明确 SAP 状态栏消息，通知文案按“自动化已跑完”表达，不夸大成功。</td></tr>
+            <tr><td>结束清理</td><td>每个任务完成后应通过 SAP GUI 执行清理逻辑，例如返回或 <code>/NEX</code>，避免服务器桌面堆积窗口。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="execute-queue">排队、进度和日志</h3>
+      <div class="flow">
+        <div class="flow-step"><div><strong>提交入队</strong>页面调用 <code>POST /api/runs</code>，传入事务码、工厂、操作人、钉钉 ID 和通知目标。</div></div>
+        <div class="flow-step"><div><strong>排队等待</strong>API 写入 <code>runs.status=queued</code>，页面显示 runId、前方任务数和排队状态。</div></div>
+        <div class="flow-step"><div><strong>串行执行</strong>后台 worker 将任务改为 <code>running</code>，同一交互式 SAP GUI 桌面一次只执行一个任务。</div></div>
+        <div class="flow-step"><div><strong>日志回写</strong>VBS stdout、SAP 状态栏、输出文件和通知结果写入 <code>run_logs</code>、<code>run_files</code>。</div></div>
+        <div class="flow-step"><div><strong>页面轮询</strong>页面通过 <code>GET /api/runs/{runId}</code> 轮询状态，把 API 日志合并到黑底日志框。</div></div>
+      </div>
+      <div class="tip-box"><strong>黑底日志框说明：</strong>页面内存中只保留当前会话展示用即时日志；真正持久日志在 SQLite。刷新页面后，应按 runId 或历史列表重新从 API 读取。</div>
+      <h3 id="execute-batch">多工厂拆批与失败重跑</h3>
+      <p>当 ZFI072A 一次选择多个工厂时，推荐按“父 run + 工厂子 run”执行。父 run 表示用户的一次业务请求，子 run 表示每个工厂的实际执行结果。这样可以避免 A、B、C 分批执行时只有 B 失败，却无法准确追溯或重跑。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>状态</th><th>含义</th><th>用户处理</th></tr></thead>
+          <tbody>
+            <tr><td><code>success</code></td><td>所有工厂执行完成。</td><td>查看日志、文件和钉钉汇总。</td></tr>
+            <tr><td><code>partial_failed</code></td><td>部分工厂成功，部分工厂失败。</td><td>优先使用失败工厂重跑，不重复执行已成功工厂。</td></tr>
+            <tr><td><code>failed</code></td><td>任务整体失败或所有子任务失败。</td><td>按异常 SOP 检查 SAP 登录、脚本、工厂数据量或输出文件。</td></tr>
+            <tr><td>重跑失败工厂</td><td><code>POST /api/runs/{parentRunId}/rerun-failed</code> 根据失败工厂创建新父 run。</td><td>只重跑失败工厂，保留原 run 审计记录。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="execute-chain">跨事务链路与 result 传参</h3>
+      <p>对于“先跑报表 A、报表 B，计算 A+B 的最终 <code>result</code>，再把 <code>result</code> 和页面工厂入参一起传给报表 C”的场景，V2 应采用父子 run 或 chainRun 编排。父 run 表示一次链路请求，子 run 分别表示 A 取数、B 取数、result 计算、C 执行。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>步骤</th><th>责任方</th><th>数据要求</th></tr></thead>
+          <tbody>
+            <tr><td>A/B 报表取数</td><td>后端通过本地 SAP NCo 报表取数工具、<code>ZFM_NCO_SUBMIT</code> 或等价服务取回 list/spool 数据。</td><td>原始 A/B 结果必须关联 <code>runId</code> 保存，不能只写进页面黑底日志。</td></tr>
+            <tr><td>result 计算</td><td>后端或后台 worker 做清洗、匹配、合并、冲突处理和空值处理。</td><td>必须明确字段映射：A 哪些字段、B 哪些字段、合并公式、格式转换、空值规则和冲突规则。</td></tr>
+            <tr><td>result 落库/落盘</td><td>小结果写 SQLite 结构化字段；大结果写 <code>outputs/&lt;runId&gt;/result-for-C.json</code>、CSV 或 XLSX。</td><td>C 不从页面临时状态、截图或黑底日志推断 result，只接收 <code>resultId</code> 或 <code>resultFile</code>。</td></tr>
+            <tr><td>C 执行</td><td>若 C 可后台执行，优先 NCo/ABAP；若必须操作 SAP GUI，则 SapWebLauncher 串行调用 C 的 VBS。</td><td>C 入参包含页面工厂参数 + <code>resultId/resultFile</code>，大结果不得塞进 URL 或命令行。</td></tr>
+            <tr><td>重跑</td><td>可重跑失败步骤。</td><td>C 重跑必须绑定同一版 A/B result，或先重新执行 A/B 生成新版 result，不能混用旧 result。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="warning-box"><strong>链路门槛：</strong>C 只能在 A/B 都成功且 result 必填字段校验通过后执行。A/B 取数失败、result 缺字段或 C 入参校验失败时，链路状态应为 <code>failed</code> 或 <code>partial_failed</code>，不得误标成功。</div>
+    </section>
+
+    <section id="config" class="section">
+      <div class="section-header"><div class="section-num">4</div><h2>基础配置</h2></div>
+      <p>基础配置采用后台管理风格，目标是高效维护数据。页面只在 API 在线时允许新增、编辑、删除；离线时仅显示示例或缓存数据。</p>
+      <h3 id="config-plant">工厂与业务范围</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>配置项</th><th>用户维护内容</th><th>影响范围</th></tr></thead>
+          <tbody>
+            <tr><td>工厂配置</td><td>工厂代码、名称/说明、所属业务范围、排序、启停。</td><td>影响事务码规则、执行页工厂列表、定时任务工厂范围。</td></tr>
+            <tr><td>业务范围配置</td><td>业务范围 ID、名称、短名称、包含工厂、部分事务专用业务范围或工厂覆盖。</td><td>执行任务时根据事务码和业务范围自动带出工厂。</td></tr>
+            <tr><td>事务码配置</td><td>事务码、名称、模块、阶段、参数、超时秒数、重试次数、启停。</td><td>影响工作台卡片、执行任务列表、统计排行和定时任务可选项。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="config-rule">事务码与工厂/业务范围规则</h3>
+      <p>规则用于定义某事务码默认选择哪个业务范围，以及最终传给 VBS 的工厂列表。用户选择业务范围后，页面应自动带出对应工厂，并允许在规则维护中增删工厂。最终执行时以事务码规则解析出的工厂列表为准。</p>
+      <div class="constraint-box"><strong>配置源规则：</strong>API 在线时，配置来自 SQLite；页面不应以旧静态数组作为生产配置依据。API 离线时的 fallback 只用于演示和只读预览。</div>
+      <h3 id="config-delete">删除、停用和前端刷新</h3>
+      <p>工厂删除后，后端可能采用软删除方式返回 <code>enabled=false</code>。前端应过滤停用工厂，并同步清理业务范围、事务码规则里的停用工厂引用，因此用户删除后页面不再显示该工厂，也不会继续参与执行。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>操作</th><th>行为</th><th>注意事项</th></tr></thead>
+          <tbody>
+            <tr><td>新增/编辑</td><td>调用对应配置 API，保存后刷新 <code>GET /api/config</code>。</td><td>保存失败时不得只改页面内存。</td></tr>
+            <tr><td>删除工厂</td><td>API 可软删除，页面过滤停用项。</td><td>删除后如仍出现，先检查 API 是否返回 <code>enabled=false</code> 和前端过滤逻辑。</td></tr>
+            <tr><td>停用事务码/规则</td><td>不再作为可执行生产入口展示或执行。</td><td>历史记录仍保留，用于审计。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="report" class="section">
+      <div class="section-header"><div class="section-num">5</div><h2>统计报表与执行历史</h2></div>
+      <p>统计报表用于按时间周期查看自动化运行效果。历史列表用于追溯每次 run 的事务码、工厂、耗时、状态、结果摘要、日志和输出文件。</p>
+      <h3 id="report-metrics">统计指标口径</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>指标</th><th>口径</th><th>来源</th></tr></thead>
+          <tbody>
+            <tr><td>执行总次数</td><td>统计周期内 run 总数。</td><td><code>/api/reports/execution</code> 的 <code>summary.totalRuns</code></td></tr>
+            <tr><td>成功率</td><td>成功次数除以总次数，页面显示百分比。</td><td><code>summary.successRate</code></td></tr>
+            <tr><td>平均耗时</td><td>周期内平均执行耗时。</td><td><code>summary.avgDurationSeconds</code></td></tr>
+            <tr><td>节省工时</td><td>当前页面定义为累计自动化实际运行耗时，不再按人工估算。</td><td><code>summary.totalDurationSeconds</code></td></tr>
+            <tr><td>事务码排行</td><td>按事务码展示执行次数、成功、失败、成功率、平均耗时。</td><td><code>transactionRanking</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="report-history">历史与审计</h3>
+      <p>执行历史来自 <code>GET /api/runs</code>，日志详情来自 <code>GET /api/runs/{runId}</code>。如果页面刷新，黑底日志框中的即时日志会消失，但历史 run、后端日志和输出文件仍可从 SQLite/API 读取。</p>
+      <div class="tip-box"><strong>导出报表：</strong>页面导出的是当前历史/统计视图数据，适合业务人员留档；生产审计仍以 SQLite 中的 <code>runs</code>、<code>run_logs</code>、<code>run_files</code> 为准。</div>
+      <h3 id="report-chain">A/B 报表取数合并后驱动 C</h3>
+      <p>如果后续要先读取其他 SAP 报表 A、报表 B，再将 A+B 的最终结果 <code>result</code> 作为报表 C 的输入，推荐由后端编排完成，不把复杂取数和计算塞进 VBS。</p>
+      <div class="flow">
+        <div class="flow-step"><div><strong>页面提交</strong>页面只提交工厂、期间、事务链路等业务参数，API 创建父 run。</div></div>
+        <div class="flow-step"><div><strong>A/B 取数</strong>后端通过本地 NCo 报表取数工具或 <code>ZFM_NCO_SUBMIT</code> 以 <code>BACKGROUND_SPOOL</code> 方式取回 A、B 的 list/spool 数据。</div></div>
+        <div class="flow-step"><div><strong>后端计算</strong>API 或后台 worker 清洗、匹配和汇总 A/B 数据，生成最终 <code>result</code>。</div></div>
+        <div class="flow-step"><div><strong>结果落盘</strong>小结果可写 SQLite；大结果应保存到 <code>outputs/&lt;runId&gt;/result-for-C.json</code>、CSV 或 XLSX，并在 run 参数中只传 <code>resultId</code> 或 <code>resultFile</code>。</div></div>
+        <div class="flow-step"><div><strong>驱动 C</strong>如果 C 可后台执行，继续由 NCo/ABAP 调用 C；如果 C 必须操作 SAP GUI，则 SapWebLauncher 串行调用 C 的 VBS，把页面工厂参数和 <code>resultId/resultFile</code> 一起传入。</div></div>
+      </div>
+      <div class="constraint-box"><strong>设计边界：</strong>VBS 只负责把工厂和 result 文件/编号填入 SAP GUI，不负责 A/B 报表取数、复杂合并、数据清洗或重试审计。大结果不要放进 URL 或命令行，避免超长参数和日志泄露。</div>
+    </section>
+
+    <section id="schedule" class="section">
+      <div class="section-header"><div class="section-num">6</div><h2>定时任务</h2></div>
+      <p>定时任务用于提前保存周期性执行配置，例如周一固定执行某事务链路。页面负责维护配置，真正无人值守执行必须由后端常驻服务、任务计划程序或调度器承接。</p>
+      <h3 id="schedule-save">保存规则</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>任务 ID/名称</td><td>新建时自动生成或由用户填写，用于列表和审计。</td></tr>
+            <tr><td>事务码</td><td>从已启用事务码配置中选择。</td></tr>
+            <tr><td>业务范围/工厂</td><td>根据事务码规则和业务范围自动计算工厂。</td></tr>
+            <tr><td>执行时间/频率</td><td>用于后续调度器决定何时创建 run。</td></tr>
+            <tr><td>通知开关</td><td>控制开始、成功、失败等通知策略。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="schedule-run">无人值守执行</h3>
+      <div class="warning-box"><strong>重要：</strong>静态页面本身不能在无人值守时自动执行 SAP。上线时必须让 SapWebLauncher 或独立调度器读取定时任务配置并创建 run，同时确保 Windows 执行账号已登录交互式桌面。</div>
+      <p>如果定时任务执行 A/B/C 跨事务链路，调度器创建的是链路父 run，而不是单个事务 run。A、B、result 计算和 C 应分别记录子 run 或步骤状态，便于失败后只重跑失败步骤并追溯 result 版本。</p>
+    </section>
+
+    <section id="notify" class="section">
+      <div class="section-header"><div class="section-num">7</div><h2>钉钉通知</h2></div>
+      <p>通知由后端 API 发送，不由 VBS 进入 SAP 再调用函数，也不由浏览器直接持有密钥。这样可以减少 SAP GUI 占用时间，也避免前端泄露 appSecret。</p>
+      <h3 id="notify-target">通知对象</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>来源</th><th>当前规则</th><th>上线规则</th></tr></thead>
+          <tbody>
+            <tr><td>页面登录人</td><td>当前临时使用 <code>11464769</code> 作为钉钉 ID。</td><td>应由钉钉扫码或公司 SSO 传给 API，并写入 run 操作人字段。</td></tr>
+            <tr><td>后台定时任务</td><td>可使用任务配置中的通知目标或默认负责人。</td><td>应支持配置任务负责人、业务群或机器人绑定。</td></tr>
+            <tr><td>异常通知</td><td>失败、部分失败、通知失败应写入 run 日志。</td><td>应通知发起人和配置的运维/业务负责人。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="notify-template">消息内容</h3>
+      <p>通知内容应使用中文，避免暴露内部字段名如 OPERATOR。建议包含图标、事务码、事务名称、工厂、状态、耗时、runId、失败工厂、输出文件摘要。</p>
+      <div class="code-block" data-lang="通知文案示例">✅ 自动化已跑完
+事务：ZFI072A - 采购价月表
+工厂：5021, 9301
+状态：成功
+耗时：8分32秒
+任务号：RUN-20260618-001</div>
+    </section>
+
+    <section id="exception" class="section">
+      <div class="section-header"><div class="section-num">8</div><h2>异常处理</h2></div>
+      <h3 id="exception-installer">服务器一键安装器</h3>
+      <p>服务器上线入口是 <code>D:\sap_ai\上线安装包\服务器一键安装包\启动一键安装器.bat</code>。源码仓库中的同一份文件位于 <code>D:\工作\sap_rpa\上线安装包\服务器一键安装包</code>。安装器提供 WinForms 图形界面和 CLI 模式，服务器根目录、源码/发布包根目录必须由管理员在 UI、命令行参数、环境变量或本机配置中填写，不得把开发机路径当作上线前提。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>控件/动作</th><th>用户可见行为</th><th>数据与安全规则</th></tr></thead>
+          <tbody>
+            <tr><td>运行根目录</td><td>填写或选择服务器运行目录，例如 <code>C:\SAP_RPA</code> 或公司规定目录。</td><td>目录下保存页面、执行器、VBS、SQLite、日志、输出和备份。默认不要求服务器存在 D 盘。</td></tr>
+            <tr><td>源码/发布包根目录</td><td>选择 Git 拉取后的仓库根目录或发布包根目录。</td><td>安装器从这里查找 <code>index.html</code>、<code>transactions</code> 和 <code>SapWebLauncher</code>。</td></tr>
+            <tr><td>一键部署/升级</td><td>准备运行目录、备份旧版本、复制页面/VBS/执行器、注册 <code>sap-rpa://</code>、初始化 SQLite、启动 API 并检测状态。</td><td>默认保留 SQLite、日志、输出、<code>config.local.json</code> 和 SAP DPAPI 登录配置。</td></tr>
+            <tr><td>配置 SAP 登录</td><td>在当前 Windows 执行账号下录入 SAP 登录信息。</td><td>密码写入 DPAPI 保护的 <code>%LOCALAPPDATA%\SapWebLauncher\config.json</code>，不进入页面和 Git。</td></tr>
+            <tr><td>初始化/迁移 SQLite</td><td>调用 <code>SapWebLauncher.exe --init-db</code>。</td><td>已有数据库先备份再迁移，不直接清空。</td></tr>
+            <tr><td>备份并重建 SQLite</td><td>危险动作，GUI 二次确认；CLI 必须显式追加 <code>-ForceResetDb</code>。</td><td>先备份旧库，再重建空库；不会删除 SAP 登录密文。</td></tr>
+            <tr><td>一键复制日志</td><td>复制当前诊断日志、关键路径、API 地址和日志文件路径到剪贴板。</td><td>用于直接发给 AI 或管理员排错；不要包含真实密码或 appSecret。</td></tr>
+            <tr><td>保存诊断日志</td><td>保存 <code>logs\installer-diagnostic-&lt;时间&gt;.txt</code>。</td><td>诊断日志应包含时间戳、路径、配置来源、命令输出和失败下一步。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tip-box"><strong>安装器验证：</strong><code>SapRpaServerSetup.ps1</code> 必须能被 PowerShell 解析；<code>SapWebLauncher.exe test</code> 应显示 6 PASS；如果 API 未启动，<code>/api/health</code>、<code>/api/config</code>、<code>/api/schema</code> 检测失败属于环境状态，不代表安装器脚本解析失败。</div>
+      <h3 id="exception-sop">处理 SOP</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>异常</th><th>表现</th><th>处理方式</th></tr></thead>
+          <tbody>
+            <tr><td>本地 API 未启动</td><td>页面显示 API 不可用、配置只读、无法保存或执行。</td><td>运行 <code>D:\sap_ai\bin\SapWebLauncher.exe --serve</code> 或上线步骤中的启动 API 脚本。</td></tr>
+            <tr><td>SAP 登录失败</td><td>run 失败，日志出现登录或连接错误。</td><td>重新运行 SAP 登录配置步骤，在服务器执行账号下生成 DPAPI 配置。</td></tr>
+            <tr><td>工厂数据量过大</td><td>单个工厂执行时间过长，可能超过默认超时。</td><td>提高事务码超时秒数，按工厂拆批执行，失败后只重跑失败工厂。</td></tr>
+            <tr><td>VBS 未执行或脚本错误</td><td>run 无 SAP 步骤日志、退出码异常或标准输出为空。</td><td>检查脚本路径、VBS ASCII/WSH 格式、SAP GUI Scripting 权限和当前桌面会话。</td></tr>
+            <tr><td>输出文件缺失</td><td>任务成功但 run_files 无记录。</td><td>检查 VBS 保存按钮、导出路径、文件权限和执行账号目录。</td></tr>
+            <tr><td>通知失败</td><td>任务执行完但未收到钉钉消息。</td><td>检查 <code>config.local.json</code> 的 appKey/appSecret/agentId、HTTP 接口地址和用户钉钉 ID。</td></tr>
+            <tr><td>安装脚本被拦截</td><td>PowerShell 报未签名脚本或 <code>MachinePolicy=AllSigned</code>。</td><td>使用最终上线步骤中的 `.bat` 入口，入口通过 ScriptBlock 执行脚本文本，不直接 <code>-File</code> 加载未签名 ps1。</td></tr>
+            <tr><td>A/B 取数失败</td><td>链路父 run 停在前置报表阶段，C 未执行。</td><td>检查 NCo/RFC 登录、目标报表权限、spool/list 输出和 <code>ZFM_NCO_SUBMIT</code> 返回消息。</td></tr>
+            <tr><td>result 缺字段</td><td>A/B 都返回但 C 入参校验失败。</td><td>检查字段映射、空值规则、冲突规则和 result 文件；不得让 C 从日志或页面状态猜值。</td></tr>
+            <tr><td>C 重跑版本不一致</td><td>C 使用了旧版 result 或混用了不同批次 A/B 输出。</td><td>重跑 C 时绑定同一版 <code>resultId/resultFile</code>，或重新执行 A/B 生成新版 result 后再执行 C。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="exception-validation">验收检查</h3>
+      <div class="flow">
+        <div class="flow-step"><div><strong>API 健康</strong>访问 <code>GET /api/health</code>，确认 API、SQLite、队列状态。</div></div>
+        <div class="flow-step"><div><strong>配置读取</strong>访问 <code>GET /api/config</code>，确认事务码、工厂、业务范围和规则返回正常。</div></div>
+        <div class="flow-step"><div><strong>执行链路</strong>用 ZFI072A 和少量工厂提交任务，确认 queued、running、success/failed 状态流转。</div></div>
+        <div class="flow-step"><div><strong>日志与文件</strong>确认 <code>run_logs</code>、黑底日志框、<code>run_files</code> 一致。</div></div>
+        <div class="flow-step"><div><strong>链路 result</strong>如果是 A/B/C 链路，确认 A/B 原始结果、result 文件、C 最终入参、C 输出和重跑版本可以通过 runId 追溯。</div></div>
+        <div class="flow-step"><div><strong>安全检查</strong>API 和页面不得返回 SAP 密码、钉钉 secret、真实 token。</div></div>
+      </div>
+    </section>
+
+    <section id="handoff" class="section">
+      <div class="section-header"><div class="section-num">9</div><h2>交接事项</h2></div>
+      <h3 id="handoff-files">关键文件</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>文件/目录</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td><code>D:\sap_ai\agent.md</code></td><td>项目 agent 规则，包含多 agent、敏感信息、部署包和 VBS 编码规则。</td></tr>
+            <tr><td><code>D:\sap_ai\AI_HANDOFF_NEXT.md</code></td><td>下一任 AI 快速接手文档。</td></tr>
+            <tr><td><code>D:\sap_ai\SapRpa_V2_技术设计说明.html</code></td><td>技术架构、API、数据库、执行器和通知链路说明。</td></tr>
+            <tr><td><code>D:\sap_ai\SapRpa_V2_功能说明书.html</code></td><td>当前功能说明书，面向业务行为和下一任 AI 的外置记忆。</td></tr>
+            <tr><td><code>D:\sap_ai\上线安装包\服务器一键安装包</code></td><td>服务器一键安装器运行/交接目录，包含 GUI 脚本、bat 入口、配置模板和安装说明。</td></tr>
+            <tr><td><code>D:\工作\sap_rpa\上线安装包\服务器一键安装包</code></td><td>同一套服务器一键安装器源码仓库副本，正式提交 Git 时以该目录为准。</td></tr>
+            <tr><td><code>D:\工作\sap_rpa</code></td><td>GitHub 源码仓库，正式提交优先在这里完成。</td></tr>
+            <tr><td><code>D:\sap_ai</code></td><td>运行/预览/交接目录，包含运行库和本机产物，不要把真实配置直接提交。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="handoff-next">后续优先级</h3>
+      <div class="grid cols-2">
+        <div class="mini-card"><strong>优先级 1</strong>在真实 Windows Server 上验证一键安装器：路径选择、部署/升级、复制日志、保存诊断日志、API 启动和状态检测。</div>
+        <div class="mini-card"><strong>优先级 2</strong>把未提交的一键安装器、最终上线部署步骤、功能说明书和交接文档审查后提交到 GitHub 当前分支。</div>
+        <div class="mini-card"><strong>优先级 3</strong>继续实测 ZFI072A 分工厂长耗时场景，确认超时、保存按钮、/NEX 清理和钉钉通知。</div>
+        <div class="mini-card"><strong>优先级 4</strong>设计 A/B 报表取数合并 result 后驱动 C 的 API、数据库字段、输出文件和 VBS 入参规范。</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const navItems = Array.from(document.querySelectorAll(".nav-item"));
+    const navButtons = Array.from(document.querySelectorAll(".nav-main"));
+    const sections = Array.from(document.querySelectorAll(".section"));
+
+    navButtons.forEach(button => {
+      button.addEventListener("click", () => {
+        const item = button.closest(".nav-item");
+        const target = document.getElementById(button.dataset.target);
+        navItems.forEach(other => {
+          if (other !== item) other.classList.remove("open");
+        });
+        item.classList.toggle("open");
+        if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+
+    document.querySelectorAll(".nav-sub a").forEach(link => {
+      link.addEventListener("click", () => document.body.classList.remove("nav-open"));
+    });
+
+    document.getElementById("mobileToggle").addEventListener("click", () => {
+      document.body.classList.toggle("nav-open");
+    });
+
+    function updateActiveNav() {
+      let activeId = sections[0]?.id || "";
+      for (const section of sections) {
+        if (section.getBoundingClientRect().top <= 120) activeId = section.id;
+      }
+      navButtons.forEach(button => button.classList.toggle("active", button.dataset.target === activeId));
+    }
+    document.addEventListener("scroll", updateActiveNav, { passive: true });
+    updateActiveNav();
+  </script>
+</body>
+</html>
