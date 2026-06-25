@@ -45,6 +45,23 @@
 10. 钉钉通知不再走 SAP Gateway OData；由后端直连 DingTalk OpenAPI。接口根地址、appKey、appSecret、agentId 必须来自服务器环境变量或本地 config，不得写死到前端、VBS 或源码文档示例里；当前 `Ddid=11464769` 只允许作为联调临时值，上线必须改为登录态/配置中的真实钉钉用户 ID。
 11. 提交前必须检查 `git status` 和 `git diff`，确认没有把本机 `config.local.json`、数据库、日志、导出文件或任何真实密钥混入提交；发现明文配置时先停止提交并改成占位模板或加密存储。
 
+## SapWebLauncher C# 编排与设计模式规则
+
+SapWebLauncher 后端要按可维护、可运维、可扩展的设计模式实现 SAP 报表调用和事务码调用，不得把报表、事务码、错误判断、重跑规则堆成硬编码 `if/else` 或单个巨大方法。参考当前 ABAP Gateway 里用 `action -> sap_class -> sap_method` 路由表分发的思路，C# 侧也应建立清晰的路由、策略和适配器模型。
+
+1. C# 调用 ALV 报表、`ZFM_NCO_SUBMIT`、sap-report-fetch、本地 VBS、SAP GUI 事务码时，必须通过统一接口或抽象层进入，例如 `ISapActionHandler`、`IReportFetchStrategy`、`ITransactionExecutor`、`IResultValidator`、`IErrorClassifier`，具体命名可按代码风格调整。
+2. 每种动作类型必须有明确 handler/strategy：`NCO_REPORT`、`ALV_REPORT_FETCH`、`CALC_RESULT`、`VALIDATE_RESULT`、`SAP_GUI_VBS`、`MANUAL_REVIEW` 等。新增事务码或报表时优先新增配置和 handler，不要在主执行器里追加大量分支。
+3. 后端编排模型必须支持四级追踪：`chainRun -> stepRun -> actionRun/transactionRun -> phaseEvent`。一个业务步骤如果要调用 10 个事务码，不能作为一个黑盒 step 记录，必须拆成 10 个可见的 `actionRun/transactionRun`，每个都有独立状态、输入快照、输出摘要、SAP 状态栏、开始结束时间、错误码和错误消息。
+4. `phaseEvent` 用于记录事务码内部关键阶段，例如 `prepare_input`、`open_transaction`、`fill_field`、`press_button`、`wait_result`、`read_status_bar`、`export_file`、`validate_output`、`cleanup_session`。失败时必须能定位到第几个事务码、哪个阶段、哪个字段或按钮、SAP 返回了什么。
+5. 用户可见错误必须讲清楚业务影响，例如“步骤 3 失败：第 6/10 个事务码 ZFI072A 在读取状态栏阶段返回 E - xxx；后续 4 个事务码已跳过；可从 ZFI072A 重跑”。开发者日志必须同时能看到 actionKey、transactionCode、phase、inputSnapshotId、resultId/resultVersion、VBS outputFile、SAP MessageType/Text。
+6. 错误处理必须统一分类，至少覆盖：参数缺失、配置缺失、SAP 登录/会话失败、NCo/RFC 失败、报表无 spool/list 输出、ALV 捕获失败、VBS 运行失败、SAP 状态栏错误、结果校验失败、文件读写失败、超时、人工审核拒绝、敏感信息拦截。
+7. 每个 handler 必须返回结构化结果对象，包含 `ok`、`status`、`errorCode`、`safeMessage`、`sapStatusType`、`sapStatusText`、`resultId`、`resultFile`、`outputFiles`、`diagnosticRef`。不得只返回字符串或只靠 exit code 判断成败。
+8. 调用链中要使用可测试的策略/适配器/工厂/注册表模式：动作路由表决定调用哪个 handler；错误分类器决定错误类型和用户文案；result validator 决定结果是否可作为下游输入；retry policy 决定是否允许重跑。
+9. 重跑必须基于不可变版本：每次 actionRun/transactionRun 执行都生成新的 attempt/resultVersion。重跑第 N 个事务码时，必须记录前 N-1 个结果是复用旧版本还是重新执行；不得默认取“最新成功 result”。
+10. SAP GUI/VBS 动作继续保持串行，不得并发操作同一个交互式桌面会话；NCo/后台报表动作后续可按依赖 DAG 并行，但第一版优先串行确保可追踪。
+11. 代码注释要写在策略边界、错误分类、重跑版本、敏感信息脱敏、VBS 参数生成、SAP 状态栏解析等容易误改的位置。注释要说明“为什么这样设计”和“误改会造成什么风险”，不要写无意义的逐行解释。
+12. 新增事务码或报表接入时，必须同步补充：动作配置示例、handler 选择规则、输入字段说明、成功/失败判定、可重跑边界、敏感字段过滤、页面展示文案和最小测试用例。
+
 ## 敏感信息规则
 
 禁止硬编码以下敏感或环境相关信息：

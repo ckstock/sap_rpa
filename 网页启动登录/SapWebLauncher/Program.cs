@@ -12,6 +12,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading;
 
@@ -1018,12 +1019,17 @@ WHERE tcode=$tcode AND enabled=1;
         if (string.IsNullOrWhiteSpace(json))
             throw new InvalidOperationException("Request body is empty.");
 
-        return JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions(JsonOptions)
+        var value = JsonSerializer.Deserialize<T>(json, new JsonSerializerOptions(JsonOptions)
         {
             PropertyNameCaseInsensitive = true,
             ReadCommentHandling = JsonCommentHandling.Skip,
             AllowTrailingCommas = true
         }) ?? throw new InvalidOperationException("Invalid JSON request body.");
+
+        if (value is IRawJsonRequest rawJsonRequest)
+            rawJsonRequest.CaptureRawJson(json);
+
+        return value;
     }
 
     static void WriteJson(HttpListenerResponse response, object value, int statusCode = 200)
@@ -3130,8 +3136,8 @@ WHERE id=$id;
         string id = SanitizeConfigId(FirstNonEmpty(routeId, item.Id, $"sched-{tcode.ToLowerInvariant()}-{DateTime.Now:yyyyMMddHHmmss}"), "schedule id");
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         string defaultBusinessScope = FirstNonEmpty(item.DefaultBusinessScope, item.FactoryGroup, item.PlantGroupId, item.GroupId, item.DefaultPlantGroup);
-        string plantsCsv = FirstNonEmpty(item.PlantsCsv, JsonElementArrayToCsv(item.Plants));
-        if (string.IsNullOrWhiteSpace(plantsCsv))
+        string plantsCsv = ResolveSchedulePlantsCsvFromRequest(item);
+        if (!item.HasExplicitPlantSelection)
             plantsCsv = ResolveSchedulePlants(tcode, defaultBusinessScope);
         string plantsJson = CsvToJsonArray(plantsCsv);
         string paramsJson = BuildScheduleParamsJson(item, tcode, defaultBusinessScope, plantsCsv);
@@ -3193,6 +3199,26 @@ ON CONFLICT(id) DO UPDATE SET
         command.Parameters.AddWithValue("$updatedBy", FirstNonEmpty(item.UpdatedBy, item.CreatedBy, "api"));
         command.ExecuteNonQuery();
         return id;
+    }
+
+    static string ResolveSchedulePlantsCsvFromRequest(ScheduleTaskRequest item)
+    {
+        return FirstNonEmpty(
+            item.PlantsCsv,
+            JsonElementToCsv(item.Plants),
+            JsonElementToCsv(item.PlantCodes),
+            JsonElementToCsv(item.FactoryCodes));
+    }
+
+    static string JsonElementToCsv(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.Array => JsonElementArrayToCsv(value),
+            JsonValueKind.String => value.GetString() ?? "",
+            JsonValueKind.Number => value.GetRawText(),
+            _ => ""
+        };
     }
 
     static void SetScheduleTaskEnabled(string id, bool enabled)
@@ -3310,11 +3336,18 @@ ORDER BY sort_order, plant_code;
             }
         }
 
-        string plants = NormalizeCsv(FirstNonEmpty(plantsCsv, values.TryGetValue("plants", out string? existingPlants) ? existingPlants ?? "" : ""));
+        string plants = NormalizeCsv(FirstNonEmpty(
+            plantsCsv,
+            !item.HasExplicitPlantSelection && values.TryGetValue("plants", out string? existingPlants) ? existingPlants ?? "" : ""));
         if (!string.IsNullOrWhiteSpace(plants))
         {
             values["plants"] = plants;
             values["plant"] = FirstCsvValue(plants);
+        }
+        else if (item.HasExplicitPlantSelection)
+        {
+            values.Remove("plants");
+            values.Remove("plant");
         }
 
         if (!string.IsNullOrWhiteSpace(defaultBusinessScope))
@@ -7655,7 +7688,12 @@ class NotificationRobotConfigRequest
     public string UpdatedBy { get; set; } = "";
 }
 
-class ScheduleTaskRequest
+interface IRawJsonRequest
+{
+    void CaptureRawJson(string json);
+}
+
+class ScheduleTaskRequest : IRawJsonRequest
 {
     public string Id { get; set; } = "";
     public string Name { get; set; } = "";
@@ -7664,6 +7702,8 @@ class ScheduleTaskRequest
     public string TransactionCode { get; set; } = "";
     public JsonElement Plants { get; set; }
     public string PlantsCsv { get; set; } = "";
+    public JsonElement PlantCodes { get; set; }
+    public JsonElement FactoryCodes { get; set; }
     public string DefaultBusinessScope { get; set; } = "";
     public string FactoryGroup { get; set; } = "";
     public string PlantGroupId { get; set; } = "";
@@ -7692,6 +7732,40 @@ class ScheduleTaskRequest
     public JsonElement Params { get; set; }
     public string CreatedBy { get; set; } = "";
     public string UpdatedBy { get; set; } = "";
+
+    [JsonIgnore]
+    public bool HasExplicitPlantSelection { get; private set; }
+
+    public void CaptureRawJson(string json)
+    {
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(json, new JsonDocumentOptions
+            {
+                AllowTrailingCommas = true,
+                CommentHandling = JsonCommentHandling.Skip
+            });
+
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                return;
+
+            HasExplicitPlantSelection =
+                HasJsonProperty(doc.RootElement, "plants") ||
+                HasJsonProperty(doc.RootElement, "plantsCsv") ||
+                HasJsonProperty(doc.RootElement, "plantCodes") ||
+                HasJsonProperty(doc.RootElement, "factoryCodes");
+        }
+        catch
+        {
+            HasExplicitPlantSelection = false;
+        }
+    }
+
+    static bool HasJsonProperty(JsonElement element, string name)
+    {
+        return element.ValueKind == JsonValueKind.Object &&
+               element.EnumerateObject().Any(prop => prop.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
 }
 
 class ScheduleTaskDue

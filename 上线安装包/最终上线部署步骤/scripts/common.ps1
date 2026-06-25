@@ -41,8 +41,8 @@ function Ensure-RuntimeDirs {
 }
 
 function Get-LauncherExe {
-    if (Test-Path $InstalledLauncherExe) { return $InstalledLauncherExe }
     if (Test-Path $RuntimeLauncherExe) { return $RuntimeLauncherExe }
+    if (Test-Path $InstalledLauncherExe) { return $InstalledLauncherExe }
     throw "SapWebLauncher.exe not found. Run the launcher installation step first."
 }
 

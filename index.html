@@ -1140,8 +1140,15 @@
     function normalizeScheduleTaskFromApi(item) {
       const tCode = String(item.tCode || item.tcode || item.transactionCode || item.code || "").trim().toUpperCase();
       const factoryGroup = item.factoryGroup || item.plantGroupId || item.groupId || item.defaultPlantGroup || getTCode(tCode)?.defaultPlantGroup || state.scheduleForm.factoryGroup || "";
-      const plantsValue = toArray(item.plants || item.plantCodes || item.factoryCodes || item.params?.plants);
-      const plantsForTask = plantsValue.length ? plantsValue : getDefaultPlantsForTCode(tCode, factoryGroup);
+      const hasExplicitPlants = item.plants !== undefined || item.plantCodes !== undefined || item.factoryCodes !== undefined ||
+        item.plantsCsv !== undefined || item.plantCodesCsv !== undefined || item.factoryCodesCsv !== undefined ||
+        item.params?.plants !== undefined || item.params?.plantCodes !== undefined || item.params?.factoryCodes !== undefined ||
+        item.params?.plantsCsv !== undefined || item.params?.plantCodesCsv !== undefined || item.params?.factoryCodesCsv !== undefined;
+      const plantsValue = normalizeRulePlantList(item.plants ?? item.plantCodes ?? item.factoryCodes ??
+        item.plantsCsv ?? item.plantCodesCsv ?? item.factoryCodesCsv ??
+        item.params?.plants ?? item.params?.plantCodes ?? item.params?.factoryCodes ??
+        item.params?.plantsCsv ?? item.params?.plantCodesCsv ?? item.params?.factoryCodesCsv);
+      const plantsForTask = hasExplicitPlants ? plantsValue : getDefaultPlantsForTCode(tCode, factoryGroup);
       const enabled = boolValue(item.enabled ?? item.isActive, true);
       return {
         id: String(item.id || item.taskId || item.scheduleId || "").trim(),
@@ -1386,42 +1393,52 @@
     }
 
     async function refreshBridgeData({ silent = true } = {}) {
+      const checkedAt = new Date().toLocaleTimeString("zh-CN", { hour12: false });
       try {
         const health = await bridgeFetch("/api/health");
         state.bridge = {
           online: !!health.ok,
-          lastChecked: new Date().toLocaleTimeString("zh-CN", { hour12: false }),
+          lastChecked: checkedAt,
           database: health.database || "",
           queueMode: health.queueMode || ""
         };
+      } catch (err) {
+        state.bridge.online = false;
+        state.bridge.queueMode = "";
+        state.bridge.lastChecked = checkedAt;
+        state.queue = { online: false, runningRunId: "", queuedCount: null, queuePosition: null, runsAhead: null, workItemsAhead: null, lastChecked: checkedAt };
+        state.config = { online: false, source: "fallback", lastLoaded: checkedAt, error: err.message || "本机 API 不可用" };
+        clearReportData("本机 API 不可用，请启动 API");
+        restoreFallbackConfig();
+        if (!silent) toast("本机执行器未启动，基础配置暂不能落库", "warn");
+        render();
+        return;
+      }
 
+      try {
         const txData = await bridgeFetch("/api/transactions");
         if (Array.isArray(txData.transactions) && txData.transactions.length) {
           tCodes = txData.transactions.map(normalizeTransactionFromApi);
         }
+      } catch (err) {
+        if (!silent) toast("事务码接口暂不可用，继续使用当前列表", "warn");
+      }
 
-        await refreshConfigData({ silent: true });
-        await refreshQueueStatus({ silent: true });
-        await refreshReportData({ silent: true, renderAfter: false });
+      await refreshConfigData({ silent: true });
+      await refreshQueueStatus({ silent: true });
+      await refreshReportData({ silent: true, renderAfter: false });
 
+      try {
         const runData = await bridgeFetch("/api/runs?limit=20");
         if (Array.isArray(runData.runs)) {
           history = runData.runs.map(normalizeRunFromApi);
         }
-
-        if (!silent) toast("已连接本机执行器并刷新数据", "ok");
-        render();
       } catch (err) {
-        state.bridge.online = false;
-        state.bridge.queueMode = "";
-        state.bridge.lastChecked = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-        state.queue = { online: false, runningRunId: "", queuedCount: null, queuePosition: null, runsAhead: null, workItemsAhead: null, lastChecked: state.bridge.lastChecked };
-        state.config = { online: false, source: "fallback", lastLoaded: state.bridge.lastChecked, error: err.message || "本机 API 不可用" };
-        clearReportData("本机 API 不可用，请启动 API");
-        restoreFallbackConfig();
-        if (!silent) toast("本机执行器未启动，继续使用协议唤醒模式", "warn");
-        render();
+        if (!silent) toast("执行历史接口暂不可用，基础配置仍可维护", "warn");
       }
+
+      if (!silent) toast(state.config.online ? "已连接本机执行器并刷新数据" : "API 已连接，但基础配置接口不可用", state.config.online ? "ok" : "warn");
+      render();
     }
 
     function reportDefaultRange() {
@@ -2040,7 +2057,7 @@
       const title = online ? "API 配置源已连接" : "离线只读模式";
       const sub = online
         ? `基础配置保存到本地 SQLite，经 API 写入数据库。数据来自 ${BRIDGE_API}${CONFIG_API_PATHS.root}，最近刷新 ${state.config.lastLoaded || state.bridge.lastChecked || "-"}`
-        : `当前显示页面内置静态默认值，新增/编辑/删除已禁用。${state.config.error ? "原因：" + state.config.error : "请启动本机 Bridge 后刷新。"}`;
+        : `当前显示页面内置静态默认值，可打开编辑表单查看；保存、删除和新增需要先启动本机 API。${state.config.error ? "原因：" + state.config.error : "请启动本机 Bridge 后刷新。"}`;
       return `
         <div class="config-status">
           <div class="config-status-main">
@@ -2071,8 +2088,12 @@
       return `<div class="notice">请选择上方配置页签。</div>`;
     }
 
+    function canWriteConfig() {
+      return state.bridge.online && state.config.online;
+    }
+
     function configWriteDisabledAttr() {
-      return state.bridge.online && state.config.online ? "" : "disabled";
+      return canWriteConfig() ? "" : "disabled";
     }
 
     function renderPlantConfigTab() {
@@ -2093,7 +2114,7 @@
                   <td>${renderGroupNames(p.groups)}</td>
                   <td>${esc(p.sortOrder ?? 0)}</td>
                   <td><span class="tag ${p.enabled ? "ok" : "warn"}">${p.enabled ? "启用" : "停用"}</span></td>
-                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="plant" data-mode="edit" data-id="${esc(p.code)}" ${disabled}>${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="plant" data-id="${esc(p.code)}" ${disabled}>${icon("trash-2")}删除</button></span></td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="plant" data-mode="edit" data-id="${esc(p.code)}">${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="plant" data-id="${esc(p.code)}">${icon("trash-2")}删除</button></span></td>
                 </tr>`).join("") : `<tr><td colspan="6" class="empty-cell">暂无工厂配置</td></tr>`}</tbody>
             </table>
           </div>
@@ -2121,7 +2142,7 @@
                   <td>${renderCodeChips(group.zfi072Plants)}</td>
                   <td>${renderCodeChips(group.zco019Plants)}</td>
                   <td><span class="tag ${group.enabled === false ? "warn" : "ok"}">${group.enabled === false ? "停用" : "启用"}</span></td>
-                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="group" data-mode="edit" data-id="${esc(group.id)}" ${disabled}>${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="group" data-id="${esc(group.id)}" ${disabled}>${icon("trash-2")}删除</button></span></td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="group" data-mode="edit" data-id="${esc(group.id)}">${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="group" data-id="${esc(group.id)}">${icon("trash-2")}删除</button></span></td>
                 </tr>`).join("") : `<tr><td colspan="8" class="empty-cell">暂无业务范围配置</td></tr>`}</tbody>
             </table>
           </div>
@@ -2150,7 +2171,7 @@
                   <td>${esc(String(t.timeoutSeconds ?? t.timeout ?? "-"))}</td>
                   <td>${esc(String(t.retryCount ?? t.retry ?? "-"))}</td>
                   <td><span class="tag ${t.enabled === false ? "warn" : t.automation === "script" ? "ok" : "info"}">${t.enabled === false ? "停用" : t.automation === "script" ? "已接脚本" : "打开事务码"}</span></td>
-                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="tcode" data-mode="edit" data-id="${esc(t.code)}" ${disabled}>${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="tcode" data-id="${esc(t.code)}" ${disabled}>${icon("trash-2")}停用</button></span></td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="tcode" data-mode="edit" data-id="${esc(t.code)}">${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="tcode" data-id="${esc(t.code)}">${icon("trash-2")}停用</button></span></td>
                 </tr>`).join("") : `<tr><td colspan="9" class="empty-cell">暂无事务码配置</td></tr>`}</tbody>
             </table>
           </div>
@@ -2176,7 +2197,7 @@
                   <td>${renderCodeChips(getResolvedPlantsForRule(t))}</td>
                   <td>${esc(t.factoryRule || "-")}</td>
                   <td><span class="tag ${t.enabled === false ? "warn" : "ok"}">${t.enabled === false ? "停用" : "启用"}</span></td>
-                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="rule" data-mode="edit" data-id="${esc(t.code)}" ${disabled}>${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="rule" data-id="${esc(t.code)}" ${disabled}>${icon("trash-2")}停用</button></span></td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="rule" data-mode="edit" data-id="${esc(t.code)}">${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="rule" data-id="${esc(t.code)}">${icon("trash-2")}停用</button></span></td>
                 </tr>`).join("") : `<tr><td colspan="6" class="empty-cell">暂无事务码与工厂/业务范围规则</td></tr>`}</tbody>
             </table>
           </div>
@@ -2204,7 +2225,7 @@
                   <td>${renderSecretState(r.hasSecret)}</td>
                   <td><span class="tag ${r.enabled ? "ok" : "warn"}">${r.enabled ? "启用" : "停用"}</span></td>
                   <td>${esc(r.lastPush || "-")}</td>
-                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="robot" data-mode="edit" data-id="${esc(r.id)}" ${disabled}>${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="robot" data-id="${esc(r.id)}" ${disabled}>${icon("trash-2")}删除</button><button class="btn small" data-action="test-robot" data-id="${esc(r.id)}" ${disabled}>${icon("send")}测试</button></span></td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="robot" data-mode="edit" data-id="${esc(r.id)}">${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="robot" data-id="${esc(r.id)}">${icon("trash-2")}删除</button><button class="btn small" data-action="test-robot" data-id="${esc(r.id)}" ${disabled}>${icon("send")}测试</button></span></td>
                 </tr>`).join("") : `<tr><td colspan="8" class="empty-cell">暂无通知机器人</td></tr>`}</tbody>
             </table>
           </div>
@@ -2260,7 +2281,8 @@
     function buildScheduleConfigPayload() {
       const tCode = readInputValue("scheduleTCode") || state.scheduleForm.tCode || tCodes[0]?.code || "";
       const factoryGroup = readInputValue("scheduleFactoryGroup") || state.scheduleForm.factoryGroup || getTCode(tCode)?.defaultPlantGroup || factoryGroups[0]?.id || "";
-      const plantsValue = getDefaultPlantsForTCode(tCode, factoryGroup);
+      const schedulePlantsInput = document.getElementById("schedulePlants");
+      const plantsValue = normalizeRulePlantList(schedulePlantsInput ? schedulePlantsInput.value : state.scheduleForm.plants);
       const frequency = readInputValue("scheduleFrequency") || state.scheduleForm.frequency || "weekly";
       const enabled = readInputChecked("scheduleEnabled");
       const task = {
@@ -2272,7 +2294,11 @@
         plantGroupId: factoryGroup,
         factoryGroupName: getFactoryGroup(factoryGroup).name,
         plants: plantsValue,
+        plantCodes: plantsValue,
+        factoryCodes: plantsValue,
         plantsCsv: plantsValue.join(","),
+        plantCodesCsv: plantsValue.join(","),
+        factoryCodesCsv: plantsValue.join(","),
         businessAreas: getBusinessAreasForSelection(tCode, plantsValue, factoryGroup),
         businessAreasCsv: getBusinessAreasForSelection(tCode, plantsValue, factoryGroup).join(","),
         time: readInputValue("scheduleTime") || "08:00",
@@ -2283,6 +2309,8 @@
         params: {
           plants: plantsValue.join(","),
           plant: plantsValue[0] || "",
+          plantCodes: plantsValue.join(","),
+          factoryCodes: plantsValue.join(","),
           businessAreas: getBusinessAreasForSelection(tCode, plantsValue, factoryGroup).join(","),
           factoryGroup
         },
@@ -2342,7 +2370,7 @@
         `;
       }
       if (state.modal === "schedule") {
-        const schedulePlants = getDefaultPlantsForTCode(state.scheduleForm.tCode, state.scheduleForm.factoryGroup);
+        const schedulePlants = normalizeRulePlantList(state.scheduleForm.plants);
         const scheduleAreas = getBusinessAreasForSelection(state.scheduleForm.tCode, schedulePlants, state.scheduleForm.factoryGroup);
         return `
           <div class="modal-backdrop">
@@ -2357,12 +2385,20 @@
                   <div class="field"><label>执行频率</label><select id="scheduleFrequency"><option value="daily" ${state.scheduleForm.frequency === "daily" ? "selected" : ""}>每天</option><option value="weekly" ${state.scheduleForm.frequency === "weekly" ? "selected" : ""}>每周</option><option value="monthly" ${state.scheduleForm.frequency === "monthly" ? "selected" : ""}>每月</option></select></div>
                   <div class="field"><label>状态</label><label class="radio-chip"><input id="scheduleEnabled" type="checkbox" ${state.scheduleForm.enabled === false ? "" : "checked"}>启用</label></div>
                   <div class="schedule-plant-preview">
-                    <div class="schedule-plant-title">对应工厂</div>
-                    ${renderCodeChips(schedulePlants)}
+                    <div class="rule-plant-head">
+                      <div class="schedule-plant-title">对应工厂</div>
+                      <button type="button" class="btn small" data-action="reset-schedule-plants">${icon("rotate-ccw")}恢复默认</button>
+                    </div>
+                    <input type="hidden" id="schedulePlants" value="${esc(schedulePlants.join(","))}">
+                    <div id="schedulePlantChips" class="area-chips">${renderSchedulePlantChips(schedulePlants)}</div>
+                    <div class="rule-plant-add">
+                      <input id="schedulePlantAdd" placeholder="新增工厂代码">
+                      <button type="button" class="btn small" data-action="add-schedule-plant">${icon("plus")}新增</button>
+                    </div>
                   </div>
                   <div class="schedule-plant-preview">
                     <div class="schedule-plant-title">业务范围代码</div>
-                    ${renderCodeChips(scheduleAreas)}
+                    <div id="scheduleBusinessAreaChips">${renderCodeChips(scheduleAreas)}</div>
                   </div>
                   <div class="field span-2"><label>通知规则</label><div class="check-row"><label class="radio-chip"><input id="scheduleNotifyStart" type="checkbox" ${state.scheduleForm.notifyStart === false ? "" : "checked"}>执行前提醒</label><label class="radio-chip"><input id="scheduleNotifySuccess" type="checkbox" ${state.scheduleForm.notifySuccess === false ? "" : "checked"}>成功通知</label><label class="radio-chip"><input id="scheduleNotifyFail" type="checkbox" ${state.scheduleForm.notifyFail === false ? "" : "checked"}>失败告警</label></div></div>
                 </div>
@@ -2600,6 +2636,13 @@
       });
       const ruleGroup = document.getElementById("cfgRuleDefaultGroup");
       if (ruleGroup) ruleGroup.addEventListener("change", () => setRulePlantInput(getDefaultPlantsForTCode(readInputValue("cfgRuleCode"), ruleGroup.value)));
+      const schedulePlantAdd = document.getElementById("schedulePlantAdd");
+      if (schedulePlantAdd) schedulePlantAdd.addEventListener("keydown", event => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          addSchedulePlant();
+        }
+      });
       document.querySelectorAll("[data-action]").forEach(el => el.addEventListener("click", () => handleAction(el)));
     }
 
@@ -2656,6 +2699,9 @@
       if (action === "add-rule-plant") return addRulePlant();
       if (action === "remove-rule-plant") return removeRulePlant(el.dataset.plant || "");
       if (action === "reset-rule-plants") return setRulePlantInput(getDefaultPlantsForTCode(readInputValue("cfgRuleCode"), readInputValue("cfgRuleDefaultGroup")));
+      if (action === "add-schedule-plant") return addSchedulePlant();
+      if (action === "remove-schedule-plant") return removeSchedulePlant(el.dataset.plant || "");
+      if (action === "reset-schedule-plants") return setSchedulePlantInput(getDefaultPlantsForTCode(readInputValue("scheduleTCode"), readInputValue("scheduleFactoryGroup")));
       if (action === "test-robot") return testRobot(el.dataset.id || "");
       if (action === "toast-edit") return toast("编辑弹窗后续接入后台保存", "info");
       if (action === "refresh-config") return refreshConfigWithRender();
@@ -2700,7 +2746,7 @@
           nameEdited: false
         };
       }
-      state.scheduleForm.plants = getDefaultPlantsForTCode(state.scheduleForm.tCode, state.scheduleForm.factoryGroup);
+      state.scheduleForm.plants = normalizeRulePlantList(state.scheduleForm.plants);
       state.modal = "schedule";
     }
 
@@ -2770,12 +2816,9 @@
     }
 
     function openConfigModal(kind, mode, id = "") {
-      if (!state.bridge.online || !state.config.online) {
-        toast("当前为离线只读模式，不能修改基础配置", "warn");
-        return;
-      }
       state.modal = `config:${kind}:${mode}:${encodeURIComponent(id)}`;
       render();
+      if (!canWriteConfig()) toast("当前 API 未连接，可查看和修改表单；保存时需要先启动本机 API", "warn");
     }
 
     async function refreshConfigWithRender() {
@@ -2807,6 +2850,47 @@
       input.value = plantsList.join(",");
       chips.innerHTML = renderRulePlantChips(plantsList);
       chips.querySelectorAll("[data-action='remove-rule-plant']").forEach(btn => btn.addEventListener("click", () => removeRulePlant(btn.dataset.plant || "")));
+    }
+
+    function getSchedulePlantInput() {
+      const input = document.getElementById("schedulePlants");
+      return normalizeRulePlantList(input ? input.value : state.scheduleForm.plants);
+    }
+
+    function renderSchedulePlantChips(plantsValue) {
+      const plantsList = normalizeRulePlantList(plantsValue);
+      return plantsList.length
+        ? plantsList.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-schedule-plant" data-plant="${esc(code)}">${icon("x")}</button></span>`).join("")
+        : `<span class="table-hint">未配置工厂</span>`;
+    }
+
+    function setSchedulePlantInput(plantsValue) {
+      const input = document.getElementById("schedulePlants");
+      const chips = document.getElementById("schedulePlantChips");
+      const areaChips = document.getElementById("scheduleBusinessAreaChips");
+      const plantsList = normalizeRulePlantList(plantsValue);
+      state.scheduleForm.plants = plantsList;
+      if (input) input.value = plantsList.join(",");
+      if (chips) {
+        chips.innerHTML = renderSchedulePlantChips(plantsList);
+        chips.querySelectorAll("[data-action='remove-schedule-plant']").forEach(btn => btn.addEventListener("click", () => removeSchedulePlant(btn.dataset.plant || "")));
+      }
+      if (areaChips) {
+        areaChips.innerHTML = renderCodeChips(getBusinessAreasForSelection(state.scheduleForm.tCode, plantsList, state.scheduleForm.factoryGroup));
+      }
+    }
+
+    function addSchedulePlant() {
+      const input = document.getElementById("schedulePlantAdd");
+      const code = normalizeRulePlantCode(input?.value || "");
+      if (!code) return toast("请输入工厂代码", "warn");
+      setSchedulePlantInput([...getSchedulePlantInput(), code]);
+      if (input) input.value = "";
+    }
+
+    function removeSchedulePlant(code) {
+      const target = normalizeRulePlantCode(code);
+      setSchedulePlantInput(getSchedulePlantInput().filter(item => normalizeRulePlantCode(item) !== target));
     }
 
     function addRulePlant() {
@@ -2989,7 +3073,7 @@
     }
 
     async function saveConfigFromModal(kind, mode, id = "") {
-      if (!state.bridge.online || !state.config.online) return toast("当前为离线只读模式，不能保存基础配置", "warn");
+      if (!canWriteConfig()) return toast("当前 API 未连接，不能保存基础配置；请启动本机 API 后刷新再保存", "warn");
       try {
         const payload = buildConfigPayload(kind, mode, id);
         const resourceId = getConfigResourceId(kind, payload, id);
@@ -3008,7 +3092,7 @@
     }
 
     async function deleteConfigItem(kind, id) {
-      if (!state.bridge.online || !state.config.online) return toast("当前为离线只读模式，不能删除基础配置", "warn");
+      if (!canWriteConfig()) return toast("当前 API 未连接，不能删除基础配置；请启动本机 API 后刷新再删除", "warn");
       if (!id) return toast("缺少配置主键，无法删除", "warn");
       try {
         await bridgeFetch(getConfigResourcePath(kind, id), { method: "DELETE" });
@@ -3022,7 +3106,7 @@
 
     function testRobot(id) {
       const robot = robots.find(item => item.id === id);
-      if (!state.bridge.online || !state.config.online) return toast("当前离线，只显示机器人配置状态，不能测试推送", "warn");
+      if (!canWriteConfig()) return toast("当前离线，只显示机器人配置状态，不能测试推送", "warn");
       toast("已请求测试通知：" + (robot?.name || id || "通知机器人"), "ok");
     }
 
