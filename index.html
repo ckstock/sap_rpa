@@ -671,16 +671,26 @@
     .chip-x {
       width: 18px;
       height: 18px;
-      border: 0;
+      min-width: 18px;
+      border: 1px solid rgba(9, 88, 217, .28);
       border-radius: 4px;
-      background: transparent;
-      color: #0958d9;
+      background: #fff;
+      color: #063f9e;
       padding: 0;
-      display: inline-grid;
-      place-items: center;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1;
       cursor: pointer;
     }
-    .chip-x:hover { background: rgba(24, 144, 255, .12); }
+    .chip-x:hover,
+    .chip-x:focus-visible {
+      background: #d6eaff;
+      border-color: #1677ff;
+      outline: none;
+    }
     .advanced-settings {
       grid-column: 1 / -1;
       border: 1px solid var(--line);
@@ -831,11 +841,11 @@
       { code: "ZPP063", name: "验证备注", module: "PP", stage: "顺序执行", script: "ZPP063.vbs", icon: "clipboard-check", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
       { code: "ZPP063X", name: "回检验证", module: "PP", stage: "顺序执行", script: "ZPP063X.vbs", icon: "rotate-ccw", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
       { code: "ZFI019NC", name: "验证修正", module: "FI", stage: "顺序执行", script: "ZFI019NC.vbs", icon: "file-pen-line", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
-      { code: "ZFI080", name: "实际材料保存", module: "FI", stage: "核心并行", script: "ZFI080.vbs", icon: "boxes", params: ["year", "week", "plants", "businessAreas", "weekEnd"], factoryRule: "按业务范围和周结日期保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
+      { code: "ZFI080", name: "实际材料保存", module: "FI", stage: "核心并行", script: "ZFI080.vbs", icon: "boxes", params: ["plants"], factoryRule: "按业务范围和周结日期保存", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 1200, retry: 2, enabled: true },
       { code: "ZFI019NI", name: "实际材料结果保存", module: "FI", stage: "核心并行", script: "ZFI019NI.vbs", icon: "save", params: ["year", "week", "plants", "businessAreas"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
-      { code: "ZCO019", name: "标准材料成本", module: "CO", stage: "核心并行", script: "ZCO019.vbs", icon: "tag", params: ["year", "week", "plants"], factoryRule: "明细保存与汇总保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
-      { code: "ZFI019NA", name: "周损益生成", module: "FI", stage: "最终生成", script: "ZFI019NA.vbs", icon: "file-spreadsheet", params: ["year", "week", "plants", "businessAreas"], factoryRule: "东台、黄江等范围保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 300, retry: 2, enabled: true },
-      { code: "ZFI019NL", name: "周损益保存导出", module: "FI", stage: "最终生成", script: "ZFI019NL.vbs", icon: "bar-chart-3", params: ["year", "week", "plants", "businessAreas"], factoryRule: "按选中厂区工厂和业务范围导出", defaultPlantGroup: "PINGHU_30", automation: "script", timeout: 300, retry: 3, enabled: true },
+      { code: "ZCO019", name: "标准材料成本", module: "CO", stage: "核心并行", script: "ZCO019.vbs", icon: "tag", params: ["plants"], factoryRule: "明细保存与汇总保存", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 600, retry: 2, enabled: true },
+      { code: "ZFI019NA", name: "周损益生成", module: "FI", stage: "最终生成", script: "ZFI019NA.vbs", icon: "file-spreadsheet", params: ["plants"], factoryRule: "东台、黄江等范围保存", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 600, retry: 2, enabled: true },
+      { code: "ZFI019NL", name: "周损益保存导出", module: "FI", stage: "最终生成", script: "ZFI019NL.vbs", icon: "bar-chart-3", params: ["businessAreas"], factoryRule: "按选中厂区工厂和业务范围导出", defaultPlantGroup: "PINGHU_30", automation: "script", timeout: 300, retry: 3, enabled: true },
       { code: "ZFI080B", name: "工费率保存", module: "FI", stage: "周结推送", script: "ZFI080B.vbs", icon: "calculator", params: ["year", "week", "plants"], factoryRule: "东台、黄江保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
       { code: "ZFI148", name: "推送大数据平台", module: "FI", stage: "周结推送", script: "ZFI148.vbs", icon: "send", params: ["year", "week", "plants"], factoryRule: "保存后推送", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true }
     ];
@@ -1096,6 +1106,11 @@
     function normalizeTransactionRuleFromApi(item) {
       const code = String(item.code || item.tcode || item.tCode || item.transactionCode || "").trim().toUpperCase();
       const base = getTCode(code) || {};
+      const params = getDisplayParamsForTransaction({ ...base, code, params: item.paramsList || item.params || base.params });
+      const isBusinessAreaRange = code === "ZFI019NL" || (params.includes("businessAreas") && !params.includes("plants"));
+      const sourcePlants = toArray(item.plants || item.defaultPlants || item.allowedPlants || item.plantCodes || item.fixedPlants || item.fixedPlantCodes);
+      const sourceFixedPlants = toArray(item.fixedPlants || item.fixedPlantCodes || item.plants || item.defaultPlants || item.allowedPlants || item.plantCodes);
+      const sourceBusinessAreas = toArray(item.businessAreas || item.businessAreaCodes || base.businessAreas);
       return {
         ...base,
         code,
@@ -1106,11 +1121,11 @@
         icon: item.icon || base.icon || "terminal",
         params: toArray(item.paramsList || item.params || base.params),
         factoryRule: item.factoryRule || item.ruleName || base.factoryRule || "",
-        fixedPlants: toArray(item.fixedPlants || item.fixedPlantCodes || item.plants || item.defaultPlants || item.allowedPlants || item.plantCodes),
-        plants: toArray(item.plants || item.defaultPlants || item.allowedPlants || item.plantCodes || item.fixedPlants || item.fixedPlantCodes),
+        fixedPlants: isBusinessAreaRange ? [] : sourceFixedPlants,
+        plants: isBusinessAreaRange ? [] : sourcePlants,
         selectableGroupIds: toArray(item.selectableGroupIds || item.selectableGroups || base.selectableGroupIds),
         businessAreaMode: item.businessAreaMode || base.businessAreaMode || "byPlant",
-        businessAreas: toArray(item.businessAreas || item.businessAreaCodes || base.businessAreas),
+        businessAreas: sourceBusinessAreas,
         defaultPlantGroup: item.defaultPlantGroup || item.plantGroupId || item.groupId || base.defaultPlantGroup || "PINGHU_30",
         automation: item.automation || base.automation || "openOnly",
         timeout: Number(item.timeoutSeconds || item.timeout || base.timeout || 180),
@@ -1274,6 +1289,7 @@
       const value = String(status || "").toLowerCase();
       if (value === "succeeded" || value === "completed") return "success";
       if (value === "error") return "failed";
+      if (value === "partial_failed" || value === "partialfailed") return "partial_failed";
       if (value === "cancelled") return "canceled";
       if (value === "pending" || value === "created") return "queued";
       if (value === "in_progress" || value === "processing" || value === "executing") return "running";
@@ -1330,6 +1346,7 @@
       const status = normalizeRunStatus(run?.status);
       if (status === "running") return "正在执行";
       if (status === "success") return "已完成";
+      if (status === "partial_failed") return "部分失败";
       if (status === "failed") return "执行失败";
       if (status === "canceled") return "已取消";
       const workItemsAhead = toQueueNumber(run?.workItemsAhead ?? state.queue.workItemsAhead);
@@ -1601,7 +1618,7 @@
     function renderPageSubTitle() {
       const subtitles = {
         dashboard: "",
-        execute: "选择事务码和工厂参数，提交到后台串行队列。",
+        execute: "选择事务码和执行范围，提交到后台串行队列。",
         reports: "",
         schedule: "",
         config: "维护工厂、业务范围、事务码和工厂规则。"
@@ -1815,7 +1832,7 @@
         <section class="grid cols-2">
           <div class="panel">
             <div class="panel-header">
-              <div><div class="panel-title">${icon("play-circle")}执行任务</div><div class="panel-sub">选择事务码后，按后台配置自动带入对应工厂。</div></div>
+              <div><div class="panel-title">${icon("play-circle")}执行任务</div><div class="panel-sub">选择事务码后，按后台配置自动带入执行范围。</div></div>
               <span class="tag ${state.role === "executor" ? "ok" : "warn"}">${state.role === "executor" ? "可执行" : "只读"}</span>
             </div>
             <div class="panel-body">
@@ -1873,8 +1890,8 @@
       return `
         <div class="execute-range">
           <div class="execute-range-row">
-            <div class="execute-range-label">执行工厂</div>
-            <div class="area-chips">${payload.plants.map(code => `<span class="area-chip">${esc(code)}</span>`).join("") || `<span class="area-chip">未配置</span>`}</div>
+            <div class="execute-range-label">执行${esc(payload.rangeLabel)}</div>
+            <div class="area-chips">${payload.rangeValues.map(code => `<span class="area-chip">${esc(code)}</span>`).join("") || `<span class="area-chip">${esc(payload.rangeEmptyText)}</span>`}</div>
           </div>
         </div>
       `;
@@ -1938,6 +1955,10 @@
     }
 
     function getResolvedPlantsForRule(t, groupId = t?.defaultPlantGroup) {
+      if (getRuleRangeKind(t) === "businessArea") {
+        const explicitAreas = toArray(t?.businessAreas);
+        return explicitAreas.length ? unique(explicitAreas) : getDefaultBusinessAreasForTCode(t?.code || "", groupId);
+      }
       return getDefaultPlantsForTCode(t?.code || "", groupId);
     }
 
@@ -1951,33 +1972,58 @@
       return unique(selectedPlants);
     }
 
-    function getBusinessAreasForSelection(tCode, selectedPlants = state.form.plants, groupId = state.form.factoryGroup) {
-      const group = getFactoryGroup(groupId);
-      if (!selectedPlants.length) return [];
-      if (tCode === "ZFI019NL") return unique(toArray(group.zfi019nlAreas).length ? group.zfi019nlAreas : selectedPlants.map(code => plantCatalog[code]?.area));
-      if (tCode === "ZFI080") return unique(toArray(group.zfi080Areas).length ? group.zfi080Areas : selectedPlants.map(code => plantCatalog[code]?.area));
-      if (tCode === "ZCO019" || tCode === "ZFI057") {
-        return unique(selectedPlants.map(code => plantCatalog[code]?.area));
+    function getDefaultRunRangeForTCode(tCode, groupId = state.form.factoryGroup) {
+      const t = getTCode(tCode);
+      if (getRuleRangeKind(t) === "businessArea") {
+        const explicitAreas = toArray(t?.businessAreas);
+        return explicitAreas.length ? unique(explicitAreas) : getDefaultBusinessAreasForTCode(tCode, groupId);
       }
-      return unique(selectedPlants.map(code => plantCatalog[code]?.area));
+      return getDefaultPlantsForTCode(tCode, groupId);
+    }
+
+    function getRunRangeForTCode(tCode, selectedValues, groupId = state.form.factoryGroup) {
+      const t = getTCode(tCode);
+      const selected = unique(toArray(selectedValues));
+      if (getRuleRangeKind(t) === "businessArea") {
+        return selected.length ? selected : getDefaultRunRangeForTCode(tCode, groupId);
+      }
+      return getRunPlantsForTCode(tCode, selected);
+    }
+
+    function getBusinessAreasForSelection(tCode, selectedPlants = state.form.plants, groupId = state.form.factoryGroup) {
+      const t = getTCode(tCode);
+      const group = getFactoryGroup(groupId);
+      const plantList = toArray(selectedPlants);
+      if (getRuleRangeKind(t) === "businessArea") {
+        const explicitAreas = toArray(t?.businessAreas);
+        if (explicitAreas.length) return unique(explicitAreas);
+        if (tCode === "ZFI019NL") return unique(toArray(group.zfi019nlAreas).length ? group.zfi019nlAreas : plantList.map(code => plantCatalog[code]?.area));
+      }
+      if (!plantList.length) return [];
+      if (tCode === "ZFI019NL") return unique(toArray(group.zfi019nlAreas).length ? group.zfi019nlAreas : plantList.map(code => plantCatalog[code]?.area));
+      if (tCode === "ZFI080") return unique(toArray(group.zfi080Areas).length ? group.zfi080Areas : plantList.map(code => plantCatalog[code]?.area));
+      if (tCode === "ZCO019" || tCode === "ZFI057") {
+        return unique(plantList.map(code => plantCatalog[code]?.area));
+      }
+      return unique(plantList.map(code => plantCatalog[code]?.area));
     }
 
     function syncExecutionDefaults(forcePlants = false) {
       const t = getTCode(state.form.tCode);
-      if (forcePlants && t.defaultPlantGroup) {
+      if (forcePlants && t?.defaultPlantGroup) {
         state.form.factoryGroup = t.defaultPlantGroup;
       }
-      if (!Array.isArray(state.form.plants)) state.form.plants = getDefaultPlantsForTCode(state.form.tCode);
+      if (!Array.isArray(state.form.plants)) state.form.plants = getDefaultRunRangeForTCode(state.form.tCode);
       if (!state.form.factoryGroup) state.form.factoryGroup = "PINGHU_30";
       if (forcePlants) {
-        state.form.plants = getDefaultPlantsForTCode(state.form.tCode);
+        state.form.plants = getDefaultRunRangeForTCode(state.form.tCode);
       }
       state.form.plants = unique(state.form.plants);
     }
 
     function renderStep(step, i) {
       const cls = step.status === "done" ? "done" : step.status === "run" ? "run" : step.status === "fail" ? "fail" : "";
-      const mark = step.status === "done" ? "✓" : step.status === "fail" ? "!" : (i + 1);
+      const mark = step.status === "done" ? "?" : step.status === "fail" ? "!" : (i + 1);
       return `<div class="step ${cls}"><span class="step-icon">${mark}</span><span class="step-text">${esc(step.text)}</span><span class="step-time">${esc(step.time)}</span></div>`;
     }
 
@@ -2167,7 +2213,7 @@
                   <td><strong>${esc(t.code)}</strong></td>
                   <td>${esc(t.name)}</td>
                   <td>${esc(t.module || "-")}</td>
-                  <td>${renderCodeChips(t.params)}</td>
+                  <td>${renderCodeChips(getDisplayParamsForTransaction(t))}</td>
                   <td>${esc(String(t.timeoutSeconds ?? t.timeout ?? "-"))}</td>
                   <td>${esc(String(t.retryCount ?? t.retry ?? "-"))}</td>
                   <td><span class="tag ${t.enabled === false ? "warn" : t.automation === "script" ? "ok" : "info"}">${t.enabled === false ? "停用" : t.automation === "script" ? "已接脚本" : "打开事务码"}</span></td>
@@ -2233,6 +2279,14 @@
       `;
     }
 
+    function getDisplayParamsForTransaction(transaction) {
+      const params = toArray(transaction?.params);
+      if (transaction?.code === "ZFI019NL") {
+        return unique(params.map(param => param === "plants" ? "businessAreas" : param));
+      }
+      return params;
+    }
+
     function renderCodeChips(values) {
       const items = toArray(values);
       if (!items.length) return `<span class="table-hint">-</span>`;
@@ -2247,11 +2301,36 @@
       return unique(toArray(value).map(normalizeRulePlantCode).filter(Boolean));
     }
 
-    function renderRulePlantChips(plantsValue) {
+    function getRuleRangeKind(transaction) {
+      const code = String(transaction?.code || "").toUpperCase();
+      const params = getDisplayParamsForTransaction(transaction);
+      if (code === "ZFI019NL") return "businessArea";
+      return params.includes("businessAreas") && !params.includes("plants") ? "businessArea" : "plant";
+    }
+
+    function getRuleRangeMeta(transaction) {
+      const isBusinessArea = getRuleRangeKind(transaction) === "businessArea";
+      return {
+        isBusinessArea,
+        title: isBusinessArea ? "事务码执行业务范围" : "事务码执行工厂",
+        addPlaceholder: isBusinessArea ? "新增业务范围代码" : "新增工厂代码",
+        emptyText: isBusinessArea ? "未配置业务范围" : "未配置工厂"
+      };
+    }
+
+    function getDefaultBusinessAreasForTCode(tCode, groupId = state.form.factoryGroup) {
+      const t = getTCode(tCode);
+      const explicitAreas = toArray(t?.businessAreas);
+      if (getRuleRangeKind(t) === "businessArea" && explicitAreas.length) return unique(explicitAreas);
+      return getBusinessAreasForSelection(tCode, getDefaultPlantsForTCode(tCode, groupId), groupId);
+    }
+
+    function renderRulePlantChips(plantsValue, transaction) {
       const plantsList = normalizeRulePlantList(plantsValue);
+      const meta = getRuleRangeMeta(transaction || { code: readInputValue("cfgRuleCode") });
       return plantsList.length
-        ? plantsList.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-rule-plant" data-plant="${esc(code)}">${icon("x")}</button></span>`).join("")
-        : `<span class="table-hint">未配置工厂</span>`;
+        ? plantsList.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-rule-plant" data-plant="${esc(code)}" aria-label="删除 ${esc(code)}" title="删除 ${esc(code)}">X</button></span>`).join("")
+        : `<span class="table-hint">${meta.emptyText}</span>`;
     }
 
     function renderGroupNames(groupIds) {
@@ -2543,8 +2622,13 @@
       const data = item || { code: "", name: "", module: "", stage: "并行启动", script: "", params: ["year", "week", "plants"], factoryRule: "", defaultPlantGroup: factoryGroups[0]?.id || "", plants: [], fixedPlants: [], selectableGroupIds: [], businessAreaMode: "byPlant", businessAreas: [], automation: "openOnly", timeout: 180, retry: 2, enabled: true };
       const selectedGroupId = data.defaultPlantGroup || factoryGroups[0]?.id || "";
       const defaultPlants = getDefaultPlantsForTCode(data.code, selectedGroupId);
+      const defaultBusinessAreas = getDefaultBusinessAreasForTCode(data.code, selectedGroupId);
+      const rangeMeta = getRuleRangeMeta(data);
       const customPlants = unique(toArray(data.plants).length ? data.plants : data.fixedPlants);
-      const resolvedPlants = normalizeRulePlantList(customPlants.length ? customPlants : defaultPlants);
+      const customBusinessAreas = unique(toArray(data.businessAreas));
+      const resolvedPlants = normalizeRulePlantList(rangeMeta.isBusinessArea
+        ? (customBusinessAreas.length ? customBusinessAreas : defaultBusinessAreas)
+        : (customPlants.length ? customPlants : defaultPlants));
       return `
         <div class="form-grid">
           <div class="field"><label>事务码</label><input id="cfgRuleCode" value="${esc(data.code)}" ${mode === "edit" ? "disabled" : ""} placeholder="例如 ZFI072A"></div>
@@ -2553,13 +2637,13 @@
           <div class="field span-3"><label>规则说明</label><input id="cfgRuleFactoryRule" value="${esc(data.factoryRule || "")}" placeholder="例如 按配置工厂执行"></div>
           <div class="rule-plant-editor">
             <div class="rule-plant-head">
-              <div class="rule-plant-title">事务码执行工厂</div>
+              <div class="rule-plant-title">${rangeMeta.title}</div>
               <button type="button" class="btn small" data-action="reset-rule-plants">${icon("rotate-ccw")}恢复默认</button>
             </div>
             <input type="hidden" id="cfgRulePlants" value="${esc(resolvedPlants.join(","))}">
-            <div id="cfgRulePlantChips" class="area-chips">${renderRulePlantChips(resolvedPlants)}</div>
+            <div id="cfgRulePlantChips" class="area-chips">${renderRulePlantChips(resolvedPlants, data)}</div>
             <div class="rule-plant-add">
-              <input id="cfgRulePlantAdd" placeholder="新增工厂代码">
+              <input id="cfgRulePlantAdd" placeholder="${rangeMeta.addPlaceholder}">
               <button type="button" class="btn small" data-action="add-rule-plant">${icon("plus")}新增</button>
             </div>
           </div>
@@ -2635,7 +2719,7 @@
         if (input) input.addEventListener("change", () => { state.scheduleForm[key] = input.checked; });
       });
       const ruleGroup = document.getElementById("cfgRuleDefaultGroup");
-      if (ruleGroup) ruleGroup.addEventListener("change", () => setRulePlantInput(getDefaultPlantsForTCode(readInputValue("cfgRuleCode"), ruleGroup.value)));
+      if (ruleGroup) ruleGroup.addEventListener("change", () => resetRuleRangeInput());
       const schedulePlantAdd = document.getElementById("schedulePlantAdd");
       if (schedulePlantAdd) schedulePlantAdd.addEventListener("keydown", event => {
         if (event.key === "Enter") {
@@ -2653,7 +2737,7 @@
 
     function updateScheduleTCode(tCode) {
       state.scheduleForm.tCode = tCode;
-      state.scheduleForm.plants = getDefaultPlantsForTCode(tCode, state.scheduleForm.factoryGroup);
+      state.scheduleForm.plants = getDefaultRunRangeForTCode(tCode, state.scheduleForm.factoryGroup);
       if (!state.scheduleForm.nameEdited) {
         state.scheduleForm.name = defaultScheduleName(tCode);
       }
@@ -2662,7 +2746,7 @@
 
     function updateScheduleFactoryGroup(groupId) {
       state.scheduleForm.factoryGroup = groupId;
-      state.scheduleForm.plants = getDefaultPlantsForTCode(state.scheduleForm.tCode, groupId);
+      state.scheduleForm.plants = getDefaultRunRangeForTCode(state.scheduleForm.tCode, groupId);
       render();
     }
 
@@ -2680,7 +2764,7 @@
         return render();
       }
       if (action === "select-all-plants") {
-        state.form.plants = getDefaultPlantsForTCode(state.form.tCode);
+        state.form.plants = getDefaultRunRangeForTCode(state.form.tCode);
         syncExecutionDefaults(false);
         return render();
       }
@@ -2698,7 +2782,7 @@
       if (action === "delete-config") return deleteConfigItem(el.dataset.kind, el.dataset.id || "");
       if (action === "add-rule-plant") return addRulePlant();
       if (action === "remove-rule-plant") return removeRulePlant(el.dataset.plant || "");
-      if (action === "reset-rule-plants") return setRulePlantInput(getDefaultPlantsForTCode(readInputValue("cfgRuleCode"), readInputValue("cfgRuleDefaultGroup")));
+      if (action === "reset-rule-plants") return resetRuleRangeInput();
       if (action === "add-schedule-plant") return addSchedulePlant();
       if (action === "remove-schedule-plant") return removeSchedulePlant(el.dataset.plant || "");
       if (action === "reset-schedule-plants") return setSchedulePlantInput(getDefaultPlantsForTCode(readInputValue("scheduleTCode"), readInputValue("scheduleFactoryGroup")));
@@ -2848,8 +2932,18 @@
       if (!input || !chips) return;
       const plantsList = normalizeRulePlantList(plantsValue);
       input.value = plantsList.join(",");
-      chips.innerHTML = renderRulePlantChips(plantsList);
+      chips.innerHTML = renderRulePlantChips(plantsList, getTCode(readInputValue("cfgRuleCode")));
       chips.querySelectorAll("[data-action='remove-rule-plant']").forEach(btn => btn.addEventListener("click", () => removeRulePlant(btn.dataset.plant || "")));
+    }
+
+    function resetRuleRangeInput() {
+      const code = readInputValue("cfgRuleCode");
+      const groupId = readInputValue("cfgRuleDefaultGroup");
+      const transaction = getTCode(code);
+      const values = getRuleRangeKind(transaction) === "businessArea"
+        ? getDefaultBusinessAreasForTCode(code, groupId)
+        : getDefaultPlantsForTCode(code, groupId);
+      return setRulePlantInput(values);
     }
 
     function getSchedulePlantInput() {
@@ -2860,7 +2954,7 @@
     function renderSchedulePlantChips(plantsValue) {
       const plantsList = normalizeRulePlantList(plantsValue);
       return plantsList.length
-        ? plantsList.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-schedule-plant" data-plant="${esc(code)}">${icon("x")}</button></span>`).join("")
+        ? plantsList.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-schedule-plant" data-plant="${esc(code)}" aria-label="删除工厂 ${esc(code)}" title="删除工厂 ${esc(code)}">X</button></span>`).join("")
         : `<span class="table-hint">未配置工厂</span>`;
     }
 
@@ -2996,24 +3090,33 @@
     function buildRuleConfigPayload(mode, id) {
       const code = (mode === "edit" ? id : readInputValue("cfgRuleCode")).toUpperCase();
       const payload = buildExistingTransactionPayload(code);
-      const plantsValue = normalizeRulePlantList(readInputValue("cfgRulePlants"));
+      const rangeValue = normalizeRulePlantList(readInputValue("cfgRulePlants"));
+      const isBusinessAreaRange = getRuleRangeKind({ ...payload, code }) === "businessArea";
       const selectableInput = readInputValue("cfgRuleSelectableGroups");
       const businessAreasInput = readInputValue("cfgRuleBusinessAreas");
       const selectableGroupIds = selectableInput ? toArray(selectableInput) : toArray(payload.selectableGroupIds);
-      const businessAreas = businessAreasInput ? toArray(businessAreasInput) : toArray(payload.businessAreas);
+      const businessAreas = isBusinessAreaRange ? rangeValue : (businessAreasInput ? toArray(businessAreasInput) : toArray(payload.businessAreas));
       payload.name = readInputValue("cfgRuleName") || payload.name || code;
       payload.script = readInputValue("cfgRuleScript") || payload.script || (code + ".vbs");
       payload.scriptFile = payload.script;
       payload.factoryRule = readInputValue("cfgRuleFactoryRule");
       payload.defaultPlantGroup = readInputValue("cfgRuleDefaultGroup");
       payload.defaultGroup = payload.defaultPlantGroup;
-      payload.plants = plantsValue;
-      payload.plantsCsv = plantsValue.join(",");
-      payload.fixedPlants = plantsValue;
-      payload.fixedPlantsCsv = plantsValue.join(",");
+      if (isBusinessAreaRange) {
+        payload.plants = [];
+        payload.plantsCsv = "";
+        payload.fixedPlants = [];
+        payload.fixedPlantsCsv = "";
+        payload.businessAreaMode = "fixed";
+      } else {
+        payload.plants = rangeValue;
+        payload.plantsCsv = rangeValue.join(",");
+        payload.fixedPlants = rangeValue;
+        payload.fixedPlantsCsv = rangeValue.join(",");
+      }
       payload.selectableGroupIds = selectableGroupIds;
       payload.selectableGroupIdsCsv = selectableGroupIds.join(",");
-      payload.businessAreaMode = readInputValue("cfgRuleBusinessAreaMode") || payload.businessAreaMode || "byPlant";
+      payload.businessAreaMode = payload.businessAreaMode || readInputValue("cfgRuleBusinessAreaMode") || "byPlant";
       payload.businessAreas = businessAreas;
       payload.businessAreasCsv = businessAreas.join(",");
       payload.enabled = readInputChecked("cfgRuleEnabled");
@@ -3175,7 +3278,7 @@
       state.currentRun = { id: "RUN-" + new Date().toISOString().replace(/\D/g, "").slice(0, 14), payload };
       setStep(0, "run");
       addLog("INFO", "提交任务：" + state.currentRun.id);
-      addLog("INFO", "执行范围：" + payload.factoryGroupName + " / 工厂 " + payload.plantsCsv);
+      addLog("INFO", "执行范围：" + payload.factoryGroupName + " / " + payload.rangeLabel + " " + payload.rangeCsv);
       render();
 
       try {
@@ -3227,6 +3330,8 @@
           params: {
             plants: payload.plantsCsv,
             plant: payload.plant,
+            plantCodes: payload.plantsCsv,
+            factoryCodes: payload.plantsCsv,
             factoryGroup: payload.factoryGroup,
             businessAreas: payload.businessAreasCsv,
             remark: payload.remark
@@ -3238,7 +3343,7 @@
     function launchProtocol(runId = "") {
       const url = buildProtocolUrl(runId);
       const payload = buildRunPayload();
-      addLog("INFO", "协议唤醒 SapWebLauncher：" + payload.tcode + "，工厂 " + payload.plantsCsv);
+      addLog("INFO", "协议唤醒 SapWebLauncher：" + payload.tcode + "，" + payload.rangeLabel + " " + payload.rangeCsv);
       location.href = url;
     }
 
@@ -3272,7 +3377,7 @@
           setStep(3, "run");
           addRunStatusLog("INFO", "running-" + runId, "执行器已领取任务，开始占用 SAP GUI 桌面会话");
         }
-        if (status === "success" || status === "failed" || status === "canceled") {
+        if (status === "success" || status === "partial_failed" || status === "failed" || status === "canceled") {
           setStep(1, "done");
           setStep(2, "done");
           setStep(3, status === "success" ? "done" : "fail");
@@ -3282,7 +3387,7 @@
           }
           state.executing = false;
           await refreshBridgeData({ silent: true });
-          toast(status === "success" ? "执行成功，结果已写入 SQLite" : "执行失败，结果已写入 SQLite", status === "success" ? "ok" : "warn");
+          toast(status === "success" ? "执行成功，结果已写入 SQLite" : "执行结束，存在失败项，结果已写入 SQLite", status === "success" ? "ok" : "warn");
           return;
         }
         render();
@@ -3297,8 +3402,8 @@
       const payload = buildRunPayload();
       const flow = [
         () => { setStep(1, "done"); setStep(2, "run"); addLog("INFO", "准备 SAP GUI 会话并注入事务码参数"); },
-        () => { setStep(2, "done"); setStep(3, "run"); addLog("INFO", "执行 " + payload.tcode + "，工厂参数：" + payload.plantsCsv); },
-        () => { setStep(3, "done"); setStep(4, "run"); addLog("OK", "工厂参数：" + payload.plantsCsv); },
+        () => { setStep(2, "done"); setStep(3, "run"); addLog("INFO", "执行 " + payload.tcode + "，" + payload.rangeLabel + "参数：" + payload.rangeCsv); },
+        () => { setStep(3, "done"); setStep(4, "run"); addLog("OK", payload.rangeLabel + "参数：" + payload.rangeCsv); },
         () => finishLocalSimulation("执行完成，已模拟推送钉钉通知", "OK")
       ];
       flow.forEach((fn, i) => setTimeout(() => { fn(); render(); }, 650 * (i + 1)));
@@ -3318,8 +3423,15 @@
       syncExecutionDefaults(false);
       const t = getTCode(state.form.tCode);
       const group = getFactoryGroup(state.form.factoryGroup);
-      const selectedPlants = getRunPlantsForTCode(state.form.tCode, state.form.plants);
-      const businessAreas = getBusinessAreasForSelection(state.form.tCode, selectedPlants, state.form.factoryGroup);
+      const rangeMeta = getRuleRangeMeta(t);
+      const isBusinessAreaRange = rangeMeta.isBusinessArea;
+      const selectedRange = getRunRangeForTCode(state.form.tCode, state.form.plants, state.form.factoryGroup);
+      const selectedPlants = isBusinessAreaRange ? [] : selectedRange;
+      const businessAreas = isBusinessAreaRange
+        ? selectedRange
+        : getBusinessAreasForSelection(state.form.tCode, selectedPlants, state.form.factoryGroup);
+      const rangeValues = selectedRange;
+      const rangeLabel = isBusinessAreaRange ? "业务范围" : "工厂";
       return {
         source: "netlify-static-portal",
         action: "run",
@@ -3332,6 +3444,11 @@
         plantsCsv: selectedPlants.join(","),
         businessAreas,
         businessAreasCsv: businessAreas.join(","),
+        rangeKind: isBusinessAreaRange ? "businessArea" : "plant",
+        rangeLabel,
+        rangeValues,
+        rangeCsv: rangeValues.join(","),
+        rangeEmptyText: isBusinessAreaRange ? "未配置业务范围" : "未配置工厂",
         notify: state.form.notify,
         remark: state.form.remark,
         createdBy: state.user.name,
@@ -3347,6 +3464,8 @@
         script: p.script,
         plant: p.plant,
         plants: p.plantsCsv,
+        plantCodes: p.plantsCsv,
+        factoryCodes: p.plantsCsv,
         businessAreas: p.businessAreasCsv,
         factoryGroup: p.factoryGroup
       });

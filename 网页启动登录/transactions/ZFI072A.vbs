@@ -8,7 +8,7 @@
 
 On Error Resume Next
 
-Dim tcode, plantsCsv, businessAreasCsv, factoryGroup, unresolvedPlantsToken, unresolvedOkCodeToken
+Dim tcode, plantsCsv, factoryGroup, unresolvedPlantsToken, unresolvedOkCodeToken
 Dim targetSystem, targetClient, targetUser, unresolvedSapSystemToken, unresolvedSapClientToken, unresolvedSapUserToken
 Dim targetDate, yearValue, weekValue, pageYear, pageWeek, periodValue, weekEndValue
 Dim plantValue, setOk
@@ -21,7 +21,6 @@ targetSystem = "{SAP_SYSTEM}"
 targetClient = "{SAP_CLIENT}"
 targetUser = "{SAP_USER}"
 plantsCsv = "{PLANTS}"
-businessAreasCsv = "{BUSINESS_AREAS}"
 factoryGroup = "{FACTORY_GROUP}"
 pageYear = "{YEAR}"
 pageWeek = "{WEEK}"
@@ -818,7 +817,6 @@ WScript.Echo "INFO: transaction=" & tcode
 WScript.Echo "INFO: year=" & yearValue
 WScript.Echo "INFO: week=" & weekValue
 If plantsCsv <> "" Then WScript.Echo "INFO: plants=" & plantsCsv
-If businessAreasCsv <> "" Then WScript.Echo "INFO: businessAreas=" & businessAreasCsv
 If factoryGroup <> "" Then WScript.Echo "INFO: factoryGroup=" & factoryGroup
 
 Err.Clear

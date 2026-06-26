@@ -1,40 +1,40 @@
-' @tcode=ZFI019NL
-' @name=ZFI019NL business area receipt export
-' @params=businessAreas
+' @tcode=ZFI080
+' @name=ZFI080 receipt detail export
+' @params=plants
 ' @dateRule=LAST_FULL_WEEK_BY_SYSTEM_DATE
-' @factoryRule=single business area supplied by launcher/API
+' @factoryRule=single plant supplied by launcher/API
 '
 ' Standardized for SapWebLauncher. Source is ASCII/WSH safe.
 
 On Error Resume Next
 
-Dim tcode, businessAreasCsv, factoryGroup
+Dim tcode, plantsCsv, factoryGroup
 Dim yearValue, weekValue, periodValue, weekEndValue, dateLowValue, dateHighValue
-Dim businessAreaValue
+Dim plantValue
 Dim SapGuiAuto, application, connection, session
 Dim retries, sleepMs, statusType, statusText
-Dim unresolvedOkCodeToken, unresolvedAreasToken
+Dim unresolvedOkCodeToken, unresolvedPlantsToken
 
 tcode = "{OK_CODE}"
-businessAreasCsv = "{BUSINESS_AREAS}"
+plantsCsv = "{PLANTS}"
 factoryGroup = "{FACTORY_GROUP}"
 yearValue = "{YEAR}"
 weekValue = "{WEEK}"
 periodValue = "{PERIOD}"
 weekEndValue = "{WEEK_END}"
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
-unresolvedAreasToken = "{" & "BUSINESS_AREAS" & "}"
+unresolvedPlantsToken = "{" & "PLANTS" & "}"
 
-If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFI019NL"
-If UCase(Trim(CStr(tcode))) <> "ZFI019NL" Then Fail "ZFI019NL script refuses tcode=" & CStr(tcode), 10
-If Trim(CStr(businessAreasCsv)) = unresolvedAreasToken Then businessAreasCsv = ""
+If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFI080"
+If UCase(Trim(CStr(tcode))) <> "ZFI080" Then Fail "ZFI080 script refuses tcode=" & CStr(tcode), 10
+If Trim(CStr(plantsCsv)) = unresolvedPlantsToken Then plantsCsv = ""
 If IsPlaceholder(yearValue, "YEAR") Then yearValue = ""
 If IsPlaceholder(weekValue, "WEEK") Then weekValue = ""
 If IsPlaceholder(periodValue, "PERIOD") Then periodValue = ""
 If IsPlaceholder(weekEndValue, "WEEK_END") Then weekEndValue = ""
 
-businessAreaValue = FirstCsvValue(businessAreasCsv)
-If businessAreaValue = "" Then Fail "ZFI019NL requires one business area from {BUSINESS_AREAS}", 5
+plantValue = FirstCsvValue(plantsCsv)
+If plantValue = "" Then Fail "ZFI080 requires one plant from {PLANTS}", 5
 
 ResolveDates
 
@@ -243,7 +243,7 @@ WScript.Echo "INFO: year=" & yearValue
 WScript.Echo "INFO: week=" & weekValue
 WScript.Echo "INFO: period=" & dateLowValue
 WScript.Echo "INFO: weekEnd=" & dateHighValue
-If businessAreaValue <> "" Then WScript.Echo "INFO: businessArea=" & businessAreaValue
+If plantValue <> "" Then WScript.Echo "INFO: plant=" & plantValue
 If factoryGroup <> "" And Not IsPlaceholder(factoryGroup, "FACTORY_GROUP") Then WScript.Echo "INFO: factoryGroup=" & factoryGroup
 
 Err.Clear
@@ -258,11 +258,28 @@ CheckSapStatus "open transaction"
 ' === SAP operation block ===
 SetField "budat-low", "wnd[0]/usr/ctxtS_BUDAT-LOW", dateLowValue
 SetField "budat-high", "wnd[0]/usr/ctxtS_BUDAT-HIGH", dateHighValue
-SetField "gsber-low", "wnd[0]/usr/ctxtS_GSBER-LOW", businessAreaValue
+SetField "werks-low", "wnd[0]/usr/ctxtS_WERKS-LOW", plantValue
 PressExecute
-WaitReady 600000
-SelectAllGrid
-PressToolbarButton "wnd[0]/tbar[1]/btn[16]", "save/export result"
+WaitReady 1200000
+SelectGridColumn "GSBER"
+SelectGridColumn "BUDAT"
+SelectGridColumn "ZMON"
+SelectGridColumn "WEEK"
+SelectGridColumn "AUFNR"
+SelectGridColumn "SMATNR"
+SelectGridColumn "MATNR1"
+SelectGridColumn "WERKS"
+SelectGridColumn "MBLNR"
+SelectGridColumn "LGORT"
+SelectGridColumn "BWART"
+SelectGridColumn "MATNR"
+SelectGridColumn "MENGE"
+SelectGridColumn "VERPR"
+SelectGridColumn "ZBFJE"
+SelectGridColumn "VERPR2"
+SelectGridColumn "ZBFJE2"
+SelectGridColumn "ZWLLB"
+PressToolbarButton "wnd[0]/tbar[1]/btn[16]", "save/export selected columns"
 
 CheckSapStatus "finish"
 WScript.Echo "INFO: transaction script executed"

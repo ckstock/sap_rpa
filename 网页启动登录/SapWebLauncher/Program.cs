@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Collections.Specialized;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Net;
@@ -63,6 +64,24 @@ static class Program
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         WriteIndented = true
+    };
+    private static readonly DingTalkParamGroup[] DingTalkParamGroups =
+    {
+        new("业务范围", new[] { "businessAreas", "businessareas", "businessArea", "businessarea", "businessAreaList", "businessareaslist", "gsberlist", "gsber" }, true),
+        new("工厂", new[] { "plants", "plant", "plantCodes", "factoryCodes", "werkslist", "plantlist", "werks" }, true),
+        new("业务范围组", new[] { "factoryGroup", "defaultGroup", "defaultBusinessScope", "businessScope", "plantGroup", "plantGroupId" }, true),
+        new("年度", new[] { "year", "gjahr", "fiscalYear", "fiscal_year" }, false),
+        new("周次", new[] { "week", "weekNo", "weekno", "weekNumber", "week_number" }, false),
+        new("期间", new[] { "period", "month", "poper", "fiscalPeriod", "fiscal_period" }, false),
+        new("开始日期", new[] { "startDate", "fromDate", "dateFrom", "beginDate", "dateBegin" }, false),
+        new("截止日期", new[] { "weekEnd", "week_end", "endDate", "toDate", "dateTo", "dateEnd" }, false),
+        new("执行方式", new[] { "runStrategy", "strategy", "runMode", "mode" }, false),
+        new("字段1名称", new[] { "field1Name" }, false),
+        new("字段1值", new[] { "field1Value" }, true),
+        new("字段2名称", new[] { "field2Name" }, false),
+        new("字段2值", new[] { "field2Value" }, true),
+        new("超时秒数", new[] { "timeoutSeconds", "timeout", "vbsTimeoutSeconds" }, false),
+        new("备注", new[] { "remark", "remarks", "note", "comment" }, false)
     };
 
     static void Main(string[] args)
@@ -3715,6 +3734,92 @@ WHERE run_id=$runId;
             request.Params["plants"] = plants;
             request.Params["plant"] = FirstCsvValue(plants);
         }
+
+        string businessAreas = FirstNonEmpty(
+            GetParamValue(request.Params, "businessAreas"),
+            GetParamValue(request.Params, "businessareas"),
+            GetParamValue(request.Params, "businessArea"),
+            GetParamValue(request.Params, "businessarea"),
+            GetParamValue(request.Params, "businessAreaList"),
+            GetParamValue(request.Params, "businessareaslist"),
+            GetParamValue(request.Params, "gsberlist"),
+            GetParamValue(request.Params, "gsber"));
+        businessAreas = NormalizeCsv(businessAreas);
+        if (!string.IsNullOrWhiteSpace(businessAreas))
+        {
+            request.Params["businessAreas"] = businessAreas;
+            request.Params["businessArea"] = FirstCsvValue(businessAreas);
+        }
+
+        AddDefaultExecutionDateParams(request.TransactionCode ?? request.TCode ?? request.Code ?? "", request.Params);
+    }
+
+    static void AddDefaultExecutionDateParams(string tcode, Dictionary<string, string> values)
+    {
+        if (!UsesWeeklyDateFallback(tcode) && !UsesBudatDateRange(tcode))
+            return;
+
+        DateTime defaultStart = StartOfWeek(DateTime.Today).AddDays(-7);
+        DateTime defaultEnd = defaultStart.AddDays(6);
+
+        string period = FirstNonEmpty(
+            GetParamValue(values, "period"),
+            GetParamValue(values, "startDate"),
+            GetParamValue(values, "fromDate"),
+            GetParamValue(values, "dateFrom"),
+            GetParamValue(values, "beginDate"),
+            GetParamValue(values, "dateBegin"));
+        string weekEnd = FirstNonEmpty(
+            GetParamValue(values, "weekEnd"),
+            GetParamValue(values, "week_end"),
+            GetParamValue(values, "endDate"),
+            GetParamValue(values, "toDate"),
+            GetParamValue(values, "dateTo"),
+            GetParamValue(values, "dateEnd"));
+
+        DateTime start = ParseFlexibleDateOrDefault(period, defaultStart);
+        DateTime end = ParseFlexibleDateOrDefault(weekEnd, defaultEnd);
+
+        if (UsesWeeklyDateFallback(tcode) && string.IsNullOrWhiteSpace(GetParamValue(values, "year")))
+            values["year"] = start.Year.ToString();
+        if (UsesWeeklyDateFallback(tcode) && string.IsNullOrWhiteSpace(GetParamValue(values, "week")))
+            values["week"] = ISOWeek.GetWeekOfYear(start).ToString();
+        if (UsesBudatDateRange(tcode) && string.IsNullOrWhiteSpace(GetParamValue(values, "period")))
+            values["period"] = FormatSapDate(start);
+        if (UsesBudatDateRange(tcode) && string.IsNullOrWhiteSpace(GetParamValue(values, "weekEnd")))
+            values["weekEnd"] = FormatSapDate(end);
+    }
+
+    static bool UsesWeeklyDateFallback(string tcode)
+    {
+        string code = FirstNonEmpty(tcode, "").Trim().ToUpperInvariant();
+        return code is "ZFI072A";
+    }
+
+    static bool UsesBudatDateRange(string tcode)
+    {
+        string code = FirstNonEmpty(tcode, "").Trim().ToUpperInvariant();
+        return code is "ZFI080" or "ZCO019" or "ZFI019NA" or "ZFI019NL";
+    }
+
+    static DateTime StartOfWeek(DateTime date)
+    {
+        int diff = ((int)date.DayOfWeek - (int)DayOfWeek.Monday + 7) % 7;
+        return date.Date.AddDays(-diff);
+    }
+
+    static DateTime ParseFlexibleDateOrDefault(string value, DateTime fallback)
+    {
+        string text = FirstNonEmpty(value, "").Trim().Replace(".", "-").Replace("/", "-");
+        if (string.IsNullOrWhiteSpace(text))
+            return fallback;
+
+        return DateTime.TryParse(text, out DateTime parsed) ? parsed.Date : fallback;
+    }
+
+    static string FormatSapDate(DateTime value)
+    {
+        return value.ToString("yyyy.MM.dd", CultureInfo.InvariantCulture);
     }
 
     static string GetParamValue(Dictionary<string, string> values, string key)
@@ -3756,8 +3861,10 @@ WHERE run_id=$runId;
             request.Operator.Ddid = dingTalkUserId;
 
         string[] plants = NormalizeStringArray(GetParamValue(request.Params, "plants"));
-        if (tcode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) && plants.Length > 1)
-            return CreateZfi072PlantBatchRun(request, script, plants, dingTalkUserId, now);
+        string[] businessAreas = NormalizeStringArray(GetParamValue(request.Params, "businessAreas"));
+        var batchPlan = ResolveBatchPlan(tcode, plants, businessAreas);
+        if (batchPlan != null)
+            return CreateBatchRun(request, script, batchPlan, dingTalkUserId, now);
 
         string runId = NewRunId(tcode);
         using var connection = OpenDatabaseConnection();
@@ -3827,13 +3934,39 @@ ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
         };
     }
 
-    static RunRecordView CreateZfi072PlantBatchRun(CreateRunRequest request, TransactionScriptInfo script, string[] plants, string dingTalkUserId, string now)
+    static BatchRunPlan? ResolveBatchPlan(string tcode, string[] plants, string[] businessAreas)
     {
-        string tcode = "ZFI072A";
+        if (tcode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) && plants.Length > 1)
+            return new BatchRunPlan(tcode, "plants", "plant", "plantlist", "工厂", plants);
+
+        if (UsesPlantBatchItems(tcode) && plants.Length > 1)
+            return new BatchRunPlan(tcode, "plants", "plant", "plantlist", "工厂", plants);
+
+        if (UsesBusinessAreaBatchItems(tcode) && businessAreas.Length > 1)
+            return new BatchRunPlan(tcode, "businessAreas", "businessArea", "businessAreaList", "业务范围", businessAreas);
+
+        return null;
+    }
+
+    static bool UsesPlantBatchItems(string tcode)
+    {
+        return tcode.Equals("ZCO019", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI080", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool UsesBusinessAreaBatchItems(string tcode)
+    {
+        return tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static RunRecordView CreateBatchRun(CreateRunRequest request, TransactionScriptInfo script, BatchRunPlan plan, string dingTalkUserId, string now)
+    {
+        string tcode = plan.TCode;
         string parentRunId = NewRunId(tcode);
-        int batchTotal = plants.Length;
+        int batchTotal = plan.Items.Length;
         var childRunIds = new List<string>();
-        string summaryJson = BuildBatchSummaryJson(parentRunId, plants, Array.Empty<BatchItemStatus>(), "queued");
+        string summaryJson = BuildBatchSummaryJson(parentRunId, plan.Items, plan.ItemLabel, Array.Empty<BatchItemStatus>(), "queued");
 
         using var connection = OpenDatabaseConnection();
         using var tx = connection.BeginTransaction();
@@ -3841,25 +3974,25 @@ ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
         InsertRunRow(connection, tx, parentRunId, request, script, dingTalkUserId, now, "parent", "", "", 0, batchTotal, 1, "running", summaryJson);
         InsertRunParams(connection, tx, parentRunId, request.Params);
 
-        for (int i = 0; i < plants.Length; i++)
+        for (int i = 0; i < plan.Items.Length; i++)
         {
-            string plant = plants[i];
-            var childRequest = CloneRunRequestForPlant(request, plant);
+            string itemValue = plan.Items[i];
+            var childRequest = CloneRunRequestForBatchItem(request, plan, itemValue);
             string childRunId = NewRunId(tcode);
             childRunIds.Add(childRunId);
 
-            InsertRunRow(connection, tx, childRunId, childRequest, script, dingTalkUserId, now, "child", parentRunId, plant, i + 1, batchTotal, 1, "queued", "");
+            InsertRunRow(connection, tx, childRunId, childRequest, script, dingTalkUserId, now, "child", parentRunId, itemValue, i + 1, batchTotal, 1, "queued", "");
             InsertRunParams(connection, tx, childRunId, childRequest.Params);
-            InsertRunBatchItem(connection, tx, parentRunId, childRunId, plant, i + 1, 1, "queued", "", "", "", 0);
+            InsertRunBatchItem(connection, tx, parentRunId, childRunId, itemValue, i + 1, 1, "queued", "", "", "", 0);
         }
 
         tx.Commit();
 
-        AppendRunLog(parentRunId, "INFO", $"queued ZFI072A parent batch, plants={string.Join(",", plants)}");
+        AppendRunLog(parentRunId, "INFO", $"queued {tcode} parent batch, {plan.ParamKey}={string.Join(",", plan.Items)}");
         foreach (string childRunId in childRunIds)
-            AppendRunLog(childRunId, "INFO", $"queued ZFI072A child under parent {parentRunId}");
+            AppendRunLog(childRunId, "INFO", $"queued {tcode} child under parent {parentRunId}");
 
-        NotifyRunEvent(parentRunId, "start", $"ZFI072A 批次开始：共 {batchTotal} 个工厂");
+        NotifyRunEvent(parentRunId, "start", $"{tcode} 批次开始：共 {batchTotal} 个{plan.ItemLabel}");
 
         return new RunRecordView
         {
@@ -3890,16 +4023,32 @@ ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
 
     static CreateRunRequest CloneRunRequestForPlant(CreateRunRequest request, string plant)
     {
+        return CloneRunRequestForBatchItem(request, new BatchRunPlan(request.TransactionCode ?? request.TCode ?? request.Code ?? "", "plants", "plant", "plantlist", "工厂", new[] { plant }), plant);
+    }
+
+    static CreateRunRequest CloneRunRequestForBatchItem(CreateRunRequest request, BatchRunPlan plan, string itemValue)
+    {
         var clone = JsonSerializer.Deserialize<CreateRunRequest>(JsonSerializer.Serialize(request, JsonOptions), new JsonSerializerOptions(JsonOptions)
         {
             PropertyNameCaseInsensitive = true
         }) ?? new CreateRunRequest();
         EnsureCreateRunRequestDefaults(clone);
-        clone.Params["plants"] = plant;
-        clone.Params["plant"] = plant;
-        clone.Params.Remove("werkslist");
-        clone.Params.Remove("plantlist");
-        clone.Params.Remove("werks");
+        clone.Params[plan.ParamKey] = itemValue;
+        clone.Params[plan.SingleParamKey] = itemValue;
+        clone.Params.Remove(plan.ListParamKey);
+        if (plan.ParamKey.Equals("plants", StringComparison.OrdinalIgnoreCase))
+        {
+            clone.Params.Remove("werkslist");
+            clone.Params.Remove("plantlist");
+            clone.Params.Remove("werks");
+        }
+        else if (plan.ParamKey.Equals("businessAreas", StringComparison.OrdinalIgnoreCase))
+        {
+            clone.Params.Remove("businessAreaList");
+            clone.Params.Remove("businessareaslist");
+            clone.Params.Remove("gsberlist");
+            clone.Params.Remove("gsber");
+        }
         return clone;
     }
 
@@ -3999,7 +4148,7 @@ INSERT INTO run_batch_items(
     {
         using var connection = OpenDatabaseConnection();
         string parentRunId = "";
-        string plant = "";
+        string itemValue = "";
         int batchIndex = 0;
         int batchTotal = 0;
         using (var lookup = connection.CreateCommand())
@@ -4015,7 +4164,7 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='child' AND parent_run_id<>
                 return "";
 
             parentRunId = reader.GetString(0);
-            plant = reader.GetString(1);
+            itemValue = reader.GetString(1);
             batchIndex = reader.GetInt32(2);
             batchTotal = reader.GetInt32(3);
         }
@@ -4052,7 +4201,7 @@ WHERE child_run_id=$childRunId;
         }
 
         AppendRunLog(parentRunId, status.Equals("success", StringComparison.OrdinalIgnoreCase) ? "INFO" : "WARN",
-            $"plant {plant} finished: status={status}, child={childRunId}");
+            $"batch item {itemValue} finished: status={status}, child={childRunId}");
         TryFinalizeBatchParent(parentRunId, batchTotal);
         return parentRunId;
     }
@@ -4063,13 +4212,14 @@ WHERE child_run_id=$childRunId;
         if (items.Count == 0)
             return;
 
-        var latestItems = LatestBatchItemsByPlant(items);
+        var latestItems = LatestBatchItemsByValue(items);
         int finishedCount = latestItems.Count(i => IsTerminalRunStatus(i.Status));
         int expectedTotal = LoadParentBatchTotal(parentRunId);
         int total = Math.Max(expectedTotal, Math.Max(batchTotalHint, latestItems.Count));
         string parentStatus = finishedCount >= total ? ResolveBatchParentStatus(latestItems) : "running";
-        string[] plants = latestItems.OrderBy(i => i.BatchIndex).Select(i => i.Plant).Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-        string summaryJson = BuildBatchSummaryJson(parentRunId, plants, latestItems, parentStatus);
+        string itemLabel = ResolveBatchItemLabel(parentRunId);
+        string[] itemValues = latestItems.OrderBy(i => i.BatchIndex).Select(i => i.Plant).Where(p => !string.IsNullOrWhiteSpace(p)).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        string summaryJson = BuildBatchSummaryJson(parentRunId, itemValues, itemLabel, latestItems, parentStatus);
 
         using var connection = OpenDatabaseConnection();
         using var command = connection.CreateCommand();
@@ -4084,7 +4234,7 @@ WHERE child_run_id=$childRunId;
 
         long durationMs = latestItems.Sum(i => Math.Max(0, i.DurationMs));
         string finishedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        string message = BuildBatchSummaryMessage(latestItems);
+        string message = BuildBatchSummaryMessage(parentRunId, latestItems);
         command.CommandText = """
 UPDATE runs
 SET status=$status,
@@ -4136,6 +4286,11 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
 
     static List<BatchItemStatus> LatestBatchItemsByPlant(List<BatchItemStatus> items)
     {
+        return LatestBatchItemsByValue(items);
+    }
+
+    static List<BatchItemStatus> LatestBatchItemsByValue(List<BatchItemStatus> items)
+    {
         return items
             .GroupBy(i => i.Plant, StringComparer.OrdinalIgnoreCase)
             .Select(g => g.OrderByDescending(i => i.AttemptNo).ThenByDescending(i => i.FinishedAt).ThenByDescending(i => i.ChildRunId).First())
@@ -4154,31 +4309,60 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
         return "failed";
     }
 
-    static string BuildBatchSummaryMessage(List<BatchItemStatus> items)
+    static string BuildBatchSummaryMessage(string parentRunId, List<BatchItemStatus> items)
     {
         int success = items.Count(i => i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
         int failed = items.Count(i => !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
-        string failedPlants = string.Join(",", items.Where(i => !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase)).Select(i => i.Plant));
+        var parent = LoadRun(parentRunId, includeDetails: false);
+        string tcode = parent?.TransactionCode ?? "";
+        string itemLabel = ResolveBatchItemLabel(parentRunId, parent);
+        string failedValues = string.Join(",", items.Where(i => !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase)).Select(i => i.Plant));
         return failed == 0
-            ? $"ZFI072A 批次执行完成：成功 {success}/{items.Count} 个工厂"
-            : $"ZFI072A 批次执行完成：成功 {success}/{items.Count} 个工厂，失败 {failed} 个，失败工厂：{failedPlants.Replace(",", "、")}";
+            ? $"{tcode} 批次执行完成：成功 {success}/{items.Count} 个{itemLabel}"
+            : $"{tcode} 批次执行完成：成功 {success}/{items.Count} 个{itemLabel}，失败 {failed} 个，失败{itemLabel}：{failedValues.Replace(",", "、")}";
+    }
+
+    static string ResolveBatchItemLabel(string parentRunId, RunRecordView? parent = null)
+    {
+        parent ??= LoadRun(parentRunId, includeDetails: false);
+        string tcode = parent?.TransactionCode ?? "";
+        if (UsesBusinessAreaBatchItems(tcode))
+            return "业务范围";
+        return "工厂";
+    }
+
+    static BatchRunPlan ResolveBatchPlanForParent(RunRecordView parent, string[] itemValues)
+    {
+        string tcode = parent.TransactionCode;
+        if (UsesBusinessAreaBatchItems(tcode))
+            return new BatchRunPlan(tcode, "businessAreas", "businessArea", "businessAreaList", "业务范围", itemValues);
+        return new BatchRunPlan(tcode, "plants", "plant", "plantlist", "工厂", itemValues);
     }
 
     static string BuildBatchSummaryJson(string parentRunId, string[] plants, IEnumerable<BatchItemStatus> items, string status)
+    {
+        return BuildBatchSummaryJson(parentRunId, plants, ResolveBatchItemLabel(parentRunId), items, status);
+    }
+
+    static string BuildBatchSummaryJson(string parentRunId, string[] itemsForRun, string itemLabel, IEnumerable<BatchItemStatus> items, string status)
     {
         var itemList = items.ToList();
         var payload = new
         {
             parentRunId,
             status,
-            total = plants.Length > 0 ? plants.Length : itemList.Count,
+            itemLabel,
+            total = itemsForRun.Length > 0 ? itemsForRun.Length : itemList.Count,
             success = itemList.Count(i => i.Status.Equals("success", StringComparison.OrdinalIgnoreCase)),
             failed = itemList.Count(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase)),
-            pending = itemList.Count == 0 ? plants.Length : itemList.Count(i => !IsTerminalRunStatus(i.Status)),
-            plants,
+            pending = itemList.Count == 0 ? itemsForRun.Length : itemList.Count(i => !IsTerminalRunStatus(i.Status)),
+            plants = itemsForRun,
+            batchItems = itemsForRun,
             items = itemList.Select(i => new
             {
                 plant = i.Plant,
+                value = i.Plant,
+                label = itemLabel,
                 childRunId = i.ChildRunId,
                 batchIndex = i.BatchIndex,
                 attemptNo = i.AttemptNo,
@@ -4202,14 +4386,14 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
             return new { ok = false, parentRunId, error = $"parent run is not finished: {parent.Status}" };
 
         var items = LoadBatchItems(parentRunId);
-        var latestByPlant = LatestBatchItemsByPlant(items);
-        var failedItems = latestByPlant
+        var latestByValue = LatestBatchItemsByValue(items);
+        var failedItems = latestByValue
             .Where(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
             .OrderBy(i => i.BatchIndex)
             .ToList();
 
         if (failedItems.Count == 0)
-            return new { ok = true, parentRunId, created = 0, childRunIds = Array.Empty<string>(), message = "没有失败工厂需要重跑" };
+            return new { ok = true, parentRunId, created = 0, childRunIds = Array.Empty<string>(), message = $"没有失败{ResolveBatchItemLabel(parentRunId, parent)}需要重跑" };
 
         var request = JsonSerializer.Deserialize<CreateRunRequest>(parent.RequestJson, new JsonSerializerOptions(JsonOptions)
         {
@@ -4227,36 +4411,37 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
         var script = LoadScriptInfo(parent.TransactionCode);
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         string rerunParentRunId = NewRunId(parent.TransactionCode);
-        string[] rerunPlants = failedItems.Select(i => i.Plant).ToArray();
-        string summaryJson = BuildBatchSummaryJson(rerunParentRunId, rerunPlants, Array.Empty<BatchItemStatus>(), "queued");
+        string[] rerunValues = failedItems.Select(i => i.Plant).ToArray();
+        var plan = ResolveBatchPlanForParent(parent, rerunValues);
+        string summaryJson = BuildBatchSummaryJson(rerunParentRunId, rerunValues, plan.ItemLabel, Array.Empty<BatchItemStatus>(), "queued");
         var newChildRunIds = new List<string>();
 
         using var connection = OpenDatabaseConnection();
         using var tx = connection.BeginTransaction();
-        request.Params["plants"] = string.Join(",", rerunPlants);
-        request.Params["plant"] = rerunPlants.FirstOrDefault() ?? "";
-        InsertRunRow(connection, tx, rerunParentRunId, request, script, dingTalkUserId, now, "parent", "", "", 0, rerunPlants.Length, 1, "running", summaryJson, parentRunId, parentRunId);
+        request.Params[plan.ParamKey] = string.Join(",", rerunValues);
+        request.Params[plan.SingleParamKey] = rerunValues.FirstOrDefault() ?? "";
+        InsertRunRow(connection, tx, rerunParentRunId, request, script, dingTalkUserId, now, "parent", "", "", 0, rerunValues.Length, 1, "running", summaryJson, parentRunId, parentRunId);
         InsertRunParams(connection, tx, rerunParentRunId, request.Params);
 
         foreach (var failed in failedItems)
         {
             int nextAttempt = Math.Max(1, failed.AttemptNo + 1);
-            var childRequest = CloneRunRequestForPlant(request, failed.Plant);
+            var childRequest = CloneRunRequestForBatchItem(request, plan, failed.Plant);
             string childRunId = NewRunId(parent.TransactionCode);
             newChildRunIds.Add(childRunId);
-            InsertRunRow(connection, tx, childRunId, childRequest, script, dingTalkUserId, now, "child", rerunParentRunId, failed.Plant, failed.BatchIndex, rerunPlants.Length, nextAttempt, "queued", "", parentRunId, failed.ChildRunId);
+            InsertRunRow(connection, tx, childRunId, childRequest, script, dingTalkUserId, now, "child", rerunParentRunId, failed.Plant, failed.BatchIndex, rerunValues.Length, nextAttempt, "queued", "", parentRunId, failed.ChildRunId);
             InsertRunParams(connection, tx, childRunId, childRequest.Params);
             InsertRunBatchItem(connection, tx, rerunParentRunId, childRunId, failed.Plant, failed.BatchIndex, nextAttempt, "queued", "", "", "", 0);
         }
 
         tx.Commit();
 
-        AppendRunLog(parentRunId, "INFO", $"rerun parent created: {rerunParentRunId}, plants={string.Join(",", rerunPlants)}");
-        AppendRunLog(rerunParentRunId, "INFO", $"rerun failed plants queued from {parentRunId}: {string.Join(",", rerunPlants)}");
+        AppendRunLog(parentRunId, "INFO", $"rerun parent created: {rerunParentRunId}, {plan.ParamKey}={string.Join(",", rerunValues)}");
+        AppendRunLog(rerunParentRunId, "INFO", $"rerun failed {plan.ItemLabel} queued from {parentRunId}: {string.Join(",", rerunValues)}");
         foreach (string childRunId in newChildRunIds)
             AppendRunLog(childRunId, "INFO", $"rerun child queued under parent {rerunParentRunId}, sourceParent={parentRunId}");
 
-        NotifyRunEvent(rerunParentRunId, "start", $"ZFI072A 失败工厂重跑开始：共 {rerunPlants.Length} 个工厂");
+        NotifyRunEvent(rerunParentRunId, "start", $"{parent.TransactionCode} 失败{plan.ItemLabel}重跑开始：共 {rerunValues.Length} 个{plan.ItemLabel}");
 
         return new
         {
@@ -4266,7 +4451,9 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
             rerunParentRunId,
             created = newChildRunIds.Count,
             childRunIds = newChildRunIds,
-            plants = rerunPlants
+            batchItems = rerunValues,
+            plants = plan.ParamKey.Equals("plants", StringComparison.OrdinalIgnoreCase) ? rerunValues : Array.Empty<string>(),
+            businessAreas = plan.ParamKey.Equals("businessAreas", StringComparison.OrdinalIgnoreCase) ? rerunValues : Array.Empty<string>()
         };
     }
 
@@ -4985,7 +5172,7 @@ VALUES($runId, $type, $name, $path, $size);
     {
         using var connection = OpenDatabaseConnection();
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT script_file, script_hash FROM transactions WHERE tcode=$tcode";
+        command.CommandText = "SELECT script_file, script_hash, params_json FROM transactions WHERE tcode=$tcode";
         command.Parameters.AddWithValue("$tcode", tcode.ToUpperInvariant());
         using var reader = command.ExecuteReader();
         if (reader.Read())
@@ -4993,7 +5180,8 @@ VALUES($runId, $type, $name, $path, $size);
             return new TransactionScriptInfo
             {
                 ScriptFile = reader.GetString(0),
-                ScriptHash = reader.GetString(1)
+                ScriptHash = reader.GetString(1),
+                ParamKeys = SafeJsonArray(reader.GetString(2))
             };
         }
 
@@ -5007,13 +5195,14 @@ VALUES($runId, $type, $name, $path, $size);
             var run = LoadRun(runId, includeDetails: false);
             if (run == null)
                 return;
-            if (!run.TransactionCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase))
-                return;
             if (run.RunType.Equals("child", StringComparison.OrdinalIgnoreCase))
             {
                 AppendRunLog(runId, "INFO", "SAP cleanup deferred to parent batch completion");
                 return;
             }
+            if (!run.RunType.Equals("parent", StringComparison.OrdinalIgnoreCase) &&
+                !run.TransactionCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase))
+                return;
 
             var request = JsonSerializer.Deserialize<CreateRunRequest>(run.RequestJson, new JsonSerializerOptions(JsonOptions)
             {
@@ -5032,7 +5221,7 @@ VALUES($runId, $type, $name, $path, $size);
             var pars = BuildParams(query, PrimaryProtocolName);
             pars.RunId = runId;
             CleanupSapGuiSessionAfterRun(pars);
-            AppendRunLog(runId, "INFO", "SAP cleanup requested after final ZFI072A completion");
+            AppendRunLog(runId, "INFO", "SAP cleanup requested after final transaction completion");
         }
         catch (Exception ex)
         {
@@ -5392,7 +5581,7 @@ ORDER BY 1;
     static void SendSapDingTalkNotification(string runId, string eventName, string message)
     {
         string provider = ResolveSapDingTalkProvider();
-        var run = LoadRun(runId, includeDetails: false);
+        var run = LoadRun(runId, includeDetails: true);
         string dingTalkId = FirstNonEmpty(
             run?.DingTalkUserId ?? "",
             Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ID") ?? "",
@@ -5475,21 +5664,20 @@ ORDER BY 1;
         if (run == null)
             return message;
 
-        string plants = ExtractRunParamValue(run.RequestJson, "plants");
         string sapMessage = BuildFriendlySapMessage(run, message);
         string statusLabel = FormatRunStatusForDingTalk(run.Status);
         string sapStatusType = FormatSapStatusType(run.SapStatusType);
         string transactionText = FormatTransactionDisplay(run);
         string title = $"{FormatDingTalkStatusIcon(run.Status)} SAP {FormatDingTalkTitleText(run.Status)}";
-        string plantText = FormatPlantsForDingTalk(plants);
         string durationText = FirstNonEmpty(FormatDuration(run.DurationMs), "\u672A\u8BB0\u5F55");
+        var inputLines = BuildDingTalkPlainInputLines(run);
+        var failedLines = BuildDingTalkPlainFailedItemLines(run);
         var lines = new List<string>
         {
             title,
             "",
             $"\u3010\u6458\u8981\u3011{transactionText} / {statusLabel} / {durationText}",
             $"\U0001F4CC \u4E8B\u52A1\uFF1A{transactionText}",
-            $"\U0001F3ED \u5DE5\u5382\uFF1A{plantText}",
             $"\U0001F4CA \u6267\u884C\u7ED3\u679C\uFF1A{statusLabel}",
             $"\U0001F514 SAP\u6D88\u606F\uFF1A{sapMessage}",
             $"\U0001F3F7\uFE0F SAP\u72B6\u6001\uFF1A{sapStatusType}",
@@ -5498,6 +5686,19 @@ ORDER BY 1;
             $"\U0001F3C1 \u5B8C\u6210\u65F6\u95F4\uFF1A{FirstNonEmpty(run.FinishedAt, "\u672A\u8BB0\u5F55")}",
             $"\U0001F194 \u4EFB\u52A1\u7F16\u53F7\uFF1A{run.RunId}"
         };
+        if (inputLines.Count > 0)
+        {
+            lines.Add("");
+            lines.Add("\U0001F9FE \u6267\u884C\u5165\u53C2");
+            lines.AddRange(inputLines);
+        }
+
+        if (failedLines.Count > 0)
+        {
+            lines.Add("");
+            lines.Add("\u26A0\uFE0F \u5931\u8D25\u9879");
+            lines.AddRange(failedLines);
+        }
 
         return string.Join("\n", lines);
     }
@@ -5507,47 +5708,55 @@ ORDER BY 1;
         if (run == null)
             return message;
 
-        string plants = ExtractRunParamValue(run.RequestJson, "plants");
         string statusLabel = FormatRunStatusForDingTalk(run.Status);
         string statusIcon = FormatDingTalkStatusIcon(run.Status);
         string titleText = FormatDingTalkTitleText(run.Status);
         string sapMessage = BuildFriendlySapMessage(run, message);
-        string plantTags = FormatPlantTagsForDingTalk(plants);
-        string failedPlantTags = FormatFailedPlantTagsForDingTalk(run);
         string durationText = FirstNonEmpty(FormatDuration(run.DurationMs), "\u672A\u8BB0\u5F55");
         string sapStatusType = FormatSapStatusType(run.SapStatusType);
         string transactionText = FormatTransactionDisplay(run);
         string startedAt = FirstNonEmpty(run.StartedAt, "\u672A\u8BB0\u5F55");
         string finishedAt = FirstNonEmpty(run.FinishedAt, "\u672A\u8BB0\u5F55");
         string batchSummary = BuildDingTalkBatchSummary(run);
+        var inputLines = BuildDingTalkMarkdownInputLines(run);
+        var failedLines = BuildDingTalkMarkdownFailedItemLines(run);
 
         var lines = new List<string>
         {
-            $"## {statusIcon} {EscapeMarkdownForDingTalk(titleText)}",
+            $"**{statusIcon} {EscapeMarkdownForDingTalk(titleText)}**",
             "",
-            $"> **\u72B6\u6001\uFF1A{EscapeMarkdownForDingTalk(statusLabel)}**  |  \u4E8B\u52A1\uFF1A**{EscapeMarkdownForDingTalk(transactionText)}**  |  \u8017\u65F6\uFF1A{EscapeMarkdownForDingTalk(durationText)}",
+            $"> \u72B6\u6001\uFF1A**{EscapeMarkdownForDingTalk(statusLabel)}**  |  \u4E8B\u52A1\uFF1A**{EscapeMarkdownForDingTalk(transactionText)}**  |  \u8017\u65F6\uFF1A{EscapeMarkdownForDingTalk(durationText)}",
             "",
-            $"### \U0001F514 SAP\u6D88\u606F",
+            $"**\U0001F514 SAP\u6D88\u606F**",
             $"> {EscapeMarkdownForDingTalk(sapMessage)}",
             "",
-            $"### \U0001F4CC \u6267\u884C\u6982\u89C8",
-            $"- **\u6267\u884C\u7ED3\u679C**\uFF1A{statusIcon} **{EscapeMarkdownForDingTalk(statusLabel)}**",
-            $"- **\u5DE5\u5382\u7ED3\u679C**\uFF1A{EscapeMarkdownForDingTalk(batchSummary)}",
-            $"- **\u4E8B\u52A1**\uFF1A{EscapeMarkdownForDingTalk(transactionText)}",
-            $"- **SAP\u72B6\u6001**\uFF1A{EscapeMarkdownForDingTalk(sapStatusType)}",
-            $"- **\u6267\u884C\u8017\u65F6**\uFF1A{EscapeMarkdownForDingTalk(durationText)}",
+            $"**\U0001F4CC \u6267\u884C\u6982\u89C8**",
+            $"- \u6267\u884C\u7ED3\u679C\uFF1A{statusIcon} **{EscapeMarkdownForDingTalk(statusLabel)}**",
+            $"- \u6279\u6B21\u7ED3\u679C\uFF1A{EscapeMarkdownForDingTalk(batchSummary)}",
+            $"- \u4E8B\u52A1\uFF1A{EscapeMarkdownForDingTalk(transactionText)}",
+            $"- SAP\u72B6\u6001\uFF1A{EscapeMarkdownForDingTalk(sapStatusType)}",
+            $"- \u6267\u884C\u8017\u65F6\uFF1A{EscapeMarkdownForDingTalk(durationText)}",
             "",
-            $"### \U0001F3ED \u5DE5\u5382\u8303\u56F4",
-            $"- **\u672C\u6B21\u5DE5\u5382**\uFF1A{EscapeMarkdownForDingTalk(plantTags)}",
-            $"- **\u5931\u8D25\u5DE5\u5382**\uFF1A{EscapeMarkdownForDingTalk(failedPlantTags)}",
-            "",
-            $"### \U0001F552 \u65F6\u95F4\u8F74",
-            $"- **\u5F00\u59CB**\uFF1A{EscapeMarkdownForDingTalk(startedAt)}",
-            $"- **\u5B8C\u6210**\uFF1A{EscapeMarkdownForDingTalk(finishedAt)}",
-            "",
-            $"### \U0001F194 \u4EFB\u52A1\u53F7",
-            $"`{EscapeMarkdownForDingTalk(run.RunId)}`"
+            $"**\U0001F9FE \u6267\u884C\u5165\u53C2**"
         };
+        lines.AddRange(inputLines.Count > 0 ? inputLines : new[] { "- **\u5165\u53C2**\uFF1A\u672A\u8BB0\u5F55" });
+        if (failedLines.Count > 0)
+        {
+            lines.Add("");
+            lines.Add("**\u26A0\uFE0F \u5931\u8D25\u9879**");
+            lines.AddRange(failedLines);
+        }
+
+        lines.AddRange(new[]
+        {
+            "",
+            $"**\U0001F552 \u65F6\u95F4\u8F74**",
+            $"- \u5F00\u59CB\uFF1A{EscapeMarkdownForDingTalk(startedAt)}",
+            $"- \u5B8C\u6210\uFF1A{EscapeMarkdownForDingTalk(finishedAt)}",
+            "",
+            $"**\U0001F194 \u4EFB\u52A1\u53F7**",
+            $"`{EscapeMarkdownForDingTalk(run.RunId)}`"
+        });
 
         return string.Join("\n", lines);
     }
@@ -5682,6 +5891,308 @@ ORDER BY 1;
         string replaced = value.Replace(",", "\u3001");
         const int maxLength = 120;
         return replaced.Length <= maxLength ? replaced : replaced[..maxLength] + "\u2026";
+    }
+
+    static List<string> BuildDingTalkPlainInputLines(RunRecordView run)
+    {
+        return BuildDingTalkRunInputs(run)
+            .Select(i => $"\u2022 {i.Label}\uFF1A{FormatDingTalkPlainValue(i.Values)}")
+            .ToList();
+    }
+
+    static List<string> BuildDingTalkMarkdownInputLines(RunRecordView run)
+    {
+        return BuildDingTalkRunInputs(run)
+            .Select(i => $"- {EscapeMarkdownForDingTalk(i.Label)}\uFF1A{EscapeMarkdownForDingTalk(FormatDingTalkMarkdownValue(i.Values))}")
+            .ToList();
+    }
+
+    static List<string> BuildDingTalkPlainFailedItemLines(RunRecordView run)
+    {
+        var failed = BuildDingTalkFailedItems(run);
+        return failed.Count == 0
+            ? new List<string>()
+            : new List<string> { $"\u2022 {failed.Label}\uFF1A{FormatDingTalkPlainValue(failed.Values)}" };
+    }
+
+    static List<string> BuildDingTalkMarkdownFailedItemLines(RunRecordView run)
+    {
+        var failed = BuildDingTalkFailedItems(run);
+        return failed.Count == 0
+            ? new List<string>()
+            : new List<string> { $"- **{EscapeMarkdownForDingTalk(failed.Label)}**\uFF1A{EscapeMarkdownForDingTalk(FormatDingTalkMarkdownValue(failed.Values, bold: true))}" };
+    }
+
+    static List<DingTalkInputLine> BuildDingTalkRunInputs(RunRecordView run)
+    {
+        var requestParams = ExtractRunParams(run.RequestJson);
+        var result = new List<DingTalkInputLine>();
+        string itemLabel = ResolveBatchItemLabelForRun(run);
+        var allowedParamKeys = ResolveDingTalkAllowedParamKeys(run);
+
+        foreach (var group in DingTalkParamGroups)
+        {
+            if (!ShouldShowDingTalkParamGroup(group, allowedParamKeys, itemLabel, run))
+                continue;
+
+            var values = CollectDingTalkParamValues(requestParams, group);
+            if (group.Label.Equals(itemLabel, StringComparison.OrdinalIgnoreCase))
+                AddDistinctValues(values, run.BatchItems.OrderBy(i => i.BatchIndex).Select(i => i.Plant));
+
+            if (values.Count > 0)
+                result.Add(new DingTalkInputLine(group.Label, values));
+        }
+
+        foreach (var pair in requestParams.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!IsAllowedDingTalkParam(pair.Key, allowedParamKeys) ||
+                IsGroupedDingTalkParam(pair.Key) ||
+                IsSensitiveDingTalkParam(pair.Key) ||
+                string.IsNullOrWhiteSpace(pair.Value))
+                continue;
+
+            result.Add(new DingTalkInputLine(FormatDingTalkParamLabel(pair.Key), NormalizeDingTalkValues(pair.Value, split: ShouldSplitDingTalkParam(pair.Key))));
+        }
+
+        return result;
+    }
+
+    static HashSet<string> ResolveDingTalkAllowedParamKeys(RunRecordView run)
+    {
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string[] strictKeys = ResolveStrictDingTalkParamKeys(run.TransactionCode);
+        string[] configuredKeys = strictKeys.Length > 0 ? strictKeys : LoadTransactionParamKeys(run.TransactionCode);
+        foreach (string key in configuredKeys)
+            keys.Add(key);
+
+        if (keys.Count == 0)
+        {
+            foreach (var pair in ExtractRunParams(run.RequestJson))
+            {
+                if (!IsSensitiveDingTalkParam(pair.Key) && !string.IsNullOrWhiteSpace(pair.Value))
+                    keys.Add(pair.Key);
+            }
+        }
+
+        string itemLabel = ResolveBatchItemLabelForRun(run);
+        if (run.BatchItems.Count > 0)
+        {
+            if (itemLabel.Equals("业务范围", StringComparison.OrdinalIgnoreCase))
+            {
+                keys.Add("businessAreas");
+                keys.Add("businessArea");
+            }
+            else
+            {
+                keys.Add("plants");
+                keys.Add("plant");
+            }
+        }
+
+        return keys;
+    }
+
+    static string[] ResolveStrictDingTalkParamKeys(string tcode)
+    {
+        string code = FirstNonEmpty(tcode, "").Trim().ToUpperInvariant();
+        if (code is "ZFI072A" or "ZFI085" or "ZFI014D" or "ZFI072N" or "ZFI057" or
+            "ZCO020" or "ZPP063" or "ZPP063X" or "ZFI019NC" or "ZFI080B" or "ZFI148")
+        {
+            return new[] { "year", "week", "plants" };
+        }
+
+        if (code is "ZFI019NI")
+            return new[] { "year", "week", "plants", "businessAreas" };
+
+        if (UsesPlantBatchItems(tcode))
+            return new[] { "plants", "period", "weekEnd" };
+
+        if (UsesBusinessAreaBatchItems(tcode))
+            return new[] { "businessAreas", "period", "weekEnd" };
+
+        return Array.Empty<string>();
+    }
+
+    static bool ShouldShowDingTalkParamGroup(DingTalkParamGroup group, HashSet<string> allowedParamKeys, string itemLabel, RunRecordView run)
+    {
+        if (group.Label.Equals(itemLabel, StringComparison.OrdinalIgnoreCase) && run.BatchItems.Count > 0)
+            return true;
+
+        return group.Keys.Any(k => allowedParamKeys.Contains(k));
+    }
+
+    static bool IsAllowedDingTalkParam(string key, HashSet<string> allowedParamKeys)
+    {
+        return allowedParamKeys.Count == 0 || allowedParamKeys.Contains(key);
+    }
+
+    static string[] LoadTransactionParamKeys(string tcode)
+    {
+        if (string.IsNullOrWhiteSpace(tcode))
+            return Array.Empty<string>();
+
+        try
+        {
+            InitializeDatabase(seedFromScripts: true);
+            using var connection = OpenDatabaseConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT params_json FROM transactions WHERE tcode=$tcode";
+            command.Parameters.AddWithValue("$tcode", tcode.ToUpperInvariant());
+            string json = Convert.ToString(command.ExecuteScalar() ?? "") ?? "";
+            return SafeJsonArray(json);
+        }
+        catch (Exception ex)
+        {
+            Log($"load transaction param keys failed: tcode={tcode}, {ex.Message}");
+            return Array.Empty<string>();
+        }
+    }
+
+    static DingTalkInputLine BuildDingTalkFailedItems(RunRecordView run)
+    {
+        string itemLabel = ResolveBatchItemLabelForRun(run);
+        string failedLabel = itemLabel.Equals("业务范围", StringComparison.OrdinalIgnoreCase) ? "失败业务范围" : "失败工厂";
+        var values = run.BatchItems
+            .Where(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(i => i.BatchIndex)
+            .Select(i => i.Plant)
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (values.Count == 0 &&
+            (run.Status.Equals("failure", StringComparison.OrdinalIgnoreCase) || run.Status.Equals("failed", StringComparison.OrdinalIgnoreCase)))
+        {
+            var requestParams = ExtractRunParams(run.RequestJson);
+            var group = itemLabel.Equals("业务范围", StringComparison.OrdinalIgnoreCase)
+                ? DingTalkParamGroups.First(g => g.Label.Equals("业务范围", StringComparison.OrdinalIgnoreCase))
+                : DingTalkParamGroups.First(g => g.Label.Equals("工厂", StringComparison.OrdinalIgnoreCase));
+            values = CollectDingTalkParamValues(requestParams, group);
+        }
+
+        return new DingTalkInputLine(failedLabel, values);
+    }
+
+    static Dictionary<string, string> ExtractRunParams(string requestJson)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (string.IsNullOrWhiteSpace(requestJson))
+            return values;
+
+        try
+        {
+            using JsonDocument doc = JsonDocument.Parse(requestJson);
+            if (doc.RootElement.TryGetProperty("params", out JsonElement paramElement) &&
+                paramElement.ValueKind == JsonValueKind.Object)
+            {
+                foreach (var property in paramElement.EnumerateObject())
+                {
+                    string value = JsonValueToString(property.Value);
+                    if (!string.IsNullOrWhiteSpace(value))
+                        values[property.Name] = value;
+                }
+            }
+        }
+        catch
+        {
+        }
+
+        return values;
+    }
+
+    static List<string> CollectDingTalkParamValues(Dictionary<string, string> requestParams, DingTalkParamGroup group)
+    {
+        var values = new List<string>();
+        foreach (string key in group.Keys)
+        {
+            if (requestParams.TryGetValue(key, out string? value) && !string.IsNullOrWhiteSpace(value))
+                AddDistinctValues(values, NormalizeDingTalkValues(value, group.SplitValues));
+        }
+
+        return values;
+    }
+
+    static List<string> NormalizeDingTalkValues(string value, bool split)
+    {
+        if (!split)
+        {
+            string trimmed = CleanDingTalkDisplayText(value);
+            return string.IsNullOrWhiteSpace(trimmed) ? new List<string>() : new List<string> { trimmed };
+        }
+
+        return NormalizeStringArray(value).Select(CleanDingTalkDisplayText).Where(v => !string.IsNullOrWhiteSpace(v)).ToList();
+    }
+
+    static void AddDistinctValues(List<string> target, IEnumerable<string> values)
+    {
+        foreach (string value in values)
+        {
+            string trimmed = CleanDingTalkDisplayText(value);
+            if (string.IsNullOrWhiteSpace(trimmed))
+                continue;
+            if (!target.Any(v => v.Equals(trimmed, StringComparison.OrdinalIgnoreCase)))
+                target.Add(trimmed);
+        }
+    }
+
+    static bool IsGroupedDingTalkParam(string key)
+    {
+        return DingTalkParamGroups.Any(g => g.Keys.Any(k => k.Equals(key, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    static bool IsSensitiveDingTalkParam(string key)
+    {
+        string value = FirstNonEmpty(key, "").Trim().ToLowerInvariant();
+        return value.Contains("password") ||
+               value.Equals("pw", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("secret") ||
+               value.Contains("token") ||
+               value.Contains("appkey") ||
+               value.Contains("appsecret") ||
+               value.Contains("agentid") ||
+               value.Contains("webhook") ||
+               value.Equals("system", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("client", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("user", StringComparison.OrdinalIgnoreCase) ||
+               value.Equals("sapuser", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool ShouldSplitDingTalkParam(string key)
+    {
+        string value = FirstNonEmpty(key, "").Trim().ToLowerInvariant();
+        return value.EndsWith("s", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("list", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("codes", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string FormatDingTalkParamLabel(string key)
+    {
+        return key switch
+        {
+            "tcode" or "transactionCode" => "事务码",
+            _ => key
+        };
+    }
+
+    static string ResolveBatchItemLabelForRun(RunRecordView run)
+    {
+        return UsesBusinessAreaBatchItems(run.TransactionCode) ? "业务范围" : "工厂";
+    }
+
+    static string FormatDingTalkPlainValue(IReadOnlyList<string> values)
+    {
+        string text = string.Join("\u3001", values.Where(v => !string.IsNullOrWhiteSpace(v)));
+        return Truncate(FirstNonEmpty(text, "\u672A\u8BB0\u5F55"), 240);
+    }
+
+    static string FormatDingTalkMarkdownValue(IReadOnlyList<string> values, bool bold = false)
+    {
+        var normalized = values.Where(v => !string.IsNullOrWhiteSpace(v)).ToArray();
+        if (normalized.Length == 0)
+            return "\u672A\u8BB0\u5F55";
+
+        string text = string.Join(" ", normalized.Select(v => bold ? $"**[{v}]**" : $"[{v}]"));
+        return Truncate(text, 240);
     }
 
     static string FormatPlantTagsForDingTalk(string plants)
@@ -7257,6 +7768,158 @@ WScript.Quit 0
         }
 
         {
+            var request = new CreateRunRequest
+            {
+                TransactionCode = "ZFI019NL",
+                Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["gsberlist"] = "3960, 2910, 3400"
+                }
+            };
+            NormalizeCreateRunParams(request);
+            string[] businessAreas = NormalizeStringArray(GetParamValue(request.Params, "businessAreas"));
+            var plan = ResolveBatchPlan("ZFI019NL", Array.Empty<string>(), businessAreas);
+            var childRequest = plan == null ? request : CloneRunRequestForBatchItem(request, plan, "2910");
+            bool ok = plan != null &&
+                      plan.ParamKey.Equals("businessAreas", StringComparison.OrdinalIgnoreCase) &&
+                      plan.Items.Length == 3 &&
+                      GetParamValue(childRequest.Params, "businessAreas").Equals("2910", StringComparison.OrdinalIgnoreCase) &&
+                      GetParamValue(childRequest.Params, "businessArea").Equals("2910", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI019NL businessAreas batch split", ok, $"areas={GetParamValue(request.Params, "businessAreas")}, child={GetParamValue(childRequest.Params, "businessAreas")}");
+        }
+
+        {
+            var request = new CreateRunRequest
+            {
+                TransactionCode = "ZFI080",
+                Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["plants"] = "1022,1024,1032"
+                }
+            };
+            NormalizeCreateRunParams(request);
+            string[] plants = NormalizeStringArray(GetParamValue(request.Params, "plants"));
+            var plan = ResolveBatchPlan("ZFI080", plants, Array.Empty<string>());
+            var childRequest = plan == null ? request : CloneRunRequestForBatchItem(request, plan, "1024");
+            bool ok = plan != null &&
+                      plan.ParamKey.Equals("plants", StringComparison.OrdinalIgnoreCase) &&
+                      plan.Items.Length == 3 &&
+                      GetParamValue(childRequest.Params, "plants").Equals("1024", StringComparison.OrdinalIgnoreCase) &&
+                      GetParamValue(childRequest.Params, "plant").Equals("1024", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI080 plants batch split", ok, $"plants={GetParamValue(request.Params, "plants")}, child={GetParamValue(childRequest.Params, "plants")}");
+        }
+
+        {
+            var run = new RunRecordView
+            {
+                RunId = "RUN-SELFTEST-ZFI019NL",
+                TransactionCode = "ZFI019NL",
+                TransactionName = "业务范围测试",
+                Status = "partial_failed",
+                RequestJson = "{\"transactionCode\":\"ZFI019NL\",\"params\":{\"businessAreas\":\"3960,2910,3400\",\"businessArea\":\"3960\",\"gsberlist\":\"3960,2910,3400\",\"plants\":\"1024,1032\",\"period\":\"2026.06.15\",\"weekEnd\":\"2026.06.21\",\"factoryGroup\":\"平湖九厂\",\"appSecret\":\"SHOULD_NOT_APPEAR\",\"password\":\"SHOULD_NOT_APPEAR\"}}",
+                SapStatusType = "S",
+                SapStatusText = "自动化已跑完",
+                StartedAt = "2026-06-26 10:00:00",
+                FinishedAt = "2026-06-26 10:02:00",
+                DurationMs = 120000
+            };
+            run.BatchItems.Add(new BatchItemStatus { Plant = "3960", BatchIndex = 1, Status = "success" });
+            run.BatchItems.Add(new BatchItemStatus { Plant = "2910", BatchIndex = 2, Status = "failed" });
+            run.BatchItems.Add(new BatchItemStatus { Plant = "3400", BatchIndex = 3, Status = "success" });
+            string markdown = BuildSapDingTalkMarkdownContent(run, "自动化已跑完");
+            string plain = BuildSapDingTalkContent(run, "自动化已跑完");
+            var inputs = BuildDingTalkRunInputs(run);
+            var checks = new Dictionary<string, bool>
+            {
+                ["has businessAreas"] = markdown.Contains("业务范围", StringComparison.OrdinalIgnoreCase),
+                ["has 3960"] = markdown.Contains("[3960]", StringComparison.OrdinalIgnoreCase),
+                ["has 2910"] = markdown.Contains("[2910]", StringComparison.OrdinalIgnoreCase),
+                ["has 3400"] = markdown.Contains("[3400]", StringComparison.OrdinalIgnoreCase),
+                ["has failed label"] = markdown.Contains("失败业务范围", StringComparison.OrdinalIgnoreCase),
+                ["has failed 2910"] = markdown.Contains("**[2910]**", StringComparison.OrdinalIgnoreCase),
+                ["has period"] = markdown.Contains("2026.06.15", StringComparison.OrdinalIgnoreCase),
+                ["has weekEnd"] = markdown.Contains("2026.06.21", StringComparison.OrdinalIgnoreCase),
+                ["unused plants hidden"] = !markdown.Contains("工厂", StringComparison.OrdinalIgnoreCase) &&
+                                           !markdown.Contains("[1024]", StringComparison.OrdinalIgnoreCase) &&
+                                           !markdown.Contains("[1032]", StringComparison.OrdinalIgnoreCase),
+                ["no old plant label"] = !markdown.Contains("本次工厂", StringComparison.OrdinalIgnoreCase),
+                ["no unspecified markdown"] = !markdown.Contains("未指定", StringComparison.OrdinalIgnoreCase),
+                ["no unspecified plain"] = !plain.Contains("未指定", StringComparison.OrdinalIgnoreCase),
+                ["unused year hidden"] = !inputs.Any(i => i.Label.Equals("年度", StringComparison.OrdinalIgnoreCase)),
+                ["markdown hides secret"] = !markdown.Contains("SHOULD_NOT_APPEAR", StringComparison.OrdinalIgnoreCase),
+                ["plain hides secret"] = !plain.Contains("SHOULD_NOT_APPEAR", StringComparison.OrdinalIgnoreCase)
+            };
+            bool ok = checks.Values.All(v => v);
+            string detail = ok
+                ? Truncate(markdown.Replace("\n", " | "), 240)
+                : string.Join(", ", checks.Where(c => !c.Value).Select(c => c.Key));
+            Check("DingTalk inputs for businessAreas", ok, detail);
+        }
+
+        {
+            var run = new RunRecordView
+            {
+                RunId = "RUN-SELFTEST-ZFI072A",
+                TransactionCode = "ZFI072A",
+                TransactionName = "采购价月表",
+                Status = "success",
+                RequestJson = "{\"transactionCode\":\"ZFI072A\",\"params\":{\"plants\":\"5021,9301\",\"plant\":\"5021\",\"businessAreas\":\"2900,9200\",\"year\":\"2026\",\"week\":\"25\",\"period\":\"2026.06.15\",\"weekEnd\":\"2026.06.21\",\"token\":\"SHOULD_NOT_APPEAR\"}}",
+                SapStatusType = "S",
+                SapStatusText = "自动化已跑完",
+                StartedAt = "2026-06-26 10:00:00",
+                FinishedAt = "2026-06-26 10:02:00",
+                DurationMs = 120000
+            };
+            run.BatchItems.Add(new BatchItemStatus { Plant = "5021", BatchIndex = 1, Status = "success" });
+            run.BatchItems.Add(new BatchItemStatus { Plant = "9301", BatchIndex = 2, Status = "success" });
+            string markdown = BuildSapDingTalkMarkdownContent(run, "自动化已跑完");
+            bool ok = markdown.Contains("工厂", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("[5021]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("[9301]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("2026", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("25", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("业务范围", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("[2900]", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("[9200]", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("2026.06.15", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("2026.06.21", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("失败工厂", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("SHOULD_NOT_APPEAR", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk inputs for plants", ok, Truncate(markdown.Replace("\n", " | "), 240));
+        }
+
+        {
+            var run = new RunRecordView
+            {
+                RunId = "RUN-SELFTEST-ZCO019",
+                TransactionCode = "ZCO019",
+                TransactionName = "标准材料成本",
+                Status = "success",
+                RequestJson = "{\"transactionCode\":\"ZCO019\",\"params\":{\"plants\":\"1024,1032,6041\",\"businessAreas\":\"2900,9200,2800\",\"period\":\"2026.06.15\",\"weekEnd\":\"2026.06.21\"}}",
+                SapStatusType = "S",
+                SapStatusText = "自动化已跑完",
+                StartedAt = "2026-06-26 10:00:00",
+                FinishedAt = "2026-06-26 10:02:00",
+                DurationMs = 120000
+            };
+            run.BatchItems.Add(new BatchItemStatus { Plant = "1024", BatchIndex = 1, Status = "success" });
+            run.BatchItems.Add(new BatchItemStatus { Plant = "1032", BatchIndex = 2, Status = "success" });
+            run.BatchItems.Add(new BatchItemStatus { Plant = "6041", BatchIndex = 3, Status = "success" });
+            string markdown = BuildSapDingTalkMarkdownContent(run, "自动化已跑完");
+            bool ok = markdown.Contains("工厂", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("[1024]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("[1032]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("[6041]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("2026.06.15", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("2026.06.21", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("业务范围", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("[2900]", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("[9200]", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("[2800]", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk filters unused businessAreas", ok, Truncate(markdown.Replace("\n", " | "), 240));
+        }
+
+        {
             var q = new NameValueCollection
             {
                 ["system"] = "URLSYS",
@@ -7552,6 +8215,15 @@ class SapRunParams
     public string ButtonId { get; set; } = "";
     public string RunId { get; set; } = "";
     public int? TimeoutSeconds { get; set; }
+}
+
+record BatchRunPlan(string TCode, string ParamKey, string SingleParamKey, string ListParamKey, string ItemLabel, string[] Items);
+
+record DingTalkParamGroup(string Label, string[] Keys, bool SplitValues);
+
+record DingTalkInputLine(string Label, List<string> Values)
+{
+    public int Count => Values.Count;
 }
 
 class SapLocalConfig
@@ -7981,6 +8653,7 @@ class TransactionScriptInfo
 {
     public string ScriptFile { get; set; } = "";
     public string ScriptHash { get; set; } = "";
+    public string[] ParamKeys { get; set; } = Array.Empty<string>();
 }
 
 class QueuedRunWorkItem
