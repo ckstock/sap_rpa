@@ -12,7 +12,7 @@
 | --- | --- | --- |
 | 主 agent | 拆任务、分配 owner、协调、合并、最终验收 | 项目级协调文件；其他文件必须先明确 owner |
 | Worker A | 后端、API、SQLite、迁移、执行队列集成 | `backend/`、`tests/backend/` |
-| Worker B | 前端页面、交互、API 消费 | `frontend/`、`tests/frontend/` |
+| Worker B | 前端页面、交互、API 消费 | 当前旧结构：`index.html`、`assets/js/**`；目标重构后：`frontend/`、`tests/frontend/` |
 | Worker C | VBS、ZFI072A、运行参数传入 | `sap/vbs/`、`sap/zfi072a/` |
 | QA | 测试、边界、回归、敏感信息检查 | `tests/`、`docs/qa-report.md` |
 
@@ -33,15 +33,25 @@
 
 ## 前端架构与回归规则
 
-SAP RPA V2 的页面已经包含工作台、执行任务、定时任务、基础配置、统计报表、API 队列状态、SQLite 配置消费和 VBS 入参生成。继续开发时要按模块化和架构边界推进，不得长期把所有状态、渲染、事件和 API 逻辑堆进单个巨大 `index.html`。
+SAP RPA V2 的页面已经包含工作台、执行任务、定时任务、基础配置、统计报表、API 队列状态、SQLite 配置消费和 VBS 入参生成。当前旧结构已把 `index.html` 中的大段内联 JS 拆到 `assets/js/*.js`，后续开发必须按模块职责修改，不得为了小改动重新把逻辑内联回 `index.html`。
 
-1. 新增中型以上前端功能前，必须先设计模块边界：配置归一化、页面渲染、表单状态、API client、执行 payload、队列轮询、日志合并、统计报表、基础配置 CRUD 应逐步拆成独立模块或独立函数组。
+当前前端模块职责：
+
+- `index.html`：页面骨架、CSS、HTML 容器和脚本加载顺序。
+- `assets/js/portal-state.js`：默认状态、fallback 配置、页面共享状态。
+- `assets/js/portal-utils.js`：日期、格式化、数组去重、DOM 等通用工具。
+- `assets/js/portal-api.js`：本地 API 请求、配置归一化、运行/队列/报表/配置刷新。
+- `assets/js/portal-render.js`：页面渲染、表格、卡片、弹窗、日志面板。该文件仍偏大，下一轮建议继续按工作台、执行页、基础配置、统计报表、定时任务拆细。
+- `assets/js/portal-actions.js`：按钮事件、保存、删除、执行提交、轮询、导出、toast。
+- `assets/js/main.js`：启动入口和初始化顺序。
+
+1. 新增中型以上前端功能前，必须先设计模块边界：配置归一化、页面渲染、表单状态、API client、执行 payload、队列轮询、日志合并、统计报表、基础配置 CRUD 应逐步拆成独立模块或独立函数组。优先在现有 `assets/js` 模块内定位，不要回到单文件大改。
 2. 修改公共状态或公共函数前，先查 `git status`、`git diff` 和最近改动；可用 GitNexus 时优先用 GitNexus 定位最近变更和影响范围。
 3. 不要只为了一个展示文案改动去重写 API、数据库或 VBS 传参链路。展示名、payload 字段、数据库字段、VBS 参数必须分清职责。
 4. 事务码执行范围必须按事务码参数类型展示：工厂型显示“执行工厂”并传 `plants`；业务范围型显示“执行业务范围”并传 `businessAreas`。
 5. 每次修改工作台、执行任务、事务码规则、基础配置或 payload 相关前端逻辑后，必须至少验证四个回归点：工作台事务码卡片“提交”能跳到执行任务；执行页事务码下拉切换后执行范围立即刷新；ZFI019NL 显示“执行业务范围”且传 `businessAreas`；普通工厂型事务码显示“执行工厂”且传 `plants`。
-6. 前端回归不能只跑内联 JS 语法检查。能自动化时优先用 Playwright/浏览器点击流；如果浏览器环境被拦截，必须说明未跑真实点击，并由用户刷新 `file:///D:/sap_ai/index.html` 人工确认。
-7. 对 `index.html` 的补丁必须保持最小范围；如果一次改动需要同时触碰渲染、状态、API、payload、轮询、配置归一化等多个区域，应先拆任务并考虑模块化重构。
+6. 前端回归不能只跑语法检查。至少检查 `assets/js/*.js` 语法、`index.html` 脚本引用顺序和页面加载；能自动化时优先用 Playwright/浏览器点击流。如果浏览器环境被拦截，必须说明未跑真实点击，并由用户刷新 `file:///D:/sap_ai/index.html` 人工确认。
+7. 对 `index.html` 的补丁必须保持最小范围；通常只改容器、样式或脚本引用。状态、API、payload、轮询、配置归一化、渲染和事件逻辑应改对应 `assets/js` 模块；如果一次改动需要同时触碰多个模块，应先拆任务并评估是否继续拆 `portal-render.js` 等大文件。
 
 ## V2 架构规则
 
@@ -119,7 +129,7 @@ SapWebLauncher 后端要按可维护、可运维、可扩展的设计模式实�
 3. 如果服务器根目录、源码/发布包根目录、端口、域名、账号或密钥不确定，不得自行猜测并写死；必须让用户或服务器管理员在安装 UI、命令行参数、环境变量或本机配置文件中填写。
 4. 一键安装器必须同时考虑图形界面和命令行静默安装。GUI 适合首次上线和人工排错；CLI 适合后续自动化升级。
 5. 安装器入口必须能在 Windows Server 上稳定运行，失败时不能一闪而过，必须保留日志和退出码。若服务器执行策略要求签名脚本，应提示使用签名脚本或编译 EXE 入口，不要把绕过执行策略当作正式上线方案。
-6. 安装包应复制应用文件、前端页面、VBS 脚本、SQLite 迁移脚本、配置模板、启动脚本、健康检查脚本和部署说明；不得复制开发机数据库、日志、导出文件、真实本机配置或个人路径。
+6. 安装包应复制应用文件、前端页面、`assets/js` 静态资源、VBS 脚本、SQLite 迁移脚本、配置模板、启动脚本、健康检查脚本和部署说明；不得复制开发机数据库、日志、导出文件、真实本机配置或个人路径。模块化后只复制 `index.html` 不复制 `assets/js` 会导致页面白屏或按钮无响应。
 7. SQLite 数据库初始化必须区分“新装”和“升级”。新装时创建空库并执行迁移；升级时先备份现有数据库，再执行迁移，不得无确认覆盖生产库。
 8. `config.local.json` 只能在目标服务器本机生成或由管理员现场填写。Git 和安装包里只能放 `config.local.example.json` 这类占位模板。
 9. SAP GUI 自动化依赖交互式 Windows 桌面会话，不能按普通 Windows Service 在 Session 0 中直接执行 VBS。部署时必须使用固定 Windows 执行账号登录桌面，或使用“用户登录后启动”的计划任务承载 SAP GUI 执行器。
@@ -193,7 +203,7 @@ SapWebLauncher 后端要按可维护、可运维、可扩展的设计模式实�
 
 - `dotnet build` 通过。
 - 如支持，执行 `SapWebLauncher.exe test`。
-- `index.html` 或前端入口内联 JavaScript 语法检查通过。
+- `assets/js/*.js` 语法检查通过，`index.html` 正确引用这些模块，页面真实加载无缺失。
 - SQLite 初始化/迁移可跑通。
 - API `health`、`config`、`schema` 能返回数据。
 - QA 检查空库、有配置、无 plants、禁用规则、secret 不泄露。

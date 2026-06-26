@@ -27,7 +27,7 @@ github-ai-handoff/MULTI_AGENT_WORKBENCH_V2.md
 | Main agent | Task decomposition, API contract decisions, merge review, final acceptance | Any file only after ownership is clear |
 | Explorer | Read-only impact analysis for specific unknowns | No writes |
 | Worker A | Backend, local API, SQLite schema, queue, launcher behavior | `网页启动登录/SapWebLauncher/**`, future backend docs/contracts |
-| Worker B | Frontend pages, UI interaction, API consumption | `index.html`, future extracted frontend assets |
+| Worker B | Frontend pages, UI interaction, API consumption | `index.html`, `assets/js/**`, future `frontend/**` |
 | Worker C | VBS scripts, SAP transaction parameters, script catalog | `网页启动登录/transactions/**` |
 | QA agent | Verification, regression review, sensitive-data checks | No writes unless explicitly assigned a fix |
 
@@ -35,7 +35,13 @@ github-ai-handoff/MULTI_AGENT_WORKBENCH_V2.md
 
 | Path | Owner | Notes |
 | --- | --- | --- |
-| `index.html` | Worker B | Main portal page. Keep API calls aligned with backend contract. |
+| `index.html` | Worker B | Main portal shell, CSS, containers, and script loading order. Keep heavy logic out of inline scripts. |
+| `assets/js/portal-state.js` | Worker B | Default state, fallback data, and shared frontend state. |
+| `assets/js/portal-utils.js` | Worker B | Formatting, date, array, DOM, and small utility helpers. |
+| `assets/js/portal-api.js` | Worker B | Local API calls, config normalization, queue/report/run/config refresh. |
+| `assets/js/portal-render.js` | Worker B | Page rendering, tables, cards, modals, and log panels. This file is still large; split by page before major UI work. |
+| `assets/js/portal-actions.js` | Worker B | Events, save/delete/run submit, polling, export, and toast behavior. |
+| `assets/js/main.js` | Worker B | Frontend bootstrap and initialization order. |
 | `网页启动登录/SapWebLauncher/Program.cs` | Worker A | Current backend/API/launcher monolith. Prefer extracting later before heavy parallel work. |
 | `网页启动登录/transactions/*.vbs` | Worker C | Transaction scripts. Keep standard output keys stable. |
 | `网页启动登录/transactions/transaction-config.json` | Worker C | Transaction catalog. Coordinate with Worker B when UI depends on fields. |
@@ -71,6 +77,13 @@ Use this flow when changing API fields, database fields, or VBS input/output:
 4. VBS owner keeps script input and output names stable.
 5. QA verifies success path, failure path, and migration risk.
 
+Frontend-specific contract checks after any Worker B change:
+
+1. Run syntax checks for every `assets/js/*.js` file.
+2. Confirm `index.html` references all six current scripts in order: state, utils, api, render, actions, main.
+3. Confirm runtime sync copies both `index.html` and `assets/js/**` to `D:\sap_ai`; copying only `index.html` is now incomplete.
+4. Smoke check workbench submit, execute transaction dropdown, ZFI019NL business-area display, and normal plant transaction display.
+
 For database changes, the report must include:
 
 ```text
@@ -100,7 +113,7 @@ For the next "database-backed configuration" feature, split work like this:
 | Worker | Concrete task | Write scope |
 | --- | --- | --- |
 | Worker A | Add SQLite tables/repository/API for factories, transaction factory rules, and notification robots | Backend/API files only |
-| Worker B | Build Basic Config UI with tabs: factory config, transaction config, notification robot | Frontend files only |
+| Worker B | Build Basic Config UI with tabs: factory config, transaction config, notification robot | `index.html` and `assets/js/**` only |
 | Worker C | Update `ZFI072A.vbs` to consume passed `plants` and keep output keys stable | VBS/catalog files only |
 | QA | Test empty DB, seeded DB, add/edit/delete config, run creation, disabled/missing factory rules, secret leakage | Read-only report |
 

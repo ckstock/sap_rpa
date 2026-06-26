@@ -24,6 +24,14 @@ if (Test-Path (Join-Path $RepoRoot "index.html")) {
     Write-Warn "Source page not found, skipped: $(Join-Path $RepoRoot 'index.html')"
 }
 
+if (Test-Path (Join-Path $RepoRoot "assets")) {
+    New-Item -ItemType Directory -Force -Path $RuntimeAssets | Out-Null
+    Copy-Item -Path (Join-Path $RepoRoot "assets\*") -Destination $RuntimeAssets -Recurse -Force
+    Write-Ok "Frontend assets copied: $RuntimeAssets"
+} else {
+    Write-Warn "Source assets directory not found, skipped: $(Join-Path $RepoRoot 'assets')"
+}
+
 if (Test-Path $SourceTransactions) {
     Copy-Item -Path (Join-Path $SourceTransactions "*") -Destination $RuntimeTransactions -Recurse -Force
     Write-Ok "VBS files copied: $RuntimeTransactions"

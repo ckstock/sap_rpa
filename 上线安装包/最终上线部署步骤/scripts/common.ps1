@@ -11,6 +11,7 @@ $RuntimeLogs = Join-Path $RuntimeRoot "logs"
 $RuntimeOutputs = Join-Path $RuntimeRoot "outputs"
 $RuntimeBin = Join-Path $RuntimeRoot "bin"
 $RuntimeIndex = Join-Path $RuntimeRoot "index.html"
+$RuntimeAssets = Join-Path $RuntimeRoot "assets"
 $InstalledLauncherDir = Join-Path $env:LOCALAPPDATA "SapRpaLauncher"
 $InstalledLauncherExe = Join-Path $InstalledLauncherDir "SapWebLauncher.exe"
 $RuntimeLauncherExe = Join-Path $RuntimeBin "SapWebLauncher.exe"
@@ -37,7 +38,7 @@ function Write-Fail {
 }
 
 function Ensure-RuntimeDirs {
-    New-Item -ItemType Directory -Force -Path $RuntimeRoot,$RuntimeTransactions,$RuntimeData,$RuntimeLogs,$RuntimeOutputs,$RuntimeBin | Out-Null
+    New-Item -ItemType Directory -Force -Path $RuntimeRoot,$RuntimeTransactions,$RuntimeData,$RuntimeLogs,$RuntimeOutputs,$RuntimeBin,$RuntimeAssets | Out-Null
 }
 
 function Get-LauncherExe {

@@ -69,19 +69,30 @@ Path: D:\sap_ai\bin\SapWebLauncher.exe
 
 ### 前端 JS 语法
 
-使用内置 Node 对两份页面检查内联脚本：
+当前前端已经拆为 `index.html + assets/js/*.js`。语法检查应对模块文件执行，而不是再抽取内联脚本：
 
-- `D:\工作\sap_rpa\index.html`
-- `D:\sap_ai\index.html`
+```powershell
+$node='C:\Users\chen.kai6\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe'
+Get-ChildItem 'D:\工作\sap_rpa\assets\js\*.js' | ForEach-Object { & $node --check $_.FullName }
+Get-ChildItem 'D:\sap_ai\assets\js\*.js' | ForEach-Object { & $node --check $_.FullName }
+```
 
-结果：`inline scripts syntax ok: 1`。
+基线要求：`portal-state.js`、`portal-utils.js`、`portal-api.js`、`portal-render.js`、`portal-actions.js`、`main.js` 均通过 `node --check`。
 
 ### 运行目录同步
 
 已确认源码和运行目录一致：
 
 - `D:\工作\sap_rpa\index.html` 与 `D:\sap_ai\index.html` 无差异。
+- `D:\工作\sap_rpa\assets\js\*.js` 与 `D:\sap_ai\assets\js\*.js` 应保持一致。
 - `D:\工作\sap_rpa\网页启动登录\transactions\ZFI072A.vbs` 与 `D:\sap_ai\transactions\ZFI072A.vbs` 无差异。
+
+模块化后 QA 基线：
+
+1. `index.html` 按顺序引用 `assets/js/portal-state.js`、`portal-utils.js`、`portal-api.js`、`portal-render.js`、`portal-actions.js`、`main.js`。
+2. 运行目录复制/安装器必须同步 `assets/js/**`，不能只复制 `index.html`。
+3. 浏览器加载页面时 6 个 JS 文件无缺失。
+4. 最小点击回归：工作台提交能跳转执行页；执行页事务码下拉可刷新范围；ZFI019NL 显示“执行业务范围”；普通事务码显示“执行工厂”。
 
 ## 已修复的关键问题
 

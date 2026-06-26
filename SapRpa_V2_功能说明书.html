@@ -419,7 +419,7 @@
 
     <section id="entry" class="section">
       <div class="section-header"><div class="section-num">2</div><h2>页面入口</h2></div>
-      <p>用户打开 <code>D:\sap_ai\index.html</code> 后进入本地操作台。页面可用 <code>file://</code> 打开，但所有真实配置、执行和历史数据都通过 <code>http://127.0.0.1:17890</code> 的本地 API 获取。</p>
+      <p>用户打开 <code>D:\sap_ai\index.html</code> 后进入本地操作台。页面可用 <code>file://</code> 打开，但所有真实配置、执行和历史数据都通过 <code>http://127.0.0.1:17890</code> 的本地 API 获取。当前前端入口由 <code>index.html</code> 和同目录 <code>assets/js/*.js</code> 共同组成；运行目录缺少 <code>assets/js</code> 时，页面可能白屏、下拉不刷新或按钮无响应。</p>
       <h3 id="entry-login">登录入口</h3>
       <div class="table-wrap">
         <table>
@@ -624,8 +624,8 @@
           <thead><tr><th>控件/动作</th><th>用户可见行为</th><th>数据与安全规则</th></tr></thead>
           <tbody>
             <tr><td>运行根目录</td><td>填写或选择服务器运行目录，例如 <code>C:\SAP_RPA</code> 或公司规定目录。</td><td>目录下保存页面、执行器、VBS、SQLite、日志、输出和备份。默认不要求服务器存在 D 盘。</td></tr>
-            <tr><td>源码/发布包根目录</td><td>选择 Git 拉取后的仓库根目录或发布包根目录。</td><td>安装器从这里查找 <code>index.html</code>、<code>transactions</code> 和 <code>SapWebLauncher</code>。</td></tr>
-            <tr><td>一键部署/升级</td><td>准备运行目录、备份旧版本、复制页面/VBS/执行器、注册 <code>sap-rpa://</code>、初始化 SQLite、启动 API 并检测状态。</td><td>默认保留 SQLite、日志、输出、<code>config.local.json</code> 和 SAP DPAPI 登录配置。</td></tr>
+            <tr><td>源码/发布包根目录</td><td>选择 Git 拉取后的仓库根目录或发布包根目录。</td><td>安装器从这里查找 <code>index.html</code>、<code>assets/js</code>、<code>transactions</code> 和 <code>SapWebLauncher</code>。</td></tr>
+            <tr><td>一键部署/升级</td><td>准备运行目录、备份旧版本、复制页面、<code>assets/js</code>、VBS、执行器、注册 <code>sap-rpa://</code>、初始化 SQLite、启动 API 并检测状态。</td><td>默认保留 SQLite、日志、输出、<code>config.local.json</code> 和 SAP DPAPI 登录配置。</td></tr>
             <tr><td>配置 SAP 登录</td><td>在当前 Windows 执行账号下录入 SAP 登录信息。</td><td>密码写入 DPAPI 保护的 <code>%LOCALAPPDATA%\SapWebLauncher\config.json</code>，不进入页面和 Git。</td></tr>
             <tr><td>初始化/迁移 SQLite</td><td>调用 <code>SapWebLauncher.exe --init-db</code>。</td><td>已有数据库先备份再迁移，不直接清空。</td></tr>
             <tr><td>备份并重建 SQLite</td><td>危险动作，GUI 二次确认；CLI 必须显式追加 <code>-ForceResetDb</code>。</td><td>先备份旧库，再重建空库；不会删除 SAP 登录密文。</td></tr>
@@ -673,6 +673,7 @@
           <tbody>
             <tr><td><code>D:\sap_ai\agent.md</code></td><td>项目 agent 规则，包含多 agent、敏感信息、部署包和 VBS 编码规则。</td></tr>
             <tr><td><code>D:\sap_ai\AI_HANDOFF_NEXT.md</code></td><td>下一任 AI 快速接手文档。</td></tr>
+            <tr><td><code>D:\sap_ai\index.html</code> + <code>D:\sap_ai\assets\js\*.js</code></td><td>前端操作台入口和本地 JS 模块。后续页面改动应按 state、utils、api、render、actions、main 模块定位。</td></tr>
             <tr><td><code>D:\sap_ai\SapRpa_V2_技术设计说明.html</code></td><td>技术架构、API、数据库、执行器和通知链路说明。</td></tr>
             <tr><td><code>D:\sap_ai\SapRpa_V2_功能说明书.html</code></td><td>当前功能说明书，面向业务行为和下一任 AI 的外置记忆。</td></tr>
             <tr><td><code>D:\sap_ai\上线安装包\服务器一键安装包</code></td><td>服务器一键安装器运行/交接目录，包含 GUI 脚本、bat 入口、配置模板和安装说明。</td></tr>
@@ -686,8 +687,9 @@
       <div class="grid cols-2">
         <div class="mini-card"><strong>优先级 1</strong>在真实 Windows Server 上验证一键安装器：路径选择、部署/升级、复制日志、保存诊断日志、API 启动和状态检测。</div>
         <div class="mini-card"><strong>优先级 2</strong>把未提交的一键安装器、最终上线部署步骤、功能说明书和交接文档审查后提交到 GitHub 当前分支。</div>
-        <div class="mini-card"><strong>优先级 3</strong>继续实测 ZFI072A 分工厂长耗时场景，确认超时、保存按钮、/NEX 清理和钉钉通知。</div>
-        <div class="mini-card"><strong>优先级 4</strong>设计 A/B 报表取数合并 result 后驱动 C 的 API、数据库字段、输出文件和 VBS 入参规范。</div>
+        <div class="mini-card"><strong>优先级 3</strong>继续拆分 <code>assets/js/portal-render.js</code>，按工作台、执行页、基础配置、统计报表、定时任务分模块，降低后续小改动互相影响。</div>
+        <div class="mini-card"><strong>优先级 4</strong>继续实测 ZFI072A 分工厂长耗时场景，确认超时、保存按钮、/NEX 清理和钉钉通知。</div>
+        <div class="mini-card"><strong>优先级 5</strong>设计 A/B 报表取数合并 result 后驱动 C 的 API、数据库字段、输出文件和 VBS 入参规范。</div>
       </div>
     </section>
   </main>

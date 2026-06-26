@@ -33,7 +33,7 @@ The user does not need to manually create every sub-agent. The main agent should
 | Main agent | Architecture, task split, merge, final answer | Only after owner is clear |
 | Explorer | Read-only code impact and risk questions | No writes |
 | Worker A | Backend, API, SQLite, migration design | `D:\工作\sap_rpa\网页启动登录\SapWebLauncher\**` |
-| Worker B | Frontend, page style, interaction, API calls | `D:\工作\sap_rpa\index.html`, future frontend assets |
+| Worker B | Frontend, page style, interaction, API calls | `D:\工作\sap_rpa\index.html`, `D:\工作\sap_rpa\assets\js\**`, future `frontend\**` |
 | Worker C | VBS, transaction scripts, script config | `D:\工作\sap_rpa\网页启动登录\transactions\**` |
 | QA | Tests, regression, boundary cases, sensitive-data scan | No writes by default |
 
@@ -96,6 +96,32 @@ Before PR:
 3. Run build/syntax/API checks.
 4. Do not commit runtime DB/log/output files.
 5. Push the branch and open PR to `main`.
+
+## Frontend Module Notes
+
+The V2 portal is no longer one large inline script inside `index.html`.
+
+Current files:
+
+```text
+index.html
+assets/js/portal-state.js
+assets/js/portal-utils.js
+assets/js/portal-api.js
+assets/js/portal-render.js
+assets/js/portal-actions.js
+assets/js/main.js
+```
+
+Worker B should change the smallest responsible module:
+
+1. API contract or normalization: `portal-api.js`.
+2. Page rendering, tables, cards, modals, logs: `portal-render.js`.
+3. Button handlers, save/delete/run submit, polling: `portal-actions.js`.
+4. Default/fallback data or shared state: `portal-state.js`.
+5. Common helper behavior: `portal-utils.js`.
+
+Do not re-inline large JavaScript blocks into `index.html`. Runtime deployment must copy `assets/js/**` together with `index.html`; otherwise the page may load blank or buttons may stop responding.
 
 ## Final Answer Format
 

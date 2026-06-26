@@ -133,6 +133,7 @@ function Get-InstallPaths {
         RuntimeOutputs = Join-Path $runtimeFull "outputs"
         RuntimeTransactions = Join-Path $runtimeFull "transactions"
         RuntimeIndex = Join-Path $runtimeFull "index.html"
+        RuntimeAssets = Join-Path $runtimeFull "assets"
         RuntimeDb = Join-Path (Join-Path $runtimeFull "data") "sap-rpa-config.db"
         RuntimeLauncherExe = Join-Path (Join-Path $runtimeFull "bin") "SapWebLauncher.exe"
         InstalledLauncherDir = Join-Path $env:LOCALAPPDATA "SapRpaLauncher"
@@ -150,6 +151,7 @@ function Ensure-RuntimeDirs {
         $Paths.RuntimeData,
         $Paths.RuntimeLogs,
         $Paths.RuntimeOutputs,
+        $Paths.RuntimeAssets,
         $Paths.RuntimeTransactions
     )) {
         New-Item -ItemType Directory -Force -Path $path | Out-Null
@@ -181,6 +183,14 @@ function Resolve-SourceIndex {
     return Get-FirstExistingPath @(
         (Join-Path $Paths.SourceRoot "index.html"),
         (Join-Path $Paths.SourceRoot "clean-code\index.html")
+    )
+}
+
+function Resolve-SourceAssets {
+    param([hashtable]$Paths)
+    return Get-FirstExistingPath @(
+        (Join-Path $Paths.SourceRoot "assets"),
+        (Join-Path $Paths.SourceRoot "clean-code\assets")
     )
 }
 
@@ -248,6 +258,7 @@ function New-RuntimeBackup {
 
     $items = @(
         $Paths.RuntimeIndex,
+        $Paths.RuntimeAssets,
         $Paths.RuntimeBin,
         $Paths.RuntimeTransactions,
         $Paths.RuntimeDb,
@@ -338,6 +349,14 @@ function Install-OrUpgrade {
         Write-SetupLog "已准备运行页面：$($Paths.RuntimeIndex)"
     } else {
         Write-SetupLog "未找到 index.html，跳过页面复制。" "WARN"
+    }
+
+    $sourceAssets = Resolve-SourceAssets $Paths
+    if ($sourceAssets) {
+        Copy-DirectoryContents -Source $sourceAssets -Destination $Paths.RuntimeAssets
+        Write-SetupLog "已准备前端静态资源目录：$($Paths.RuntimeAssets)"
+    } else {
+        Write-SetupLog "未找到 assets 目录，跳过前端静态资源复制。" "WARN"
     }
 
     $sourceTransactions = Resolve-SourceTransactions $Paths
@@ -476,6 +495,12 @@ function Check-OnlineStatus {
 
     $checks = [ordered]@{
         "运行页面" = $Paths.RuntimeIndex
+        "前端脚本 portal-state" = (Join-Path $Paths.RuntimeAssets "js\portal-state.js")
+        "前端脚本 portal-utils" = (Join-Path $Paths.RuntimeAssets "js\portal-utils.js")
+        "前端脚本 portal-api" = (Join-Path $Paths.RuntimeAssets "js\portal-api.js")
+        "前端脚本 portal-render" = (Join-Path $Paths.RuntimeAssets "js\portal-render.js")
+        "前端脚本 portal-actions" = (Join-Path $Paths.RuntimeAssets "js\portal-actions.js")
+        "前端脚本 main" = (Join-Path $Paths.RuntimeAssets "js\main.js")
         "ZFI072A VBS" = (Join-Path $Paths.RuntimeTransactions "ZFI072A.vbs")
         "SQLite" = $Paths.RuntimeDb
         "运行目录执行器" = $Paths.RuntimeLauncherExe

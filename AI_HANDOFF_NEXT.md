@@ -1,6 +1,6 @@
 # SAP RPA V2 下一任 AI 交接文档
 
-更新时间：2026-06-24
+更新时间：2026-06-26
 
 ## 当前项目定位
 
@@ -18,7 +18,7 @@
 
 - 源码仓库：`D:\工作\sap_rpa`
 - 运行/预览/交接目录：`D:\sap_ai`
-- 当前页面：`D:\sap_ai\index.html`
+- 前端入口：`D:\sap_ai\index.html` + `D:\sap_ai\assets\js\*.js`
 - 后端入口：`D:\工作\sap_rpa\网页启动登录\SapWebLauncher\Program.cs`
 - VBS 运行脚本：`D:\sap_ai\transactions`
 - SQLite 运行库：`D:\sap_ai\data\sap-rpa-config.db`
@@ -34,7 +34,10 @@
 - GitHub 仓库：`https://github.com/ckstock/sap_rpa`
 - 当前分支：`codex/v2-local-api-sqlite`
 - 注意：`D:\sap_ai` 是运行/预览目录，不是主要 GitHub 源码仓库；正式提交优先在 `D:\工作\sap_rpa`。
-- 当前源码仓库存在未提交文件：`agent.md`、`AI_HANDOFF_NEXT.md`、`SapRpa_V2_功能说明书.html`、最终上线部署步骤、一键安装包等。提交前必须检查 diff，确认没有数据库、日志、真实 `config.local.json`、钉钉密钥或 SAP 密码。
+- 最近提交点：
+  - `acfa314 chore: checkpoint v2 before frontend modularization`：前端模块化前回退点。
+  - `41befc0 refactor: split portal javascript modules`：把 `index.html` 内联 JS 拆成 `assets/js/*.js`。
+- 当前工作前必须检查 `git status` 和 diff，确认没有数据库、日志、真实 `config.local.json`、钉钉密钥或 SAP 密码。
 
 ## 最近完成的文档与安装包更新
 
@@ -60,6 +63,15 @@
    - 备份并重建 SQLite，GUI 二次确认，CLI 要 `-ForceResetDb`。
    - 一键复制日志、保存诊断日志。
 4. 已修复安装器读取 `SapWebLauncher.exe test` 输出乱码问题：PowerShell 端按系统默认编码读回 stdout/stderr。
+5. 已完成前端 JS 第一阶段模块化：
+   - `index.html` 只保留页面结构、样式和脚本引用。
+   - `assets/js/portal-state.js`：默认状态、fallback 配置和共享状态。
+   - `assets/js/portal-utils.js`：格式化、日期、数组去重、DOM 等工具。
+   - `assets/js/portal-api.js`：本地 API 请求、配置归一化、队列/报表/运行/配置刷新。
+   - `assets/js/portal-render.js`：页面渲染、表格、卡片、弹窗和日志面板。
+   - `assets/js/portal-actions.js`：按钮事件、保存、删除、执行提交、轮询、导出和 toast。
+   - `assets/js/main.js`：启动入口。
+   - 注意：后续部署或同步运行目录时必须复制 `assets/js`，不能只复制 `index.html`。
 
 ## 当前已知设计结论
 
@@ -71,6 +83,8 @@
 - 多工厂执行应记录父 run 和每个工厂子 run；开始通知一次，结束汇总通知一次，失败工厂支持重跑。
 - 钉钉通知由后端发送，不由 VBS 进入 SAP 再调用函数。
 - VBS 保持 ASCII/WSH 安全格式；VBS 只接收执行器传入的最终参数。
+- 前端后续修改必须按 `assets/js` 模块定位：改 API 合约优先看 `portal-api.js`，改展示优先看 `portal-render.js`，改按钮/保存/执行优先看 `portal-actions.js`，改默认数据优先看 `portal-state.js`。
+- `portal-render.js` 仍然偏大。下一任 AI 如果继续做页面维护，建议先把它按页面拆成 `render-workbench.js`、`render-execute.js`、`render-config.js`、`render-reports.js`、`render-schedule.js` 或等价模块，再做较大 UI 改造。
 
 ## 可编排 SAP 报表链路问题点
 
@@ -104,6 +118,15 @@ D:\sap_ai\SapRpa_V2_功能说明书.html
 D:\sap_ai\SapRpa_V2_技术设计说明.html
 D:\sap_ai\DATABASE_FIELD_DESIGN.md
 D:\sap_ai\AI_HANDOFF_NEXT.md
+
+当前前端已经完成第一阶段模块化：入口是 D:\sap_ai\index.html，脚本在 D:\sap_ai\assets\js\*.js。
+后续改页面时不要重新写回大段内联 JS；先按模块定位：
+- API/归一化：portal-api.js
+- 渲染：portal-render.js
+- 事件/保存/执行/轮询：portal-actions.js
+- 状态/fallback：portal-state.js
+- 工具函数：portal-utils.js
+portal-render.js 仍然偏大，下一步建议继续按页面拆细，降低后续改 A 坏 B 的风险。
 
 当前要设计/实现的是“可编排 SAP 报表链路”，不是固定 A+B -> C。
 
@@ -164,12 +187,8 @@ D:\sap_ai\AI_HANDOFF_NEXT.md
 git -C "D:\工作\sap_rpa" status --short --branch
 
 $node='C:\Users\chen.kai6\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe'
-$html = Get-Content -LiteralPath 'D:\sap_ai\index.html' -Raw -Encoding UTF8
-$matches = [regex]::Matches($html, '<script>([\s\S]*?)</script>')
-$script = $matches[$matches.Count - 1].Groups[1].Value
-$tmp = Join-Path $env:TEMP 'sap_ai_index_inline.js'
-Set-Content -LiteralPath $tmp -Value $script -Encoding UTF8
-& $node --check $tmp
+Get-ChildItem 'D:\sap_ai\assets\js\*.js' | ForEach-Object { & $node --check $_.FullName }
+Select-String -Path 'D:\sap_ai\index.html' -Pattern 'assets/js/portal-state.js','assets/js/portal-utils.js','assets/js/portal-api.js','assets/js/portal-render.js','assets/js/portal-actions.js','assets/js/main.js'
 
 D:\sap_ai\bin\SapWebLauncher.exe test
 
@@ -181,3 +200,5 @@ $text=Get-Content -LiteralPath $setup -Raw -Encoding UTF8
 ## 换新对话框建议
 
 建议换新对话框继续。当前窗口上下文很长，下一步是新模块级设计，换框更省 token，也更容易让下一任 AI 只聚焦“可编排 SAP 报表链路”。
+
+如果只是小功能维护，可以不强制换窗口，但必须先读本交接文档、功能说明书和 `agent.md`，并优先用 GitNexus/diff 定位影响面。大功能或继续拆 `portal-render.js` 时建议新对话框。

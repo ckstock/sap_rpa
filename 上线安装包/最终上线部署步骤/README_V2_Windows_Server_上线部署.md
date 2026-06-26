@@ -33,6 +33,7 @@ V2 与旧版的区别是：公司服务器不只是注册浏览器协议，还�
 
 ```text
 D:\sap_ai\index.html
+D:\sap_ai\assets\js\*.js
 D:\sap_ai\data\sap-rpa-config.db
 D:\sap_ai\transactions\*.vbs
 D:\sap_ai\outputs\
@@ -69,6 +70,7 @@ Git 只负责同步源码、页面、部署脚本和 VBS，例如：
 
 ```text
 D:\工作\sap_rpa\index.html
+D:\工作\sap_rpa\assets\js\*.js
 D:\工作\sap_rpa\网页启动登录\SapWebLauncher\Program.cs
 D:\工作\sap_rpa\网页启动登录\transactions\ZFI072A.vbs
 ```
@@ -97,11 +99,22 @@ git pull
 dotnet build "D:\工作\sap_rpa\网页启动登录\SapWebLauncher\SapWebLauncher.csproj"
 
 Copy-Item "D:\工作\sap_rpa\index.html" "D:\sap_ai\index.html" -Force
+Copy-Item "D:\工作\sap_rpa\assets" "D:\sap_ai\assets" -Recurse -Force
 Copy-Item "D:\工作\sap_rpa\网页启动登录\SapWebLauncher\bin\Debug\net8.0-windows\*" "D:\sap_ai\bin" -Recurse -Force
 Copy-Item "D:\工作\sap_rpa\网页启动登录\transactions\*.vbs" "D:\sap_ai\transactions\" -Force
 ```
 
-如果只改了 VBS，也仍建议从 Git 拉取后复制 `transactions\*.vbs` 到 `D:\sap_ai\transactions\`，确保运行脚本和源码一致。
+前端已经拆成 `index.html + assets/js/*.js`。如果只复制 `index.html` 而漏掉 `assets/js`，页面可能白屏或按钮无响应。如果只改了 VBS，也仍建议从 Git 拉取后复制 `transactions\*.vbs` 到 `D:\sap_ai\transactions\`，确保运行脚本和源码一致。
+
+前端模块化回退方式：
+
+```powershell
+cd /d "D:\工作\sap_rpa"
+git revert 41befc0
+git push origin codex/v2-local-api-sqlite
+```
+
+回退后必须重新同步运行目录的 `index.html` 和 `assets`。不要让旧 `index.html` 与新 `assets/js` 混用，也不要让新 `index.html` 缺少 `assets/js`。
 
 同步后重启本地 API：
 
@@ -184,6 +197,7 @@ New-Item -ItemType Directory -Force -Path "D:\sap_ai\data","D:\sap_ai\transactio
 
 ```powershell
 Copy-Item "D:\工作\sap_rpa\index.html" "D:\sap_ai\index.html" -Force
+Copy-Item "D:\工作\sap_rpa\assets" "D:\sap_ai\assets" -Recurse -Force
 Copy-Item "D:\工作\sap_rpa\网页启动登录\transactions\*.vbs" "D:\sap_ai\transactions\" -Force
 Copy-Item "D:\工作\sap_rpa\网页启动登录\transactions\transaction-config.json" "D:\sap_ai\transactions\" -Force
 ```
@@ -236,9 +250,15 @@ Invoke-RestMethod http://127.0.0.1:17890/api/schema
 
 ```text
 D:\sap_ai\index.html
+D:\sap_ai\assets\js\portal-state.js
+D:\sap_ai\assets\js\portal-utils.js
+D:\sap_ai\assets\js\portal-api.js
+D:\sap_ai\assets\js\portal-render.js
+D:\sap_ai\assets\js\portal-actions.js
+D:\sap_ai\assets\js\main.js
 ```
 
-页面应能显示工作台、执行任务、定时任务、基础配置，并从 API 读取配置。基础配置页面不应显示 SAP 密码、通知机器人 webhook 原文或 secret 原文。
+页面应能显示工作台、执行任务、定时任务、基础配置，并从 API 读取配置。基础配置页面不应显示 SAP 密码、通知机器人 webhook 原文或 secret 原文。浏览器加载时必须能找到 `assets/js/*.js`，否则说明运行目录同步不完整。
 
 ## 9. ZFI072A 验收
 
