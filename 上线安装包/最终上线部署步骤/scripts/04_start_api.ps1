@@ -17,6 +17,7 @@ $commonScript = Get-Content -LiteralPath $commonPath -Raw -Encoding UTF8
 Ensure-RuntimeDirs
 $launcher = Get-LauncherExe
 $env:SAP_RPA_HOME = $RuntimeRoot
+$env:SAP_RPA_API_PREFIX = "http://127.0.0.1:8080/"
 
 $existing = Get-CimInstance Win32_Process -Filter "name = 'SapWebLauncher.exe'" -ErrorAction SilentlyContinue |
     Where-Object { $_.CommandLine -match '--serve| serve' }
@@ -31,8 +32,8 @@ Start-Process -FilePath $launcher -ArgumentList "--serve" -WorkingDirectory (Spl
 Start-Sleep -Seconds 2
 
 try {
-    $health = Invoke-RestMethod "http://127.0.0.1:17890/api/health" -TimeoutSec 5
-    Write-Ok "API started: http://127.0.0.1:17890/api/health"
+    $health = Invoke-RestMethod "http://127.0.0.1:8080/api/health" -TimeoutSec 5
+    Write-Ok "API started: http://127.0.0.1:8080/api/health"
     $health | ConvertTo-Json -Depth 6
 } catch {
     Write-Warn "API has not responded yet. Run the status check later. Error: $($_.Exception.Message)"

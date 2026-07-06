@@ -20,6 +20,11 @@
       }));
       const notify = document.getElementById("notify");
       if (notify) notify.addEventListener("change", () => { state.form.notify = notify.checked; });
+      const useDefaultNotifyUser = document.getElementById("useDefaultNotifyUser");
+      if (useDefaultNotifyUser) useDefaultNotifyUser.addEventListener("change", () => {
+        state.form.useDefaultNotifyUser = useDefaultNotifyUser.checked;
+        render();
+      });
       const scheduleTCode = document.getElementById("scheduleTCode");
       if (scheduleTCode) scheduleTCode.addEventListener("change", () => updateScheduleTCode(scheduleTCode.value));
       const scheduleFactoryGroup = document.getElementById("scheduleFactoryGroup");
@@ -62,7 +67,7 @@
 
     function updateScheduleTCode(tCode) {
       state.scheduleForm.tCode = tCode;
-      state.scheduleForm.plants = getDefaultRunRangeForTCode(tCode, state.scheduleForm.factoryGroup);
+      state.scheduleForm.plants = getRuleRangeKind(getTCode(tCode)) === "dateRange" ? [] : getDefaultRunRangeForTCode(tCode, state.scheduleForm.factoryGroup);
       if (!state.scheduleForm.nameEdited) {
         state.scheduleForm.name = defaultScheduleName(tCode);
       }
@@ -71,13 +76,13 @@
 
     function updateScheduleFactoryGroup(groupId) {
       state.scheduleForm.factoryGroup = groupId;
-      state.scheduleForm.plants = getDefaultRunRangeForTCode(state.scheduleForm.tCode, groupId);
+      state.scheduleForm.plants = getRuleRangeKind(getTCode(state.scheduleForm.tCode)) === "dateRange" ? [] : getDefaultRunRangeForTCode(state.scheduleForm.tCode, groupId);
       render();
     }
 
     function handleAction(el) {
       const action = el.dataset.action;
-      if (action === "login" || action === "dingtalk-login") return login();
+      if (action === "login") return login();
       if (action === "logout") return logout();
       if (action === "toggle-role") return toggleRole();
       if (action === "go-execute") return goExecute(el.dataset.tcode);
@@ -110,7 +115,10 @@
       if (action === "reset-rule-plants") return resetRuleRangeInput();
       if (action === "add-schedule-plant") return addSchedulePlant();
       if (action === "remove-schedule-plant") return removeSchedulePlant(el.dataset.plant || "");
-      if (action === "reset-schedule-plants") return setSchedulePlantInput(getDefaultPlantsForTCode(readInputValue("scheduleTCode"), readInputValue("scheduleFactoryGroup")));
+      if (action === "reset-schedule-plants") {
+        const tCode = readInputValue("scheduleTCode");
+        return setSchedulePlantInput(getRuleRangeKind(getTCode(tCode)) === "dateRange" ? [] : getDefaultPlantsForTCode(tCode, readInputValue("scheduleFactoryGroup")));
+      }
       if (action === "test-robot") return testRobot(el.dataset.id || "");
       if (action === "toast-edit") return toast("编辑弹窗后续接入后台保存", "info");
       if (action === "refresh-config") return refreshConfigWithRender();
@@ -265,7 +273,10 @@
       const code = readInputValue("cfgRuleCode");
       const groupId = readInputValue("cfgRuleDefaultGroup");
       const transaction = getTCode(code);
-      const values = getRuleRangeKind(transaction) === "businessArea"
+      const rangeKind = getRuleRangeKind(transaction);
+      const values = rangeKind === "dateRange"
+        ? []
+        : rangeKind === "businessArea"
         ? getDefaultBusinessAreasForTCode(code, groupId)
         : getDefaultPlantsForTCode(code, groupId);
       return setRulePlantInput(values);
@@ -416,7 +427,9 @@
       const code = (mode === "edit" ? id : readInputValue("cfgRuleCode")).toUpperCase();
       const payload = buildExistingTransactionPayload(code);
       const rangeValue = normalizeRulePlantList(readInputValue("cfgRulePlants"));
-      const isBusinessAreaRange = getRuleRangeKind({ ...payload, code }) === "businessArea";
+      const rangeKind = getRuleRangeKind({ ...payload, code });
+      const isBusinessAreaRange = rangeKind === "businessArea";
+      const isDateRange = rangeKind === "dateRange";
       const selectableInput = readInputValue("cfgRuleSelectableGroups");
       const businessAreasInput = readInputValue("cfgRuleBusinessAreas");
       const selectableGroupIds = selectableInput ? toArray(selectableInput) : toArray(payload.selectableGroupIds);
@@ -427,7 +440,15 @@
       payload.factoryRule = readInputValue("cfgRuleFactoryRule");
       payload.defaultPlantGroup = readInputValue("cfgRuleDefaultGroup");
       payload.defaultGroup = payload.defaultPlantGroup;
-      if (isBusinessAreaRange) {
+      if (isDateRange) {
+        payload.plants = [];
+        payload.plantsCsv = "";
+        payload.fixedPlants = [];
+        payload.fixedPlantsCsv = "";
+        payload.businessAreaMode = "none";
+        payload.businessAreas = [];
+        payload.businessAreasCsv = "";
+      } else if (isBusinessAreaRange) {
         payload.plants = [];
         payload.plantsCsv = "";
         payload.fixedPlants = [];
@@ -442,8 +463,10 @@
       payload.selectableGroupIds = selectableGroupIds;
       payload.selectableGroupIdsCsv = selectableGroupIds.join(",");
       payload.businessAreaMode = payload.businessAreaMode || readInputValue("cfgRuleBusinessAreaMode") || "byPlant";
-      payload.businessAreas = businessAreas;
-      payload.businessAreasCsv = businessAreas.join(",");
+      if (!isDateRange) {
+        payload.businessAreas = businessAreas;
+        payload.businessAreasCsv = businessAreas.join(",");
+      }
       payload.enabled = readInputChecked("cfgRuleEnabled");
       return payload;
     }
@@ -541,11 +564,15 @@
     function login() {
       const account = document.getElementById("loginAccount")?.value || "张三";
       state.user.name = account.trim() || "张三";
-      state.user.dingTalkUserId = state.user.dingTalkUserId || DEFAULT_DINGTALK_USER_ID;
+      state.form.useDefaultNotifyUser = readInputChecked("useDefaultNotifyUser");
+      state.user.dingTalkUserId = getResolvedNotifyUserId();
       localStorage.setItem("portalUser", state.user.name);
       localStorage.setItem("portalDingTalkUserId", state.user.dingTalkUserId);
       localStorage.setItem("portalLoggedIn", "1");
       state.loggedIn = true;
+      if (!state.form.useDefaultNotifyUser && !state.externalAuth.claimedAccount) {
+        toast("未从 URL token 解析到 Account，已使用联调默认通知人", "warn");
+      }
       toast("登录成功", "ok");
       render();
       refreshBridgeData({ silent: true });
@@ -637,6 +664,24 @@
     }
 
     async function createBridgeRun(payload) {
+      const notifyUserId = getResolvedNotifyUserId();
+      state.user.dingTalkUserId = notifyUserId;
+      const runParams = payload.rangeKind === "dateRange"
+        ? {
+            period: payload.period,
+            weekEnd: payload.weekEnd
+          }
+        : {
+            plants: payload.plantsCsv,
+            plant: payload.plant,
+            plantCodes: payload.plantsCsv,
+            factoryCodes: payload.plantsCsv,
+            factoryGroup: payload.factoryGroup,
+            businessAreas: payload.businessAreasCsv,
+            period: payload.period,
+            weekEnd: payload.weekEnd,
+            remark: payload.remark
+          };
       return bridgeFetch("/api/runs", {
         method: "POST",
         body: JSON.stringify({
@@ -649,18 +694,10 @@
             id: state.user.name,
             name: state.user.name,
             dept: state.user.dept,
-            dingTalkUserId: state.user.dingTalkUserId || DEFAULT_DINGTALK_USER_ID,
-            ddid: state.user.dingTalkUserId || DEFAULT_DINGTALK_USER_ID
+            dingTalkUserId: notifyUserId,
+            ddid: notifyUserId
           },
-          params: {
-            plants: payload.plantsCsv,
-            plant: payload.plant,
-            plantCodes: payload.plantsCsv,
-            factoryCodes: payload.plantsCsv,
-            factoryGroup: payload.factoryGroup,
-            businessAreas: payload.businessAreasCsv,
-            remark: payload.remark
-          }
+          params: runParams
         })
       });
     }
@@ -750,13 +787,17 @@
       const group = getFactoryGroup(state.form.factoryGroup);
       const rangeMeta = getRuleRangeMeta(t);
       const isBusinessAreaRange = rangeMeta.isBusinessArea;
+      const isDateRange = rangeMeta.isDateRange;
       const selectedRange = getRunRangeForTCode(state.form.tCode, state.form.plants, state.form.factoryGroup);
-      const selectedPlants = isBusinessAreaRange ? [] : selectedRange;
-      const businessAreas = isBusinessAreaRange
-        ? selectedRange
-        : getBusinessAreasForSelection(state.form.tCode, selectedPlants, state.form.factoryGroup);
-      const rangeValues = selectedRange;
-      const rangeLabel = isBusinessAreaRange ? "业务范围" : "工厂";
+      const dateRange = getLastFullWeekDateRange();
+      const selectedPlants = isBusinessAreaRange || isDateRange ? [] : selectedRange;
+      const businessAreas = isDateRange
+        ? []
+        : isBusinessAreaRange
+          ? selectedRange
+          : getBusinessAreasForSelection(state.form.tCode, selectedPlants, state.form.factoryGroup);
+      const rangeValues = isDateRange ? [dateRange.period, dateRange.weekEnd] : selectedRange;
+      const rangeLabel = isDateRange ? "日期范围" : (isBusinessAreaRange ? "业务范围" : "工厂");
       return {
         source: "netlify-static-portal",
         action: "run",
@@ -769,11 +810,13 @@
         plantsCsv: selectedPlants.join(","),
         businessAreas,
         businessAreasCsv: businessAreas.join(","),
-        rangeKind: isBusinessAreaRange ? "businessArea" : "plant",
+        period: dateRange.period,
+        weekEnd: dateRange.weekEnd,
+        rangeKind: isDateRange ? "dateRange" : (isBusinessAreaRange ? "businessArea" : "plant"),
         rangeLabel,
         rangeValues,
         rangeCsv: rangeValues.join(","),
-        rangeEmptyText: isBusinessAreaRange ? "未配置业务范围" : "未配置工厂",
+        rangeEmptyText: isDateRange ? "按系统日期上一完整周执行" : (isBusinessAreaRange ? "未配置业务范围" : "未配置工厂"),
         notify: state.form.notify,
         remark: state.form.remark,
         createdBy: state.user.name,
@@ -787,13 +830,17 @@
         action: "run",
         tcode: p.tcode,
         script: p.script,
-        plant: p.plant,
-        plants: p.plantsCsv,
-        plantCodes: p.plantsCsv,
-        factoryCodes: p.plantsCsv,
-        businessAreas: p.businessAreasCsv,
-        factoryGroup: p.factoryGroup
+        period: p.period,
+        weekEnd: p.weekEnd
       });
+      if (p.rangeKind !== "dateRange") {
+        params.set("plant", p.plant);
+        params.set("plants", p.plantsCsv);
+        params.set("plantCodes", p.plantsCsv);
+        params.set("factoryCodes", p.plantsCsv);
+        params.set("businessAreas", p.businessAreasCsv);
+        params.set("factoryGroup", p.factoryGroup);
+      }
       if (runId) params.set("runId", runId);
       return `sap-rpa://run?${params.toString()}`;
     }

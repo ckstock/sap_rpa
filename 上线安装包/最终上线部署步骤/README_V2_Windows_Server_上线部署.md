@@ -241,9 +241,9 @@ D:\sap_ai\data\sap-rpa-config.db
 API 检查：
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:17890/api/health
-Invoke-RestMethod http://127.0.0.1:17890/api/config
-Invoke-RestMethod http://127.0.0.1:17890/api/schema
+Invoke-RestMethod http://127.0.0.1:8080/api/health
+Invoke-RestMethod http://127.0.0.1:8080/api/config
+Invoke-RestMethod http://127.0.0.1:8080/api/schema
 ```
 
 浏览器检查：

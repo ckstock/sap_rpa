@@ -23,7 +23,7 @@ static class Program
 {
     private const string PrimaryProtocolName = "sap-rpa";
     private const string MutexId = "SapWebLauncher-SingleInstance-Mutex";
-    private const int BridgePort = 17890;
+    private const int BridgePort = 8080;
     private const int DefaultRunListLimit = 50;
     private const int DefaultQueueStatusLimit = 5;
     private const int MaxQueueStatusLimit = 20;
@@ -455,16 +455,47 @@ static class Program
         ApplyScriptDefaults(p);
         NormalizeBatchParams(p);
         ApplyTransactionConfigForRun(p);
+        ApplyProtocolDefaultExecutionDateParams(p);
         ValidateLoginConfig(p);
         return p;
     }
 
     static void NormalizeBatchParams(SapRunParams p)
     {
+        if (UsesDateRangeOnlyInputs(p.TCode))
+        {
+            p.Plants = "";
+            p.Plant = "";
+            p.BusinessAreas = "";
+            p.BusinessArea = "";
+            p.FactoryGroup = "";
+            return;
+        }
+
         p.Plants = NormalizeCsv(FirstNonEmpty(p.Plants, p.Plant));
         p.BusinessAreas = NormalizeCsv(FirstNonEmpty(p.BusinessAreas, p.BusinessArea));
         p.Plant = FirstCsvValue(p.Plants);
         p.BusinessArea = FirstCsvValue(p.BusinessAreas);
+    }
+
+    static void ApplyProtocolDefaultExecutionDateParams(SapRunParams p)
+    {
+        if (!UsesWeeklyDateFallback(p.TCode) && !UsesBudatDateRange(p.TCode))
+            return;
+
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["year"] = p.Year,
+            ["week"] = p.Week,
+            ["period"] = p.Period,
+            ["weekEnd"] = p.WeekEnd
+        };
+
+        AddDefaultExecutionDateParams(p.TCode, values);
+        p.Year = GetParamValue(values, "year");
+        p.Week = GetParamValue(values, "week");
+        p.Period = GetParamValue(values, "period");
+        p.WeekEnd = GetParamValue(values, "weekEnd");
     }
 
     static string NormalizeCsv(string value)
@@ -1361,13 +1392,15 @@ VALUES
             EnsureScheduleColumns(connection);
             EnsureBasicConfigColumns(connection);
 
-            if (seedFromScripts)
-            {
-                if (CountTransactions(connection) == 0)
-                    SeedTransactions(connection);
+        if (seedFromScripts)
+        {
+            bool hasTransactions = CountTransactions(connection) > 0;
+            SeedTransactions(connection, upsertExisting: !hasTransactions);
 
-                SeedBasicConfig(connection);
-            }
+            SeedBasicConfig(connection);
+            SyncDisabledTransactionsFromConfig(connection);
+            SyncTransactionRulesFromTransactions(connection);
+        }
 
             Log($"SQLite 数据库初始化完成: {DatabaseFilePath}");
             DatabaseInitialized = true;
@@ -1751,7 +1784,30 @@ FROM transactions;
         command.ExecuteNonQuery();
     }
 
-    static void SeedTransactions(SqliteConnection connection)
+    static void SyncTransactionRulesFromTransactions(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+UPDATE transaction_plant_rules
+SET factory_rule = COALESCE((SELECT factory_rule FROM transactions WHERE transactions.tcode = transaction_plant_rules.tcode), factory_rule),
+    default_group = COALESCE((SELECT default_group FROM transactions WHERE transactions.tcode = transaction_plant_rules.tcode), default_group),
+    enabled = COALESCE((SELECT enabled FROM transactions WHERE transactions.tcode = transaction_plant_rules.tcode), enabled),
+    updated_at = datetime('now', 'localtime'),
+    updated_by = CASE
+        WHEN updated_by IN ('', 'seed', 'seed-migration') THEN 'seed-migration'
+        ELSE updated_by
+    END
+WHERE EXISTS (SELECT 1 FROM transactions WHERE transactions.tcode = transaction_plant_rules.tcode)
+  AND (
+      factory_rule <> COALESCE((SELECT factory_rule FROM transactions WHERE transactions.tcode = transaction_plant_rules.tcode), factory_rule)
+      OR default_group <> COALESCE((SELECT default_group FROM transactions WHERE transactions.tcode = transaction_plant_rules.tcode), default_group)
+      OR enabled <> COALESCE((SELECT enabled FROM transactions WHERE transactions.tcode = transaction_plant_rules.tcode), enabled)
+  );
+""";
+        command.ExecuteNonQuery();
+    }
+
+    static void SeedTransactions(SqliteConnection connection, bool upsertExisting)
     {
         string configPath = FindTransactionConfigPath();
         if (!File.Exists(configPath))
@@ -1781,9 +1837,10 @@ FROM transactions;
             string scriptHash = string.IsNullOrWhiteSpace(scriptText) ? "" : Sha256Hex(scriptText);
             int timeoutSeconds = GetJsonInt(item, "timeoutSeconds", GetJsonInt(item, "timeout", 0));
             int retryCount = GetJsonInt(item, "retryCount", GetJsonInt(item, "retry", 0));
+            bool enabled = GetJsonBool(item, "enabled", defaultValue: true);
 
             using var command = connection.CreateCommand();
-            command.CommandText = """
+            command.CommandText = upsertExisting ? """
 INSERT INTO transactions (
     tcode, name, stage, script_file, icon, params_json, factory_rule, fixed_plants_json,
     default_group, automation, timeout_seconds, retry_count,
@@ -1791,7 +1848,7 @@ INSERT INTO transactions (
 ) VALUES (
     $tcode, $name, $stage, $scriptFile, $icon, $paramsJson, $factoryRule, $fixedPlantsJson,
     $defaultGroup, $automation, $timeoutSeconds, $retryCount,
-    $scriptVersion, $scriptHash, $metadataJson, 1, $updatedAt
+    $scriptVersion, $scriptHash, $metadataJson, $enabled, $updatedAt
 )
 ON CONFLICT(tcode) DO UPDATE SET
     name=excluded.name,
@@ -1810,6 +1867,16 @@ ON CONFLICT(tcode) DO UPDATE SET
     script_metadata_json=excluded.script_metadata_json,
     enabled=excluded.enabled,
     updated_at=excluded.updated_at;
+""" : """
+INSERT OR IGNORE INTO transactions (
+    tcode, name, stage, script_file, icon, params_json, factory_rule, fixed_plants_json,
+    default_group, automation, timeout_seconds, retry_count,
+    script_version, script_hash, script_metadata_json, enabled, updated_at
+) VALUES (
+    $tcode, $name, $stage, $scriptFile, $icon, $paramsJson, $factoryRule, $fixedPlantsJson,
+    $defaultGroup, $automation, $timeoutSeconds, $retryCount,
+    $scriptVersion, $scriptHash, $metadataJson, $enabled, $updatedAt
+);
 """;
             command.Parameters.AddWithValue("$tcode", tcode);
             command.Parameters.AddWithValue("$name", GetJsonString(item, "name"));
@@ -1826,11 +1893,49 @@ ON CONFLICT(tcode) DO UPDATE SET
             command.Parameters.AddWithValue("$scriptVersion", scriptVersion);
             command.Parameters.AddWithValue("$scriptHash", scriptHash);
             command.Parameters.AddWithValue("$metadataJson", JsonSerializer.Serialize(metadata, JsonOptions));
+            command.Parameters.AddWithValue("$enabled", enabled ? 1 : 0);
             command.Parameters.AddWithValue("$updatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
             command.ExecuteNonQuery();
 
             if (!string.IsNullOrWhiteSpace(scriptText))
                 UpsertScriptCache(connection, tcode, scriptFile, scriptHash, scriptText);
+        }
+    }
+
+    static void SyncDisabledTransactionsFromConfig(SqliteConnection connection)
+    {
+        string configPath = FindTransactionConfigPath();
+        if (!File.Exists(configPath))
+            return;
+
+        using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(configPath, Encoding.UTF8));
+        if (!doc.RootElement.TryGetProperty("transactions", out JsonElement transactions) ||
+            transactions.ValueKind != JsonValueKind.Array)
+            return;
+
+        string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        foreach (JsonElement item in transactions.EnumerateArray())
+        {
+            string tcode = GetJsonString(item, "code").ToUpperInvariant();
+            if (string.IsNullOrWhiteSpace(tcode) ||
+                !item.TryGetProperty("enabled", out JsonElement enabledValue) ||
+                enabledValue.ValueKind != JsonValueKind.False)
+                continue;
+
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+UPDATE transactions
+SET enabled=0, updated_at=$updatedAt
+WHERE tcode=$tcode;
+
+UPDATE transaction_plant_rules
+SET enabled=0, updated_at=$updatedAt, updated_by='seed-migration'
+WHERE tcode=$tcode
+  AND updated_by IN ('', 'seed', 'seed-migration');
+""";
+            command.Parameters.AddWithValue("$tcode", tcode);
+            command.Parameters.AddWithValue("$updatedAt", now);
+            command.ExecuteNonQuery();
         }
     }
 
@@ -2154,12 +2259,23 @@ ON CONFLICT(tcode) DO UPDATE SET
     {
         InitializeDatabase(seedFromScripts: true);
         using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
         using var command = connection.CreateCommand();
+        command.Transaction = tx;
         command.CommandText = "UPDATE transactions SET enabled=$enabled, updated_at=$updatedAt WHERE tcode=$tcode";
         command.Parameters.AddWithValue("$tcode", tcode.ToUpperInvariant());
         command.Parameters.AddWithValue("$enabled", enabled ? 1 : 0);
         command.Parameters.AddWithValue("$updatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
         command.ExecuteNonQuery();
+
+        using var ruleCommand = connection.CreateCommand();
+        ruleCommand.Transaction = tx;
+        ruleCommand.CommandText = "UPDATE transaction_plant_rules SET enabled=$enabled, updated_at=$updatedAt, updated_by='api' WHERE tcode=$tcode";
+        ruleCommand.Parameters.AddWithValue("$tcode", tcode.ToUpperInvariant());
+        ruleCommand.Parameters.AddWithValue("$enabled", enabled ? 1 : 0);
+        ruleCommand.Parameters.AddWithValue("$updatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        ruleCommand.ExecuteNonQuery();
+        tx.Commit();
     }
 
     static object LoadBasicConfig()
@@ -3156,7 +3272,9 @@ WHERE id=$id;
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         string defaultBusinessScope = FirstNonEmpty(item.DefaultBusinessScope, item.FactoryGroup, item.PlantGroupId, item.GroupId, item.DefaultPlantGroup);
         string plantsCsv = ResolveSchedulePlantsCsvFromRequest(item);
-        if (!item.HasExplicitPlantSelection)
+        if (UsesDateRangeOnlyInputs(tcode))
+            plantsCsv = "";
+        else if (!item.HasExplicitPlantSelection)
             plantsCsv = ResolveSchedulePlants(tcode, defaultBusinessScope);
         string plantsJson = CsvToJsonArray(plantsCsv);
         string paramsJson = BuildScheduleParamsJson(item, tcode, defaultBusinessScope, plantsCsv);
@@ -3358,7 +3476,8 @@ ORDER BY sort_order, plant_code;
         string plants = NormalizeCsv(FirstNonEmpty(
             plantsCsv,
             !item.HasExplicitPlantSelection && values.TryGetValue("plants", out string? existingPlants) ? existingPlants ?? "" : ""));
-        if (!string.IsNullOrWhiteSpace(plants))
+        bool dateRangeOnly = UsesDateRangeOnlyInputs(tcode);
+        if (!dateRangeOnly && !string.IsNullOrWhiteSpace(plants))
         {
             values["plants"] = plants;
             values["plant"] = FirstCsvValue(plants);
@@ -3377,10 +3496,14 @@ ORDER BY sort_order, plant_code;
             item.BusinessAreasCsv,
             values.TryGetValue("businessAreas", out string? existingAreas) ? existingAreas ?? "" : "");
         businessAreas = NormalizeCsv(businessAreas);
-        if (!string.IsNullOrWhiteSpace(businessAreas))
+        if (!dateRangeOnly && !string.IsNullOrWhiteSpace(businessAreas))
         {
             values["businessAreas"] = businessAreas;
             values["businessArea"] = FirstCsvValue(businessAreas);
+        }
+        else if (dateRangeOnly)
+        {
+            RemoveScopeParamKeys(values);
         }
 
         values["tcode"] = tcode;
@@ -3571,7 +3694,7 @@ WHERE task_id=$taskId
         };
 
         string plants = NormalizeCsv(FirstNonEmpty(task.Plants, GetParamValue(request.Params, "plants")));
-        if (!string.IsNullOrWhiteSpace(plants))
+        if (!UsesDateRangeOnlyInputs(request.TransactionCode ?? request.TCode ?? request.Code ?? "") && !string.IsNullOrWhiteSpace(plants))
         {
             request.Params["plants"] = plants;
             request.Params["plant"] = FirstCsvValue(plants);
@@ -3729,7 +3852,7 @@ WHERE run_id=$runId;
             GetParamValue(request.Params, "plant"),
             GetParamValue(request.Params, "werks"));
         plants = NormalizeCsv(plants);
-        if (!string.IsNullOrWhiteSpace(plants))
+        if (!UsesDateRangeOnlyInputs(request.TransactionCode ?? request.TCode ?? request.Code ?? "") && !string.IsNullOrWhiteSpace(plants))
         {
             request.Params["plants"] = plants;
             request.Params["plant"] = FirstCsvValue(plants);
@@ -3745,13 +3868,34 @@ WHERE run_id=$runId;
             GetParamValue(request.Params, "gsberlist"),
             GetParamValue(request.Params, "gsber"));
         businessAreas = NormalizeCsv(businessAreas);
-        if (!string.IsNullOrWhiteSpace(businessAreas))
+        if (!UsesDateRangeOnlyInputs(request.TransactionCode ?? request.TCode ?? request.Code ?? "") && !string.IsNullOrWhiteSpace(businessAreas))
         {
             request.Params["businessAreas"] = businessAreas;
             request.Params["businessArea"] = FirstCsvValue(businessAreas);
         }
 
+        if (UsesDateRangeOnlyInputs(request.TransactionCode ?? request.TCode ?? request.Code ?? ""))
+        {
+            RemoveScopeParamKeys(request.Params);
+        }
+
         AddDefaultExecutionDateParams(request.TransactionCode ?? request.TCode ?? request.Code ?? "", request.Params);
+    }
+
+    static void RemoveScopeParamKeys(Dictionary<string, string> values)
+    {
+        RemoveParamKeys(values,
+            "plants", "plant", "plantCodes", "factoryCodes", "werkslist", "plantlist", "werks",
+            "businessAreas", "businessareas", "businessArea", "businessarea", "businessAreaList", "businessareaslist", "gsberlist", "gsber",
+            "factoryGroup", "factorygroup", "defaultGroup", "defaultgroup", "defaultBusinessScope", "defaultbusinessscope",
+            "businessScope", "businessscope", "plantGroup", "plantgroup", "plantGroupId", "plantgroupid", "groupId", "groupid",
+            "defaultPlantGroup", "defaultplantgroup");
+    }
+
+    static void RemoveParamKeys(Dictionary<string, string> values, params string[] keys)
+    {
+        foreach (string key in keys)
+            values.Remove(key);
     }
 
     static void AddDefaultExecutionDateParams(string tcode, Dictionary<string, string> values)
@@ -3799,7 +3943,13 @@ WHERE run_id=$runId;
     static bool UsesBudatDateRange(string tcode)
     {
         string code = FirstNonEmpty(tcode, "").Trim().ToUpperInvariant();
-        return code is "ZFI080" or "ZCO019" or "ZFI019NA" or "ZFI019NL";
+        return code is "ZFI080" or "ZCO019" or "ZFI019NA" or "ZFI019NL" or "ZFIR034";
+    }
+
+    static bool UsesDateRangeOnlyInputs(string tcode)
+    {
+        string code = FirstNonEmpty(tcode, "").Trim().ToUpperInvariant();
+        return code is "ZFIR034";
     }
 
     static DateTime StartOfWeek(DateTime date)
@@ -6004,6 +6154,9 @@ ORDER BY 1;
         if (code is "ZFI019NI")
             return new[] { "year", "week", "plants", "businessAreas" };
 
+        if (UsesDateRangeOnlyInputs(tcode))
+            return new[] { "period", "weekEnd" };
+
         if (UsesPlantBatchItems(tcode))
             return new[] { "plants", "period", "weekEnd" };
 
@@ -7810,6 +7963,30 @@ WScript.Quit 0
         }
 
         {
+            var request = new CreateRunRequest
+            {
+                TransactionCode = "ZFIR034",
+                Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["plants"] = "1022,1024",
+                    ["businessAreas"] = "2900,9200"
+                }
+            };
+            NormalizeCreateRunParams(request);
+            DateTime defaultStart = StartOfWeek(DateTime.Today).AddDays(-7);
+            DateTime defaultEnd = defaultStart.AddDays(6);
+            string[] plants = NormalizeStringArray(GetParamValue(request.Params, "plants"));
+            string[] businessAreas = NormalizeStringArray(GetParamValue(request.Params, "businessAreas"));
+            var plan = ResolveBatchPlan("ZFIR034", plants, businessAreas);
+            bool ok = plan == null &&
+                      string.IsNullOrWhiteSpace(GetParamValue(request.Params, "plants")) &&
+                      string.IsNullOrWhiteSpace(GetParamValue(request.Params, "businessAreas")) &&
+                      GetParamValue(request.Params, "period").Equals(FormatSapDate(defaultStart), StringComparison.OrdinalIgnoreCase) &&
+                      GetParamValue(request.Params, "weekEnd").Equals(FormatSapDate(defaultEnd), StringComparison.OrdinalIgnoreCase);
+            Check("ZFIR034 date range defaults without scope", ok, $"period={GetParamValue(request.Params, "period")}, weekEnd={GetParamValue(request.Params, "weekEnd")}, plants={GetParamValue(request.Params, "plants")}, businessAreas={GetParamValue(request.Params, "businessAreas")}");
+        }
+
+        {
             var run = new RunRecordView
             {
                 RunId = "RUN-SELFTEST-ZFI019NL",
@@ -7917,6 +8094,31 @@ WScript.Quit 0
                       !markdown.Contains("[9200]", StringComparison.OrdinalIgnoreCase) &&
                       !markdown.Contains("[2800]", StringComparison.OrdinalIgnoreCase);
             Check("DingTalk filters unused businessAreas", ok, Truncate(markdown.Replace("\n", " | "), 240));
+        }
+
+        {
+            var run = new RunRecordView
+            {
+                RunId = "RUN-SELFTEST-ZFIR034",
+                TransactionCode = "ZFIR034",
+                TransactionName = "日期范围报表",
+                Status = "success",
+                RequestJson = "{\"transactionCode\":\"ZFIR034\",\"params\":{\"plants\":\"1022,1032\",\"businessAreas\":\"2900,9200\",\"period\":\"2026.06.22\",\"weekEnd\":\"2026.06.28\",\"token\":\"SHOULD_NOT_APPEAR\"}}",
+                SapStatusType = "S",
+                SapStatusText = "自动化已跑完",
+                StartedAt = "2026-07-02 10:00:00",
+                FinishedAt = "2026-07-02 10:02:00",
+                DurationMs = 120000
+            };
+            string markdown = BuildSapDingTalkMarkdownContent(run, "自动化已跑完");
+            bool ok = markdown.Contains("2026.06.22", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("2026.06.28", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("工厂", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("业务范围", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("[1022]", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("[2900]", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("SHOULD_NOT_APPEAR", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk inputs for ZFIR034 date range", ok, Truncate(markdown.Replace("\n", " | "), 240));
         }
 
         {

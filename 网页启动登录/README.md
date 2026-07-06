@@ -46,7 +46,7 @@ Netlify 页面不传 SAP 密码。`SapWebLauncher` 从本机配置读取 SAP 登
 
 ```text
 公司门户/静态页面
-  -> http://<windows-server>:17890/api/runs
+  -> http://<windows-server>:8080/api/runs
   -> V2 运行目录: D:\sap_ai
   -> SQLite: D:\sap_ai\data\sap-rpa-config.db
   -> SapWebLauncher.exe --serve 后台队列线程
@@ -123,28 +123,28 @@ SQLite 是第一阶段本地数据库，表设计按未来迁移 SQL Server/Post
 默认监听：
 
 ```text
-http://127.0.0.1:17890
+http://127.0.0.1:8080
 ```
 
 公司服务器需要让其他电脑访问时，可在启动前设置监听前缀，例如：
 
 ```powershell
-$env:SAP_RPA_API_PREFIX = "http://+:17890/"
+$env:SAP_RPA_API_PREFIX = "http://+:8080/"
 SapWebLauncher.exe --serve
 ```
 
 `HttpListener` 使用 `+` 表示监听所有主机名；也可以改成服务器具体主机名。生产环境不要直接裸露到公网。建议只在公司内网开放，并通过门户后端或反向代理做认证、限流和审计。
 
-前端默认访问 `http://127.0.0.1:17890`。迁移公司门户时，可在页面注入：
+前端默认访问 `http://127.0.0.1:8080`。迁移公司门户时，可在页面注入：
 
 ```html
-<script>window.SAP_RPA_API_BASE = "http://windows-server:17890";</script>
+<script>window.SAP_RPA_API_BASE = "http://windows-server:8080";</script>
 ```
 
 或在浏览器本地设置：
 
 ```js
-localStorage.setItem("sapRpaApiBase", "http://windows-server:17890")
+localStorage.setItem("sapRpaApiBase", "http://windows-server:8080")
 ```
 
 主要接口：

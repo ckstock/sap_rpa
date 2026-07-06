@@ -411,7 +411,7 @@
           <tbody>
             <tr><td>事务执行</td><td>ZFI072A 优先打通；其他事务码可配置展示，但脚本未验证前不作为生产自动化承诺。</td><td>不并发操作同一个 SAP GUI 桌面会话。</td></tr>
             <tr><td>配置源</td><td>SQLite 是当前主配置源，页面从 API 读取。</td><td>SQL Server/PostgreSQL 可作为后续迁移目标。</td></tr>
-            <tr><td>身份与通知</td><td>页面临时保存钉钉 ID；执行结果由后端调用 HTTP 接口发钉钉消息。</td><td>正式身份应接公司门户/钉钉扫码/SSO，由 API 侧确认用户。</td></tr>
+            <tr><td>身份与通知</td><td>页面可从对方平台 URL token 的 <code>Account</code> 解析通知员工号；无 token 时使用联调默认 <code>11464769</code>。</td><td>正式身份应由公司门户 URL token 或 SSO 交给 API 侧验签确认。</td></tr>
           </tbody>
         </table>
       </div>
@@ -419,14 +419,14 @@
 
     <section id="entry" class="section">
       <div class="section-header"><div class="section-num">2</div><h2>页面入口</h2></div>
-      <p>用户打开 <code>D:\sap_ai\index.html</code> 后进入本地操作台。页面可用 <code>file://</code> 打开，但所有真实配置、执行和历史数据都通过 <code>http://127.0.0.1:17890</code> 的本地 API 获取。当前前端入口由 <code>index.html</code> 和同目录 <code>assets/js/*.js</code> 共同组成；运行目录缺少 <code>assets/js</code> 时，页面可能白屏、下拉不刷新或按钮无响应。</p>
+      <p>用户打开 <code>D:\sap_ai\index.html</code> 后进入本地操作台。页面可用 <code>file://</code> 打开，但所有真实配置、执行和历史数据都通过 <code>http://127.0.0.1:8080</code> 的本地 API 获取。当前前端入口由 <code>index.html</code> 和同目录 <code>assets/js/*.js</code> 共同组成；运行目录缺少 <code>assets/js</code> 时，页面可能白屏、下拉不刷新或按钮无响应。</p>
       <h3 id="entry-login">登录入口</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>入口/控件</th><th>用户可见行为</th><th>数据落点</th></tr></thead>
           <tbody>
-            <tr><td>钉钉扫码登录</td><td>当前阶段进入同一登录流程，默认写入临时钉钉 ID。</td><td>浏览器 <code>localStorage.portalDingTalkUserId</code>，当前联调默认 <code>11464769</code>。</td></tr>
-            <tr><td>账号登录</td><td>输入钉钉账号/手机号和密码后登录页面；该密码是页面演示字段，不是 SAP 密码。</td><td>页面只保存展示用用户名称和登录状态。</td></tr>
+            <tr><td>对方平台 URL token 直跳</td><td>对方平台点击图标后跳转到本页面，并通过 <code>?token=&lt;jwt&gt;</code>、<code>?authorization=Bearer ...</code> 或 <code>?access_token=&lt;jwt&gt;</code> 传入身份。页面启动时解析 JWT payload 的 <code>Account</code>，自动取消“使用联调默认通知人 11464769”，后续提交任务使用该员工号。</td><td>前端状态 <code>state.externalAuth.claimedAccount</code>，提交 <code>POST /api/runs</code> 时写入 <code>operator.dingTalkUserId</code> 和 <code>operator.ddid</code>；页面不保存 token 原文，解析后清理 URL 参数。</td></tr>
+            <tr><td>账号登录</td><td>输入钉钉账号/手机号和密码后登录页面；该密码是页面演示字段，不是 SAP 密码。页面不再提供钉钉扫码按钮。</td><td>页面只保存展示用用户名称和登录状态；通知目标由 URL token 的 <code>Account</code> 或联调默认号决定。</td></tr>
             <tr><td>退出</td><td>清除页面登录态，返回登录页。</td><td>清理浏览器本地页面状态，不影响服务器 SAP 登录配置。</td></tr>
           </tbody>
         </table>
@@ -524,6 +524,7 @@
       </div>
       <h3 id="config-rule">事务码与工厂/业务范围规则</h3>
       <p>规则用于定义某事务码默认选择哪个业务范围，以及最终传给 VBS 的工厂列表。用户选择业务范围后，页面应自动带出对应工厂，并允许在规则维护中增删工厂。最终执行时以事务码规则解析出的工厂列表为准。</p>
+      <div class="tip-box"><strong>日期范围事务：</strong><code>ZFIR034</code> 只接收 <code>period</code> 和 <code>weekEnd</code>，不接收工厂或业务范围，也不要求用户手工输入周次。页面、API、定时任务触发器按运行时服务器系统日期计算上一完整自然周，周一作为开始日期、周日作为截止日期；VBS 在 SAP 选择屏幕写入 <code>S_BUDAT-LOW/HIGH</code>，并按最终开始日期推导周次写入 <code>P_WEEK</code>。例如系统日期为 <code>2026-07-02</code> 时，执行日期范围为 <code>2026.06.22</code> 至 <code>2026.06.28</code>，<code>P_WEEK=26</code>。钉钉通知只展示该日期范围。</div>
       <div class="constraint-box"><strong>配置源规则：</strong>API 在线时，配置来自 SQLite；页面不应以旧静态数组作为生产配置依据。API 离线时的 fallback 只用于演示和只读预览。</div>
       <h3 id="config-delete">删除、停用和前端刷新</h3>
       <p>工厂删除后，后端可能采用软删除方式返回 <code>enabled=false</code>。前端应过滤停用工厂，并同步清理业务范围、事务码规则里的停用工厂引用，因此用户删除后页面不再显示该工厂，也不会继续参与执行。</p>
@@ -599,7 +600,7 @@
         <table>
           <thead><tr><th>来源</th><th>当前规则</th><th>上线规则</th></tr></thead>
           <tbody>
-            <tr><td>页面登录人</td><td>当前临时使用 <code>11464769</code> 作为钉钉 ID。</td><td>应由钉钉扫码或公司 SSO 传给 API，并写入 run 操作人字段。</td></tr>
+            <tr><td>页面登录人</td><td>无 URL token 时默认使用 <code>11464769</code> 作为联调钉钉 ID；带合法 URL token 跳转时，页面自动从 token 的 <code>Account</code> 取员工号并作为通知用户提交。</td><td>应由公司门户 URL token 或公司 SSO 传给 API，并在后端验签后写入 run 操作人字段。</td></tr>
             <tr><td>后台定时任务</td><td>可使用任务配置中的通知目标或默认负责人。</td><td>应支持配置任务负责人、业务群或机器人绑定。</td></tr>
             <tr><td>异常通知</td><td>失败、部分失败、通知失败应写入 run 日志。</td><td>应通知发起人和配置的运维/业务负责人。</td></tr>
           </tbody>
@@ -623,7 +624,7 @@
         <table>
           <thead><tr><th>控件/动作</th><th>用户可见行为</th><th>数据与安全规则</th></tr></thead>
           <tbody>
-            <tr><td>运行根目录</td><td>填写或选择服务器运行目录，例如 <code>C:\SAP_RPA</code> 或公司规定目录。</td><td>目录下保存页面、执行器、VBS、SQLite、日志、输出和备份。默认不要求服务器存在 D 盘。</td></tr>
+            <tr><td>运行根目录</td><td>填写或选择服务器运行目录，例如 <code>D:\SAP_RPA</code> 或公司规定目录。</td><td>目录下保存页面、执行器、VBS、SQLite、日志、输出和备份。堡垒机默认优先使用 D 盘，只有没有 D 盘时才改填其他目录。</td></tr>
             <tr><td>源码/发布包根目录</td><td>选择 Git 拉取后的仓库根目录或发布包根目录。</td><td>安装器从这里查找 <code>index.html</code>、<code>assets/js</code>、<code>transactions</code> 和 <code>SapWebLauncher</code>。</td></tr>
             <tr><td>一键部署/升级</td><td>准备运行目录、备份旧版本、复制页面、<code>assets/js</code>、VBS、执行器、注册 <code>sap-rpa://</code>、初始化 SQLite、启动 API 并检测状态。</td><td>默认保留 SQLite、日志、输出、<code>config.local.json</code> 和 SAP DPAPI 登录配置。</td></tr>
             <tr><td>配置 SAP 登录</td><td>在当前 Windows 执行账号下录入 SAP 登录信息。</td><td>密码写入 DPAPI 保护的 <code>%LOCALAPPDATA%\SapWebLauncher\config.json</code>，不进入页面和 Git。</td></tr>

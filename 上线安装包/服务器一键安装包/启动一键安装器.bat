@@ -12,7 +12,7 @@ if not exist "%SAP_RPA_SETUP_SCRIPT%" (
   exit /b 1
 )
 
-powershell.exe -NoProfile -Command "$env:SAP_RPA_SETUP_DIR=$env:SAP_RPA_SETUP_DIR; $script = Get-Content -LiteralPath $env:SAP_RPA_SETUP_SCRIPT -Raw -Encoding UTF8; & ([ScriptBlock]::Create($script))"
+powershell.exe -NoProfile -Command "$env:SAP_RPA_SETUP_DIR=$env:SAP_RPA_SETUP_DIR; $env:SAP_RPA_SOURCE_ROOT=$env:SAP_RPA_SETUP_DIR; $script = Get-Content -LiteralPath $env:SAP_RPA_SETUP_SCRIPT -Raw -Encoding UTF8; & ([ScriptBlock]::Create($script)) -SourceRoot $env:SAP_RPA_SETUP_DIR"
 set "EXIT_CODE=%ERRORLEVEL%"
 
 if not "%EXIT_CODE%"=="0" (

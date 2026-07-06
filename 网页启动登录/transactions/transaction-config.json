@@ -30,7 +30,8 @@
                                         ],
                              "factoryRule":  "按选中厂区工厂执行",
                              "defaultPlantGroup":  "PINGHU_ALL",
-                             "automation":  "openOnly"
+                             "automation":  "openOnly",
+                             "enabled":  false
                          },
                          {
                              "code":  "ZFI014D",
@@ -196,6 +197,22 @@
                              "defaultPlantGroup":  "PINGHU_ALL",
                              "automation":  "script",
                              "timeoutSeconds":  600,
+                             "retryCount":  2
+                         },
+                         {
+                             "code":  "ZFIR034",
+                             "name":  "维护特殊价格（ZFI085）",
+                             "stage":  "并行启动",
+                             "script":  "ZFIR034.vbs",
+                             "icon":  "calendar-days",
+                             "params":  [
+                                            "period",
+                                            "weekEnd"
+                                        ],
+                             "factoryRule":  "按系统日期上一完整周执行",
+                             "defaultPlantGroup":  "PINGHU_ALL",
+                             "automation":  "script",
+                             "timeoutSeconds":  300,
                              "retryCount":  2
                          },
                          {

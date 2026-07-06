@@ -1,4 +1,5 @@
     const DEFAULT_DINGTALK_USER_ID = "11464769";
+    const EXTERNAL_TOKEN_QUERY_KEYS = ["token", "authorization", "access_token"];
 
     const state = {
       loggedIn: localStorage.getItem("portalLoggedIn") === "1",
@@ -8,6 +9,11 @@
         name: localStorage.getItem("portalUser") || "张三",
         dept: "财务共享中心",
         dingTalkUserId: localStorage.getItem("portalDingTalkUserId") || DEFAULT_DINGTALK_USER_ID
+      },
+      externalAuth: {
+        claimedAccount: "",
+        claimedUserName: "",
+        status: "none"
       },
       activeConfigTab: "plant",
       selectedTCode: "ZFI019NL",
@@ -25,6 +31,7 @@
         factoryGroup: "PINGHU_30",
         plants: ["1022", "1024", "1032", "6041"],
         notify: true,
+        useDefaultNotifyUser: true,
         remark: ""
       },
       steps: [
@@ -51,7 +58,11 @@
       }
     };
 
-    const BRIDGE_API = localStorage.getItem("sapRpaApiBase") || window.SAP_RPA_API_BASE || "http://127.0.0.1:17890";
+    const DEFAULT_BRIDGE_API = "http://127.0.0.1:8080";
+    if (localStorage.getItem("sapRpaApiBase") === "http://127.0.0.1:17890") {
+      localStorage.removeItem("sapRpaApiBase");
+    }
+    const BRIDGE_API = localStorage.getItem("sapRpaApiBase") || window.SAP_RPA_API_BASE || DEFAULT_BRIDGE_API;
     const CONFIG_API_PATHS = {
       root: "/api/config",
       plants: code => "/api/config/plants/" + encodeURIComponent(code),
@@ -62,7 +73,7 @@
     };
     let tCodes = [
       { code: "ZFI072A", name: "采购价月表", module: "FI", stage: "并行启动", script: "ZFI072A.vbs", icon: "circle-dollar-sign", params: ["year", "week", "plants"], factoryRule: "先四个集采工厂，再其他工厂", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 300, retry: 2, enabled: true },
-      { code: "ZFI085", name: "维护特殊价格", module: "FI", stage: "并行启动", script: "ZFI085.vbs", icon: "badge-dollar-sign", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
+      { code: "ZFI085", name: "维护特殊价格", module: "FI", stage: "并行启动", script: "ZFI085.vbs", icon: "badge-dollar-sign", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: false },
       { code: "ZFI014D", name: "维护仓领退料", module: "FI", stage: "并行启动", script: "ZFI014D.vbs", icon: "package-check", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
       { code: "ZFI072N", name: "维护采购价", module: "FI", stage: "顺序执行", script: "ZFI072N.vbs", icon: "receipt-text", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
       { code: "ZFI057", name: "产值拆分", module: "CO", stage: "顺序执行", script: "ZFI057.vbs", icon: "trending-up", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 600, retry: 3, enabled: true },
@@ -74,6 +85,7 @@
       { code: "ZFI019NI", name: "实际材料结果保存", module: "FI", stage: "核心并行", script: "ZFI019NI.vbs", icon: "save", params: ["year", "week", "plants", "businessAreas"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
       { code: "ZCO019", name: "标准材料成本", module: "CO", stage: "核心并行", script: "ZCO019.vbs", icon: "tag", params: ["plants"], factoryRule: "明细保存与汇总保存", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 600, retry: 2, enabled: true },
       { code: "ZFI019NA", name: "周损益生成", module: "FI", stage: "最终生成", script: "ZFI019NA.vbs", icon: "file-spreadsheet", params: ["plants"], factoryRule: "东台、黄江等范围保存", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 600, retry: 2, enabled: true },
+      { code: "ZFIR034", name: "维护特殊价格（ZFI085）", module: "FI", stage: "并行启动", script: "ZFIR034.vbs", icon: "calendar-days", params: ["period", "weekEnd"], factoryRule: "按系统日期上一完整周执行", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 300, retry: 2, enabled: true },
       { code: "ZFI019NL", name: "周损益保存导出", module: "FI", stage: "最终生成", script: "ZFI019NL.vbs", icon: "bar-chart-3", params: ["businessAreas"], factoryRule: "按选中厂区工厂和业务范围导出", defaultPlantGroup: "PINGHU_30", automation: "script", timeout: 300, retry: 3, enabled: true },
       { code: "ZFI080B", name: "工费率保存", module: "FI", stage: "周结推送", script: "ZFI080B.vbs", icon: "calculator", params: ["year", "week", "plants"], factoryRule: "东台、黄江保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
       { code: "ZFI148", name: "推送大数据平台", module: "FI", stage: "周结推送", script: "ZFI148.vbs", icon: "send", params: ["year", "week", "plants"], factoryRule: "保存后推送", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true }

@@ -539,7 +539,7 @@
       <h3 id="overview-runtime">运行拓扑</h3>
       <div class="flow">
         <div class="step"><b>1. 打开页面</b>用户访问 <code>D:\sap_ai\index.html</code> 或公司门户嵌入页。</div>
-        <div class="step"><b>2. 读取配置</b>页面调用 <code>http://127.0.0.1:17890/api/config</code>。</div>
+        <div class="step"><b>2. 读取配置</b>页面调用 <code>http://127.0.0.1:8080/api/config</code>。</div>
         <div class="step"><b>3. 创建任务</b>页面提交 <code>POST /api/runs</code>，API 写入 <code>runs</code>。</div>
         <div class="step"><b>4. 串行执行</b>执行器按队列调用 VBS 和 SAP GUI。</div>
         <div class="step"><b>5. 回写通知</b>结果、日志、文件写入 SQLite，并触发钉钉通知。</div>
@@ -552,7 +552,7 @@
         <div class="section-num">2</div>
         <h2>SapWebLauncher 本地应用设计</h2>
       </div>
-      <p>SapWebLauncher 使用 C# / .NET 8 Windows 应用实现，部署在固定 Windows 执行账号下。HTTP API 由 SapWebLauncher 基于 <code>HttpListener</code> 提供本机服务，默认监听 <code>127.0.0.1:17890</code>，接口统一使用 JSON 请求/响应，并通过 SQLite 持久化配置、队列、运行审计和执行结果。它既保留 <code>sap-rpa://</code> 协议唤醒能力，也承担 V2 的本地 HTTP API、SQLite 仓储、执行队列、VBS 运行器和通知适配职责。</p>
+      <p>SapWebLauncher 使用 C# / .NET 8 Windows 应用实现，部署在固定 Windows 执行账号下。HTTP API 由 SapWebLauncher 基于 <code>HttpListener</code> 提供本机服务，默认监听 <code>127.0.0.1:8080</code>，接口统一使用 JSON 请求/响应，并通过 SQLite 持久化配置、队列、运行审计和执行结果。它既保留 <code>sap-rpa://</code> 协议唤醒能力，也承担 V2 的本地 HTTP API、SQLite 仓储、执行队列、VBS 运行器和通知适配职责。</p>
 
       <h3 id="launcher-api">本地 API 职责</h3>
       <div class="grid">
@@ -565,7 +565,7 @@
           <tr><th>接口</th><th>用途</th><th>返回核心字段</th></tr>
         </thead>
         <tbody>
-          <tr><td class="nowrap"><code>POST /api/runs</code></td><td>创建一次执行任务。API 校验事务码、参数、工厂范围和通知绑定；ZFI072A 多工厂请求生成一个 parent run，并按工厂准备 child run。</td><td><code>runId</code>、<code>status</code>、<code>transactionCode</code>、<code>queuePosition</code>、<code>createdAt</code>、<code>childRuns</code>、<code>summaryJson</code></td></tr>
+          <tr><td class="nowrap"><code>POST /api/runs</code></td><td>创建一次执行任务。API 校验事务码、参数、工厂范围和通知绑定；ZFI072A 多工厂请求生成一个 parent run，并按工厂准备 child run。<code>ZFIR034</code> 是日期范围事务，API 会清理误传的 <code>plants/businessAreas</code>，并按服务器系统日期补 <code>period/weekEnd</code> 为上一完整自然周。</td><td><code>runId</code>、<code>status</code>、<code>transactionCode</code>、<code>queuePosition</code>、<code>createdAt</code>、<code>childRuns</code>、<code>summaryJson</code></td></tr>
           <tr><td class="nowrap"><code>GET /api/runs</code></td><td>查询队列和历史记录，支持按事务码、状态、操作人、日期范围过滤，用于页面列表、前方任务数和审计查询。</td><td><code>items</code>、<code>total</code>、<code>runId</code>、<code>parentRunId</code>、<code>status</code>、<code>queuePosition</code>、<code>startedAt</code>、<code>finishedAt</code></td></tr>
           <tr><td class="nowrap"><code>GET /api/runs/{runId}</code></td><td>查看单个 run 详情。parent run 返回汇总和 child 明细；child run 返回单工厂执行日志、SAP 状态和输出文件。</td><td><code>run</code>、<code>requestJson</code>、<code>summaryJson</code>、<code>logs</code>、<code>files</code>、<code>childRuns</code>、<code>batchItems</code>、<code>notificationStatus</code></td></tr>
           <tr><td class="nowrap"><code>POST /api/runs/{parentRunId}/rerun-failed</code></td><td>只允许在原 parent run 已进入终态后调用。API 从原 <code>run_batch_items</code> 读取失败工厂，新建一次重跑 parent run 和失败工厂 child runs；原 parent 不改回 <code>running</code>，只作为审计记录保留。该接口用于部分失败后只重跑失败工厂，避免 A/C 等已成功工厂被重复执行。</td><td><code>ok</code>、<code>sourceParentRunId</code>、<code>parentRunId</code>/<code>rerunParentRunId</code>、<code>created</code>、<code>childRunIds</code>、<code>plants</code></td></tr>
@@ -583,7 +583,7 @@
         <tbody>
           <tr><td class="nowrap">SQLite Repository</td><td>创建/迁移表结构，读写配置、任务、日志、输出文件、定时任务运行记录。</td><td>数据库文件位于 <code>D:\sap_ai\data\sap-rpa-config.db</code>，运行库不提交 Git。</td></tr>
           <tr><td class="nowrap">Run Queue</td><td>将 <code>queued</code> 状态 run 串行改为 <code>running</code> 并执行。</td><td>同一交互式桌面会话只允许一个 SAP GUI 脚本执行，避免窗口和登录态互相干扰。</td></tr>
-          <tr><td class="nowrap">VBS Runner</td><td>按事务码找到脚本，替换 <code>{YEAR}</code>、<code>{WEEK}</code>、<code>{PLANTS}</code> 等占位符，捕获标准输出。</td><td>脚本路径来自配置或默认 <code>D:\sap_ai\transactions</code>。</td></tr>
+          <tr><td class="nowrap">VBS Runner</td><td>按事务码找到脚本，替换 <code>{YEAR}</code>、<code>{WEEK}</code>、<code>{PLANTS}</code>、<code>{PERIOD}</code>、<code>{WEEK_END}</code> 等占位符，捕获标准输出。</td><td><code>ZFIR034.vbs</code> 写入 <code>S_BUDAT-LOW/HIGH</code> 和 <code>P_WEEK</code>；未传日期时脚本自身也会按系统日期计算上一完整周，并由最终开始日期推导周次。<code>P_WEEK</code> 优先写 <code>wnd[0]/usr/txtP_WEEK</code>，兜底写 <code>wnd[0]/usr/ctxtP_WEEK</code>。</td></tr>
           <tr><td class="nowrap">Notification Adapter</td><td>根据 run 状态、操作人和机器人绑定选择通知目标，调用 DingTalk OpenAPI。</td><td>密钥只来自环境变量或 <code>config.local.json</code>，不能下发前端。</td></tr>
         </tbody>
       </table>
@@ -639,7 +639,7 @@
 };
 
 async function pollRun(runId) {
-  const response = await fetch(`http://127.0.0.1:17890/api/runs/${runId}`);
+  const response = await fetch(`http://127.0.0.1:8080/api/runs/${runId}`);
   const data = await response.json();
   const apiLogs = [
     ...(data.run?.logs || []),
@@ -688,10 +688,10 @@ async function pollRun(runId) {
       <div class="solution-box"><strong>影响面控制：</strong>后续改页面时先定位模块。改 API 合约不要顺手重写渲染；改按钮动作不要改默认数据；改展示文案不要触碰 VBS 参数或数据库规则。较大 UI 改造前建议先拆 <code>portal-render.js</code>。</div>
 
       <h3 id="frontend-communication">页面与 SapWebLauncher 通信机制</h3>
-      <p>页面可以直接以 <code>file://</code> 方式打开，但执行能力不在浏览器里。浏览器 JavaScript 通过 <code>http://127.0.0.1:17890</code> 调用本机 API，提交任务、查询 run、读取配置和展示历史；SapWebLauncher 是运行在本机 Windows 执行账号下的 C# / .NET HTTP 服务，负责访问 SQLite、调度 SAP GUI、执行 VBS 和发送 DingTalk 通知。</p>
+      <p>页面可以直接以 <code>file://</code> 方式打开，但执行能力不在浏览器里。浏览器 JavaScript 通过 <code>http://127.0.0.1:8080</code> 调用本机 API，提交任务、查询 run、读取配置和展示历史；SapWebLauncher 是运行在本机 Windows 执行账号下的 C# / .NET HTTP 服务，负责访问 SQLite、调度 SAP GUI、执行 VBS 和发送 DingTalk 通知。</p>
       <div class="priority">
         <div class="item"><b>浏览器页面</b>只负责表单、按钮、日志框和结果展示；页面不直接连接 SQLite，不保存 SAP 密码，也不直接控制 SAP GUI。</div>
-        <div class="item"><b>本机 API</b>由 SapWebLauncher 监听 <code>127.0.0.1:17890</code>，接收 <code>POST /api/runs</code>，并通过 <code>GET /api/runs/{runId}</code> 返回状态、日志、文件和汇总。</div>
+        <div class="item"><b>本机 API</b>由 SapWebLauncher 监听 <code>127.0.0.1:8080</code>，接收 <code>POST /api/runs</code>，并通过 <code>GET /api/runs/{runId}</code> 返回状态、日志、文件和汇总。</div>
         <div class="item"><b>状态源</b>SQLite 是运行状态和审计数据的来源，包含 <code>runs</code>、<code>run_logs</code>、<code>run_files</code>、<code>run_batch_items</code> 等表；页面刷新后仍从 API 读取这些数据恢复展示。</div>
       </div>
       <div class="tip-box"><strong>通信方向：</strong>进度和日志不是 SapWebLauncher 主动 <code>POST</code> 回页面。浏览器页面没有内置 HTTP 回调服务，页面通过定时 <code>GET</code> 轮询 API 获取最新 run 状态。</div>
@@ -712,13 +712,13 @@ async function pollRun(runId) {
 
       <h3 id="frontend-submit">提交任务</h3>
       <div class="flow">
-        <div class="step"><b>选择事务</b>用户选择如 <code>ZFI072A</code>，页面根据规则计算默认工厂。</div>
-        <div class="step"><b>确认参数</b>页面组织 <code>year</code>、<code>week</code>、<code>plants</code>、业务范围、操作人。</div>
+        <div class="step"><b>选择事务</b>用户选择如 <code>ZFI072A</code>，页面根据规则计算默认工厂；选择 <code>ZFIR034</code> 时显示上一完整周日期范围。</div>
+        <div class="step"><b>确认参数</b>页面组织 <code>year</code>、<code>week</code>、<code>plants</code>、业务范围、日期范围和操作人；<code>ZFIR034</code> 只提交日期范围，不提交工厂或业务范围。</div>
         <div class="step"><b>调用 API</b>提交 <code>POST /api/runs</code>，由 API 生成 <code>runId</code>。</div>
         <div class="step"><b>轮询状态</b>页面读取 run 详情、队列位置、SAP 状态栏信息。</div>
         <div class="step"><b>展示结果</b>成功/失败、日志、输出文件路径和通知结果回显。</div>
       </div>
-      <div class="constraint-box"><strong>生产身份约束：</strong>前端传入的操作人信息不能作为最终可信身份。上线后应由公司门户、钉钉扫码登录或 SSO 在 API 侧确认真实用户，再写入 <code>runs.operator_id</code>、<code>operator_name</code>、<code>operator_dept</code>。</div>
+      <div class="constraint-box"><strong>生产身份约束：</strong>前端传入的操作人信息不能作为最终可信身份。当前页面可从公司门户 URL token 的 JWT payload 中解析 <code>Account</code> 作为联调通知员工号；上线后应由公司门户或 SSO 在 API 侧完成验签、有效期和来源校验，再写入 <code>runs.operator_id</code>、<code>operator_name</code>、<code>operator_dept</code>。</div>
     </section>
 
     <section id="sqlite" class="section">

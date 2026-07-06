@@ -138,7 +138,7 @@
 | `operator_id` | TEXT | 操作人 ID。 |
 | `operator_name` | TEXT | 操作人姓名。 |
 | `operator_dept` | TEXT | 操作人部门。 |
-| `ding_talk_user_id` | TEXT | 钉钉用户 ID；当前联调可临时写死，正式应来自登录态。 |
+| `ding_talk_user_id` | TEXT | 钉钉用户 ID；当前联调可使用默认 `11464769`，也可由外部门户 URL token payload 的 `Account` 派生；正式应来自后端已验证登录态。 |
 | `status` | TEXT | `queued/running/success/failed/partial_failed/canceled/skipped`。 |
 | `request_json` | TEXT JSON | 请求参数快照，不保存密码或真实 secret。 |
 | `sap_status_type` | TEXT | SAP 状态栏类型。 |
@@ -393,7 +393,7 @@
 | `name` | TEXT | 链路名称快照。 |
 | `operator_id` | TEXT | 操作人 ID。 |
 | `operator_name` | TEXT | 操作人姓名。 |
-| `ding_talk_user_id` | TEXT | 通知用户 ID。 |
+| `ding_talk_user_id` | TEXT | 通知用户 ID；规则同普通 run，不保存 JWT/Bearer 原文。 |
 | `source` | TEXT | 页面、定时任务、重跑等。 |
 | `status` | TEXT | `queued/running/success/failed/partial_failed/canceled/manual_review`。 |
 | `strategy` | TEXT | 执行策略快照。 |
@@ -552,7 +552,7 @@
 - `data_json`
 - `app_settings.setting_value`
 
-禁止明文保存：SAP 密码、SAP 登录 token、钉钉 `appKey/appSecret/agentId` 真实值、webhook secret、公司私有接口密钥、个人机器路径中含用户名的敏感片段。必须用占位符、DPAPI、Windows 凭据、环境变量或本机未提交 `config.local.json`。
+禁止明文保存：SAP 密码、SAP 登录 token、外部门户 JWT/Bearer token、钉钉 `appKey/appSecret/agentId` 真实值、webhook secret、公司私有接口密钥、个人机器路径中含用户名的敏感片段。必须用占位符、DPAPI、Windows 凭据、环境变量或本机未提交 `config.local.json`。URL token 只允许派生员工号等非密钥标识后写入相应业务字段。
 
 ## 最小落地版本建议
 

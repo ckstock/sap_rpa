@@ -4,7 +4,7 @@
     [string]$Action = "gui",
     [string]$RuntimeRoot = "",
     [string]$SourceRoot = "",
-    [int]$ApiPort = 17890,
+    [int]$ApiPort = 8080,
     [switch]$ForceResetDb
 )
 
@@ -30,6 +30,7 @@ $script:RunningCliMode = $false
 function Get-DefaultRuntimeRoot {
     if (-not [string]::IsNullOrWhiteSpace($RuntimeRoot)) { return $RuntimeRoot }
     if (-not [string]::IsNullOrWhiteSpace($env:SAP_RPA_HOME)) { return $env:SAP_RPA_HOME }
+    if (Test-Path "D:\") { return "D:\SAP_RPA" }
     return "C:\SAP_RPA"
 }
 
@@ -39,14 +40,24 @@ function Get-DefaultSourceRoot {
 
     $parent = Split-Path -Parent $script:SetupRoot
     $grandParent = if ($parent) { Split-Path -Parent $parent } else { "" }
-    $candidates = @($grandParent, $parent, $script:SetupRoot)
+    $candidates = @($parent, $grandParent, $script:SetupRoot)
 
     foreach ($candidate in $candidates) {
-        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate)) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and (Test-Path $candidate) -and (Test-SourceRootCandidate $candidate)) {
             return $candidate
         }
     }
     return $script:SetupRoot
+}
+
+function Test-SourceRootCandidate {
+    param([string]$PathText)
+    if ([string]::IsNullOrWhiteSpace($PathText) -or -not (Test-Path $PathText)) { return $false }
+    return (Test-Path (Join-Path $PathText "index.html")) -or
+        (Test-Path (Join-Path $PathText "assets")) -or
+        (Test-Path (Join-Path $PathText "transactions")) -or
+        (Test-Path (Join-Path $PathText "bin\SapWebLauncher.exe")) -or
+        (Test-Path (Join-Path $PathText "网页启动登录"))
 }
 
 function Normalize-PathText {
@@ -306,7 +317,9 @@ function Invoke-Launcher {
     )
     $launcher = Get-LauncherExe $Paths
     $oldHome = $env:SAP_RPA_HOME
+    $oldApiPrefix = $env:SAP_RPA_API_PREFIX
     $env:SAP_RPA_HOME = $Paths.RuntimeRoot
+    $env:SAP_RPA_API_PREFIX = Get-ApiPrefix
     $stdoutFile = Join-Path $Paths.RuntimeLogs ("launcher-stdout-{0}.log" -f ([guid]::NewGuid().ToString("N")))
     $stderrFile = Join-Path $Paths.RuntimeLogs ("launcher-stderr-{0}.log" -f ([guid]::NewGuid().ToString("N")))
     try {
@@ -323,6 +336,7 @@ function Invoke-Launcher {
     }
     finally {
         $env:SAP_RPA_HOME = $oldHome
+        $env:SAP_RPA_API_PREFIX = $oldApiPrefix
         foreach ($file in @($stdoutFile, $stderrFile)) {
             if (Test-Path $file) { Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue }
         }
@@ -447,20 +461,32 @@ function Start-LocalApi {
     $existing = Get-CimInstance Win32_Process -Filter "name = 'SapWebLauncher.exe'" -ErrorAction SilentlyContinue |
         Where-Object { $_.CommandLine -match "--serve| serve" }
     if ($existing) {
-        Write-SetupLog ("本地 API 已在运行，PID：{0}" -f (($existing | Select-Object -ExpandProperty ProcessId) -join ", "))
-        Set-StepStatus "启动本地 API" "Success" "Already running"
-        return
+        if (Wait-ApiReady -TimeoutSeconds 5) {
+            Write-SetupLog ("本地 API 已在 $script:ApiBaseUrl 运行，PID：{0}" -f (($existing | Select-Object -ExpandProperty ProcessId) -join ", "))
+            Set-StepStatus "启动本地 API" "Success" "Already running"
+            return
+        }
+        Write-SetupLog "发现已有 SapWebLauncher --serve 进程，但 $script:ApiBaseUrl 未响应；将停止旧进程后按当前端口重启。" "WARN"
+        foreach ($proc in $existing) {
+            Stop-Process -Id $proc.ProcessId -Force -ErrorAction SilentlyContinue
+        }
+        Start-Sleep -Seconds 1
     }
 
     $oldHome = $env:SAP_RPA_HOME
+    $oldApiPrefix = $env:SAP_RPA_API_PREFIX
     $env:SAP_RPA_HOME = $Paths.RuntimeRoot
+    $env:SAP_RPA_API_PREFIX = Get-ApiPrefix
     try {
         Start-Process -FilePath $launcher -ArgumentList "--serve" -WorkingDirectory (Split-Path -Parent $launcher) -WindowStyle Hidden
     }
     finally {
         $env:SAP_RPA_HOME = $oldHome
+        $env:SAP_RPA_API_PREFIX = $oldApiPrefix
     }
-    Start-Sleep -Seconds 2
+    if (-not (Wait-ApiReady -TimeoutSeconds 25)) {
+        throw "本地 API 启动后未响应：$($script:ApiBaseUrl)/api/health"
+    }
     Set-StepStatus "启动本地 API" "Success" $script:ApiBaseUrl
 }
 
@@ -489,9 +515,28 @@ function Invoke-HealthUrl {
     }
 }
 
+function Get-ApiPrefix {
+    return ($script:ApiBaseUrl.TrimEnd("/") + "/")
+}
+
+function Wait-ApiReady {
+    param([int]$TimeoutSeconds = 20)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        try {
+            Invoke-RestMethod -Uri "$($script:ApiBaseUrl)/api/health" -TimeoutSec 3 | Out-Null
+            return $true
+        } catch {
+            Start-Sleep -Milliseconds 500
+        }
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
+
 function Check-OnlineStatus {
     param([hashtable]$Paths)
     Set-StepStatus "检测上线状态" "Running"
+    $failures = New-Object System.Collections.Generic.List[string]
 
     $checks = [ordered]@{
         "运行页面" = $Paths.RuntimeIndex
@@ -513,7 +558,11 @@ function Check-OnlineStatus {
         if (Test-Path $path) {
             Write-SetupLog "$name：OK - $path"
         } else {
-            Write-SetupLog "$name：缺失 - $path" "WARN"
+            $message = "$name：缺失 - $path"
+            Write-SetupLog $message "WARN"
+            if ($name -ne "SAP 登录配置") {
+                $failures.Add($message) | Out-Null
+            }
         }
     }
 
@@ -530,9 +579,20 @@ function Check-OnlineStatus {
         Write-SetupLog "SapWebLauncher self-test 失败：$($_.Exception.Message)" "WARN"
     }
 
-    Invoke-HealthUrl "$($script:ApiBaseUrl)/api/health" | Out-Null
-    Invoke-HealthUrl "$($script:ApiBaseUrl)/api/config" | Out-Null
-    Invoke-HealthUrl "$($script:ApiBaseUrl)/api/schema" | Out-Null
+    foreach ($url in @(
+        "$($script:ApiBaseUrl)/api/health",
+        "$($script:ApiBaseUrl)/api/config",
+        "$($script:ApiBaseUrl)/api/schema"
+    )) {
+        if (-not (Invoke-HealthUrl $url)) {
+            $failures.Add("API 未通过：$url") | Out-Null
+        }
+    }
+
+    if ($failures.Count -gt 0) {
+        Set-StepStatus "检测上线状态" "Failed" "$($failures.Count) failure(s)"
+        throw ("上线状态检测失败：" + ($failures -join "；"))
+    }
     Set-StepStatus "检测上线状态" "Success"
 }
 

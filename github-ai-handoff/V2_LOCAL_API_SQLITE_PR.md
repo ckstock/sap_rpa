@@ -50,9 +50,9 @@ Result: initialized SQLite under `D:\sap_ai\data\sap-rpa-config.db`.
 Result: 7 checks passed.
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:17890/api/health
-Invoke-RestMethod http://127.0.0.1:17890/api/schema
-Invoke-RestMethod 'http://127.0.0.1:17890/api/schema/tables/runs?limit=1'
+Invoke-RestMethod http://127.0.0.1:8080/api/health
+Invoke-RestMethod http://127.0.0.1:8080/api/schema
+Invoke-RestMethod 'http://127.0.0.1:8080/api/schema/tables/runs?limit=1'
 ```
 
 Result: health/schema/table preview endpoints responded successfully.

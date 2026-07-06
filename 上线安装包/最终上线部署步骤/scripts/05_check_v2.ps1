@@ -27,9 +27,9 @@ Write-Step "Running launcher self-test"
 
 Write-Step "Checking API"
 foreach ($url in @(
-    "http://127.0.0.1:17890/api/health",
-    "http://127.0.0.1:17890/api/config",
-    "http://127.0.0.1:17890/api/schema"
+    "http://127.0.0.1:8080/api/health",
+    "http://127.0.0.1:8080/api/config",
+    "http://127.0.0.1:8080/api/schema"
 )) {
     try {
         $result = Invoke-RestMethod $url -TimeoutSec 8
