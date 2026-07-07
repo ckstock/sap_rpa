@@ -411,7 +411,7 @@
           <tbody>
             <tr><td>事务执行</td><td>ZFI072A 优先打通；其他事务码可配置展示，但脚本未验证前不作为生产自动化承诺。</td><td>不并发操作同一个 SAP GUI 桌面会话。</td></tr>
             <tr><td>配置源</td><td>SQLite 是当前主配置源，页面从 API 读取。</td><td>SQL Server/PostgreSQL 可作为后续迁移目标。</td></tr>
-            <tr><td>身份与通知</td><td>页面可从对方平台 URL token 的 <code>Account</code> 解析通知员工号；无 token 时使用联调默认 <code>11464769</code>。</td><td>正式身份应由公司门户 URL token 或 SSO 交给 API 侧验签确认。</td></tr>
+            <tr><td>身份与通知</td><td>页面可从对方平台 URL token 的 <code>Account</code> 解析通知员工号；解析成功后直接进入执行页，无 token 时使用联调默认 <code>11464769</code>。</td><td>正式身份应由公司门户 URL token 或 SSO 交给 API 侧验签确认。</td></tr>
           </tbody>
         </table>
       </div>
@@ -425,7 +425,7 @@
         <table>
           <thead><tr><th>入口/控件</th><th>用户可见行为</th><th>数据落点</th></tr></thead>
           <tbody>
-            <tr><td>对方平台 URL token 直跳</td><td>对方平台点击图标后跳转到本页面，并通过 <code>?token=&lt;jwt&gt;</code>、<code>?authorization=Bearer ...</code> 或 <code>?access_token=&lt;jwt&gt;</code> 传入身份。页面启动时解析 JWT payload 的 <code>Account</code>，自动取消“使用联调默认通知人 11464769”，后续提交任务使用该员工号。</td><td>前端状态 <code>state.externalAuth.claimedAccount</code>，提交 <code>POST /api/runs</code> 时写入 <code>operator.dingTalkUserId</code> 和 <code>operator.ddid</code>；页面不保存 token 原文，解析后清理 URL 参数。</td></tr>
+            <tr><td>对方平台 URL token 直跳</td><td>对方平台点击图标后跳转到本页面，并通过 <code>?token=&lt;jwt&gt;</code>、<code>?authorization=Bearer ...</code> 或 <code>?access_token=&lt;jwt&gt;</code> 传入身份。页面启动时解析 JWT payload 的 <code>Account</code>，成功后直接建立前端登录态并进入执行任务页，同时自动取消“使用联调默认通知人 11464769”，后续提交任务使用该员工号。</td><td>前端状态 <code>state.externalAuth.claimedAccount</code>、<code>state.loggedIn</code> 和 <code>state.page=execute</code>；提交 <code>POST /api/runs</code> 时写入 <code>operator.dingTalkUserId</code> 和 <code>operator.ddid</code>；页面不保存 token 原文，解析后清理 URL 参数。</td></tr>
             <tr><td>账号登录</td><td>输入钉钉账号/手机号和密码后登录页面；该密码是页面演示字段，不是 SAP 密码。页面不再提供钉钉扫码按钮。</td><td>页面只保存展示用用户名称和登录状态；通知目标由 URL token 的 <code>Account</code> 或联调默认号决定。</td></tr>
             <tr><td>退出</td><td>清除页面登录态，返回登录页。</td><td>清理浏览器本地页面状态，不影响服务器 SAP 登录配置。</td></tr>
           </tbody>
@@ -600,7 +600,7 @@
         <table>
           <thead><tr><th>来源</th><th>当前规则</th><th>上线规则</th></tr></thead>
           <tbody>
-            <tr><td>页面登录人</td><td>无 URL token 时默认使用 <code>11464769</code> 作为联调钉钉 ID；带合法 URL token 跳转时，页面自动从 token 的 <code>Account</code> 取员工号并作为通知用户提交。</td><td>应由公司门户 URL token 或公司 SSO 传给 API，并在后端验签后写入 run 操作人字段。</td></tr>
+            <tr><td>页面登录人</td><td>无 URL token 时默认使用 <code>11464769</code> 作为联调钉钉 ID；带合法 URL token 跳转时，页面自动从 token 的 <code>Account</code> 取员工号、进入执行页并作为通知用户提交。</td><td>应由公司门户 URL token 或公司 SSO 传给 API，并在后端验签后写入 run 操作人字段。</td></tr>
             <tr><td>后台定时任务</td><td>可使用任务配置中的通知目标或默认负责人。</td><td>应支持配置任务负责人、业务群或机器人绑定。</td></tr>
             <tr><td>异常通知</td><td>失败、部分失败、通知失败应写入 run 日志。</td><td>应通知发起人和配置的运维/业务负责人。</td></tr>
           </tbody>

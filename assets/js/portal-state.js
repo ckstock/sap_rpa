@@ -1,5 +1,6 @@
     const DEFAULT_DINGTALK_USER_ID = "11464769";
     const EXTERNAL_TOKEN_QUERY_KEYS = ["token", "authorization", "access_token"];
+    const savedUseDefaultNotifyUser = localStorage.getItem("portalUseDefaultNotifyUser");
 
     const state = {
       loggedIn: localStorage.getItem("portalLoggedIn") === "1",
@@ -31,7 +32,7 @@
         factoryGroup: "PINGHU_30",
         plants: ["1022", "1024", "1032", "6041"],
         notify: true,
-        useDefaultNotifyUser: true,
+        useDefaultNotifyUser: savedUseDefaultNotifyUser === null ? true : savedUseDefaultNotifyUser !== "0",
         remark: ""
       },
       steps: [

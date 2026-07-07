@@ -82,6 +82,19 @@
       if (changed) window.history.replaceState({}, document.title, url.href);
     }
 
+    function applyExternalTokenLogin(claimedAccount, claimedUserName) {
+      const displayName = claimedUserName || claimedAccount;
+      state.form.useDefaultNotifyUser = false;
+      state.user.name = displayName;
+      state.user.dingTalkUserId = claimedAccount;
+      state.loggedIn = true;
+      state.page = "execute";
+      localStorage.setItem("portalUser", displayName);
+      localStorage.setItem("portalDingTalkUserId", claimedAccount);
+      localStorage.setItem("portalUseDefaultNotifyUser", "0");
+      localStorage.setItem("portalLoggedIn", "1");
+    }
+
     function consumeExternalTokenAccountFromUrl() {
       const tokenParam = readExternalTokenFromUrl();
       if (!tokenParam) return;
@@ -94,7 +107,7 @@
           status: claimedAccount ? "parsed" : "missing-account"
         };
         if (claimedAccount) {
-          state.form.useDefaultNotifyUser = false;
+          applyExternalTokenLogin(claimedAccount, state.externalAuth.claimedUserName);
         }
       } catch {
         state.externalAuth = { claimedAccount: "", claimedUserName: "", status: "invalid" };

@@ -23,6 +23,7 @@
       const useDefaultNotifyUser = document.getElementById("useDefaultNotifyUser");
       if (useDefaultNotifyUser) useDefaultNotifyUser.addEventListener("change", () => {
         state.form.useDefaultNotifyUser = useDefaultNotifyUser.checked;
+        localStorage.setItem("portalUseDefaultNotifyUser", state.form.useDefaultNotifyUser ? "1" : "0");
         render();
       });
       const scheduleTCode = document.getElementById("scheduleTCode");
@@ -568,6 +569,7 @@
       state.user.dingTalkUserId = getResolvedNotifyUserId();
       localStorage.setItem("portalUser", state.user.name);
       localStorage.setItem("portalDingTalkUserId", state.user.dingTalkUserId);
+      localStorage.setItem("portalUseDefaultNotifyUser", state.form.useDefaultNotifyUser ? "1" : "0");
       localStorage.setItem("portalLoggedIn", "1");
       state.loggedIn = true;
       if (!state.form.useDefaultNotifyUser && !state.externalAuth.claimedAccount) {

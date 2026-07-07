@@ -61,7 +61,7 @@ function openSapRpaWithBearer(jwt) {
 - 解析成功后会从地址栏清理 token 参数。
 - 页面不保存 JWT/Bearer 原文，不写入 localStorage。
 - 页面没有钉钉扫码登录入口，对方平台图标点击后直接跳转 URL。
-- 识别到合法 `Account` 后，登录页会自动取消“使用联调默认通知人 11464769”，当前提交用户改为 token 中的 `Account`。
+- 识别到合法 `Account` 后，页面会直接进入执行任务页，自动取消“使用联调默认通知人 11464769”，当前提交用户改为 token 中的 `Account`。
 - 用户重新勾选默认通知人后，会切回 `11464769`。
 
 ## 联调测试步骤
@@ -70,7 +70,7 @@ function openSapRpaWithBearer(jwt) {
 2. 在测试页粘贴测试 JWT 或 `Bearer <JWT>`。
 3. 点击解析，确认能看到 `Account`。
 4. 点击跳转到正式 SAP RPA 页面。
-5. 登录页确认默认通知人复选框自动取消，当前提交显示为 token 中的 `Account`。
+5. 正式 SAP RPA 页面应直接进入执行任务页，确认默认通知人复选框自动取消，当前提交显示为 token 中的 `Account`。
 6. 提交任务后检查本地 API 请求或钉钉通知目标，应该使用该 `Account`。
 
 ## 安全边界
