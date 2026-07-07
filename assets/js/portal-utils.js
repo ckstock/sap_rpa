@@ -97,7 +97,17 @@
 
     function consumeExternalTokenAccountFromUrl() {
       const tokenParam = readExternalTokenFromUrl();
-      if (!tokenParam) return;
+      if (!tokenParam) {
+        state.externalAuth = { claimedAccount: "", claimedUserName: "", status: "none" };
+        state.user.name = "张三";
+        state.user.dingTalkUserId = DEFAULT_DINGTALK_USER_ID;
+        state.form.useDefaultNotifyUser = true;
+        localStorage.removeItem("portalUser");
+        localStorage.removeItem("portalDingTalkUserId");
+        localStorage.removeItem("portalLoggedIn");
+        localStorage.setItem("portalUseDefaultNotifyUser", "1");
+        return;
+      }
       try {
         const payload = parseJwtPayload(tokenParam.value);
         const claimedAccount = String(payload.Account ?? payload.account ?? "").trim();
@@ -108,9 +118,14 @@
         };
         if (claimedAccount) {
           applyExternalTokenLogin(claimedAccount, state.externalAuth.claimedUserName);
+        } else {
+          state.form.useDefaultNotifyUser = true;
+          localStorage.setItem("portalUseDefaultNotifyUser", "1");
         }
       } catch {
         state.externalAuth = { claimedAccount: "", claimedUserName: "", status: "invalid" };
+        state.form.useDefaultNotifyUser = true;
+        localStorage.setItem("portalUseDefaultNotifyUser", "1");
       } finally {
         removeExternalTokenFromUrl();
       }
@@ -119,18 +134,26 @@
     function getResolvedNotifyUserId() {
       if (state.form.useDefaultNotifyUser !== false) return DEFAULT_DINGTALK_USER_ID;
       if (state.externalAuth.claimedAccount) return state.externalAuth.claimedAccount;
-      if (["invalid", "missing-account"].includes(state.externalAuth.status)) return DEFAULT_DINGTALK_USER_ID;
-      const savedUserId = String(state.user.dingTalkUserId || "").trim();
-      return savedUserId && savedUserId !== DEFAULT_DINGTALK_USER_ID ? savedUserId : DEFAULT_DINGTALK_USER_ID;
+      return "";
+    }
+
+    function isNotifyUserBlocked() {
+      return state.form.useDefaultNotifyUser === false && !state.externalAuth.claimedAccount;
+    }
+
+    function notifyUserBlockingText() {
+      if (!isNotifyUserBlocked()) return "";
+      if (state.externalAuth.status === "invalid") return "token 无效，取消固定通知后不能提交。";
+      if (state.externalAuth.status === "missing-account") return "token 未包含 Account，取消固定通知后不能提交。";
+      return "未解析到 token 员工号，取消固定通知后不能提交。";
     }
 
     function notifyUserSourceText() {
       if (state.form.useDefaultNotifyUser !== false) return "联调默认";
       if (state.externalAuth.claimedAccount) return "URL token Account";
-      if (state.externalAuth.status === "invalid") return "token 无效，已兜底";
-      if (state.externalAuth.status === "missing-account") return "token 未包含 Account，已兜底";
-      if (state.user.dingTalkUserId && state.user.dingTalkUserId !== DEFAULT_DINGTALK_USER_ID) return "已保存 Account";
-      return "未识别 token，已兜底";
+      if (state.externalAuth.status === "invalid") return "token 无效";
+      if (state.externalAuth.status === "missing-account") return "token 未包含 Account";
+      return "未识别 token";
     }
 
     function formatScheduleFrequency(value) {

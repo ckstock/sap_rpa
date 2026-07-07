@@ -3,7 +3,7 @@
     const savedUseDefaultNotifyUser = localStorage.getItem("portalUseDefaultNotifyUser");
 
     const state = {
-      loggedIn: localStorage.getItem("portalLoggedIn") === "1",
+      loggedIn: true,
       page: "dashboard",
       role: localStorage.getItem("portalRole") || "executor",
       user: {

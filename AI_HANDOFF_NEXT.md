@@ -83,7 +83,7 @@
 - 多工厂执行应记录父 run 和每个工厂子 run；开始通知一次，结束汇总通知一次，失败工厂支持重跑。
 - ZFIR034 已接入为日期范围事务：页面/API/协议入口/定时触发器都不传 `plants` 或 `businessAreas`，默认按运行时系统日期取上一完整自然周并写入 `period/weekEnd`；VBS 写 `S_BUDAT-LOW/HIGH`，并按最终开始日期推导周次后写入 `P_WEEK`（优先 `wnd[0]/usr/txtP_WEEK`，兜底 `wnd[0]/usr/ctxtP_WEEK`）。系统日期 `2026-07-02` 时应得到 `2026.06.22` 到 `2026.06.28`，`P_WEEK=26`。钉钉通知只显示日期范围，不显示工厂或业务范围。
 - 钉钉通知由后端发送，不由 VBS 进入 SAP 再调用函数。
-- 外部门户可通过页面 URL 传入 `?token=<jwt>`、`?authorization=Bearer ...` 或 `?access_token=<jwt>`；前端只解析 JWT payload 的 `Account` 作为联调通知员工号提示值，不验签、不保存 token 原文，并在加载后清理 URL。页面不再提供“钉钉扫码登录”按钮，对方平台按 URL token 直跳；未识别 URL token 时，登录页“使用联调默认通知人 11464769”复选框默认勾选并提交默认号；识别到合法 URL token Account 后会自动建立前端登录态、进入执行页、取消默认通知勾选，提交 `/api/runs` 时把解析出的 `Account` 写入 `operator.dingTalkUserId` 和 `operator.ddid`。用户重新勾选复选框才会切回 `11464769`。生产可信身份仍必须由后端/SSO 验签确认。
+- 外部门户可通过页面 URL 传入 `?token=<jwt>`、`?authorization=Bearer ...` 或 `?access_token=<jwt>`；前端只解析 JWT payload 的 `Account` 作为联调通知员工号，不验签、不保存 token 原文，并在加载后清理 URL。页面不再显示账号/密码或“钉钉扫码登录”界面，对方平台按 URL token 直跳；执行页保留“勾选固定通知 11464769”复选框，勾选时提交 `11464769`，不勾选时必须使用本次 URL token Account。识别到合法 URL token Account 后页面进入执行页、顶部身份位置显示该员工号并自动取消固定通知勾选，提交 `/api/runs` 时把解析出的 `Account` 写入 `operator.dingTalkUserId` 和 `operator.ddid`；不勾选且未解析到 Account 时禁止触发执行。生产可信身份仍必须由后端/SSO 验签确认。
 - VBS 保持 ASCII/WSH 安全格式；VBS 只接收执行器传入的最终参数。
 - 前端后续修改必须按 `assets/js` 模块定位：改 API 合约优先看 `portal-api.js`，改展示优先看 `portal-render.js`，改按钮/保存/执行优先看 `portal-actions.js`，改默认数据优先看 `portal-state.js`。
 - `portal-render.js` 仍然偏大。下一任 AI 如果继续做页面维护，建议先把它按页面拆成 `render-workbench.js`、`render-execute.js`、`render-config.js`、`render-reports.js`、`render-schedule.js` 或等价模块，再做较大 UI 改造。

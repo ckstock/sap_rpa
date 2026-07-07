@@ -83,7 +83,6 @@
 
     function handleAction(el) {
       const action = el.dataset.action;
-      if (action === "login") return login();
       if (action === "logout") return logout();
       if (action === "toggle-role") return toggleRole();
       if (action === "go-execute") return goExecute(el.dataset.tcode);
@@ -562,24 +561,6 @@
       toast("已请求测试通知：" + (robot?.name || id || "通知机器人"), "ok");
     }
 
-    function login() {
-      const account = document.getElementById("loginAccount")?.value || "张三";
-      state.user.name = account.trim() || "张三";
-      state.form.useDefaultNotifyUser = readInputChecked("useDefaultNotifyUser");
-      state.user.dingTalkUserId = getResolvedNotifyUserId();
-      localStorage.setItem("portalUser", state.user.name);
-      localStorage.setItem("portalDingTalkUserId", state.user.dingTalkUserId);
-      localStorage.setItem("portalUseDefaultNotifyUser", state.form.useDefaultNotifyUser ? "1" : "0");
-      localStorage.setItem("portalLoggedIn", "1");
-      state.loggedIn = true;
-      if (!state.form.useDefaultNotifyUser && !state.externalAuth.claimedAccount) {
-        toast("未从 URL token 解析到 Account，已使用联调默认通知人", "warn");
-      }
-      toast("登录成功", "ok");
-      render();
-      refreshBridgeData({ silent: true });
-    }
-
     async function openRunLog(id) {
       if (state.bridge.online && id) {
         try {
@@ -598,8 +579,16 @@
 
     function logout() {
       localStorage.removeItem("portalLoggedIn");
-      state.loggedIn = false;
+      localStorage.removeItem("portalUser");
+      localStorage.removeItem("portalDingTalkUserId");
+      state.loggedIn = true;
+      state.user.name = "张三";
+      state.user.dingTalkUserId = DEFAULT_DINGTALK_USER_ID;
+      state.externalAuth = { claimedAccount: "", claimedUserName: "", status: "none" };
+      state.form.useDefaultNotifyUser = true;
+      localStorage.setItem("portalUseDefaultNotifyUser", "1");
       state.page = "dashboard";
+      toast("已清除页面身份，仍保留门户入口", "ok");
       render();
     }
 
@@ -619,6 +608,10 @@
     }
 
     function wakeProtocol() {
+      if (isNotifyUserBlocked()) {
+        toast(notifyUserBlockingText(), "warn");
+        return;
+      }
       launchProtocol();
       addLog("WARN", "协议唤醒模式没有浏览器回传，结果需要查看本地日志。");
       toast("已发起协议唤醒", "info");
@@ -626,6 +619,11 @@
 
     async function startRun() {
       if (state.role !== "executor" || state.executing) return;
+      if (isNotifyUserBlocked()) {
+        toast(notifyUserBlockingText(), "warn");
+        render();
+        return;
+      }
       state.executing = true;
       resetRun();
       const payload = buildRunPayload();
@@ -653,6 +651,13 @@
         render();
         pollRunStatus(created.runId, 0);
       } catch (err) {
+        if (isNotifyUserBlocked()) {
+          state.executing = false;
+          addLog("WARN", err.message);
+          toast(err.message, "warn");
+          render();
+          return;
+        }
         addLog("WARN", "本机 API 不可用，回退到协议唤醒：" + err.message);
         wakeProtocol();
         setTimeout(() => {
@@ -667,6 +672,7 @@
 
     async function createBridgeRun(payload) {
       const notifyUserId = getResolvedNotifyUserId();
+      if (!notifyUserId) throw new Error(notifyUserBlockingText() || "缺少提交通知员工号");
       state.user.dingTalkUserId = notifyUserId;
       const runParams = payload.rangeKind === "dateRange"
         ? {
@@ -705,6 +711,10 @@
     }
 
     function launchProtocol(runId = "") {
+      if (isNotifyUserBlocked()) {
+        toast(notifyUserBlockingText(), "warn");
+        return;
+      }
       const url = buildProtocolUrl(runId);
       const payload = buildRunPayload();
       addLog("INFO", "协议唤醒 SapWebLauncher：" + payload.tcode + "，" + payload.rangeLabel + " " + payload.rangeCsv);
@@ -828,12 +838,16 @@
 
     function buildProtocolUrl(runId = "") {
       const p = buildRunPayload();
+      const notifyUserId = getResolvedNotifyUserId();
       const params = new URLSearchParams({
         action: "run",
         tcode: p.tcode,
         script: p.script,
         period: p.period,
-        weekEnd: p.weekEnd
+        weekEnd: p.weekEnd,
+        notifyUserId,
+        dingTalkUserId: notifyUserId,
+        ddid: notifyUserId
       });
       if (p.rangeKind !== "dateRange") {
         params.set("plant", p.plant);

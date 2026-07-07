@@ -1,5 +1,5 @@
     function render() {
-      app.innerHTML = state.loggedIn ? renderShell() : renderLogin();
+      app.innerHTML = renderShell();
       bindEvents();
       lucide.createIcons();
     }
@@ -139,57 +139,29 @@
       return data;
     }
 
-    function renderLogin() {
-      return `
-        <section class="login-page">
-          <div class="login-panel">
-            <div class="login-brand">
-              <div class="brand-mark">${icon("workflow")}</div>
-              <div>
-                <h1>SAP 自动化执行门户</h1>
-                <p>SAP Automation Portal</p>
-              </div>
-            </div>
-            <div class="login-form">
-              <div class="field">
-                <label for="loginAccount">钉钉账号/手机号</label>
-                <input id="loginAccount" value="${esc(state.form.account)}" placeholder="请输入账号">
-              </div>
-              <div class="field">
-                <label for="loginPassword">密码</label>
-                <input id="loginPassword" type="password" value="${esc(state.form.password)}" placeholder="请输入密码">
-              </div>
-              ${renderNotifyUserControl()}
-              <button class="btn primary" data-action="login">${icon("log-in")}登录</button>
-            </div>
-          </div>
-          <div class="login-side">
-            <h2>本机执行 SAP，页面负责调度和看结果</h2>
-            <p>前端可以部署到 Netlify 或企业门户；每台执行电脑安装 SapWebLauncher，并在本机维护 SAP 登录信息。当前版本优先打通事务码登录和脚本执行。</p>
-          </div>
-        </section>
-      `;
-    }
-
     function renderNotifyUserControl() {
-      const tokenAccount = state.externalAuth.claimedAccount || "";
-      const tokenText = tokenAccount
-        ? `取消勾选后使用 URL token Account：${tokenAccount}`
-        : "取消勾选后会尝试使用 URL token 的 Account；未解析到时仍兜底 11464769。";
+      const notifyUserId = getResolvedNotifyUserId();
+      const isBlocked = isNotifyUserBlocked();
+      const detailText = notifyUserId
+        ? `当前提交通知人：${notifyUserId}（${notifyUserSourceText()}）`
+        : notifyUserBlockingText();
       return `
         <div class="field">
           <label class="checkbox-card">
             <input id="useDefaultNotifyUser" type="checkbox" ${state.form.useDefaultNotifyUser === false ? "" : "checked"}>
             <span>
               <strong>勾选固定通知 11464769</strong>
-              <span>${esc(tokenText)} 当前提交通知人：${esc(getResolvedNotifyUserId())}（${esc(notifyUserSourceText())}）。</span>
+              <span>${esc(detailText)}</span>
             </span>
           </label>
+          ${isBlocked ? `<div class="notice warn">${esc(notifyUserBlockingText())}</div>` : ""}
         </div>
       `;
     }
 
     function renderShell() {
+      const headerUserText = state.externalAuth.claimedAccount || state.user.name;
+      const headerAvatarText = headerUserText.slice(0, 1) || "用";
       return `
         <div class="app-shell">
           <aside class="sidebar">
@@ -211,9 +183,9 @@
               <div class="top-actions">
                 <span class="badge ${state.role === "viewer" ? "viewer" : "executor"}">${icon(state.role === "viewer" ? "search" : "shield-check")} ${state.role === "viewer" ? "查询员" : "执行员"}</span>
                 <button class="btn small" data-action="toggle-role">${icon("refresh-cw")}切换角色</button>
-                <span class="avatar">${esc(state.user.name.slice(0,1))}</span>
-                <span>${esc(state.user.name)}</span>
-                <button class="btn small" data-action="logout">${icon("log-out")}退出</button>
+                <span class="avatar">${esc(headerAvatarText)}</span>
+                <span>${esc(headerUserText)}</span>
+                <button class="btn small" data-action="logout">${icon("user-x")}清除身份</button>
               </div>
             </header>
             ${renderCurrentPage()}
@@ -441,6 +413,7 @@
     function renderExecute() {
       syncExecutionDefaults();
       const executableTCodes = activeTCodes();
+      const notifyBlocked = isNotifyUserBlocked();
       return `
         <section class="grid cols-2">
           <div class="panel">
@@ -460,7 +433,7 @@
                 ${renderExecutePlants()}
                 ${renderNotifyUserControl()}
                 <div class="execute-actions">
-                  <button class="btn primary" data-action="start-run" ${state.role !== "executor" || state.executing ? "disabled" : ""}>${icon("send")}提交入队</button>
+                  <button class="btn primary" data-action="start-run" ${state.role !== "executor" || state.executing || notifyBlocked ? "disabled" : ""}>${icon("send")}提交入队</button>
                 </div>
               </div>
             </div>
