@@ -35,9 +35,21 @@
 - 当前分支：`codex/v2-local-api-sqlite`
 - 注意：`D:\sap_ai` 是运行/预览目录，不是主要 GitHub 源码仓库；正式提交优先在 `D:\工作\sap_rpa`。
 - 最近提交点：
+  - `1a4728e fix: enforce token notify account mode`：当前 GitHub 远端 `origin/codex/v2-local-api-sqlite` 已到此提交，包含 `AI_HANDOFF_NEXT.md`、token 通知模式和前端身份入口调整。
+  - `3bead51 fix: auto-login external token jumps`：外部门户 token 直跳后自动进入执行页。
+  - `cc437a2 feat: prepare server installer for port 8080`：服务器一键安装包和 `SapWebLauncher` 本地 API/SQLite/部署脚本更新。
   - `acfa314 chore: checkpoint v2 before frontend modularization`：前端模块化前回退点。
   - `41befc0 refactor: split portal javascript modules`：把 `index.html` 内联 JS 拆成 `assets/js/*.js`。
 - 当前工作前必须检查 `git status` 和 diff，确认没有数据库、日志、真实 `config.local.json`、钉钉密钥或 SAP 密码。
+
+### 2026-07-08 运行副本漂移排查结论
+
+- 已确认 `D:\工作\sap_rpa` 本地 `HEAD`、`origin/codex/v2-local-api-sqlite` 和 GitHub 远端同名分支一致：`1a4728edd925d9a984f9d245739d7f7ada84cf59`。
+- 已确认最新提交 `1a4728e` 包含本交接文档 `AI_HANDOFF_NEXT.md`。
+- 但本机运行副本没有同步到最新源码：`D:\sap_ai\bin\SapWebLauncher.exe`、`C:\Users\chen.kai6\AppData\Local\SapRpaLauncher\SapWebLauncher.exe`、`D:\工作\sap_rpa\dist\SapRpaV2_WindowsServer_8080\bin\SapWebLauncher.exe` 的 `ProductVersion` 仍是 `1.0.0+8d0a6bd5bdcbbc6b2ccb089bbb71a01ac3a36b5e`。
+- 当前 `sap-rpa://` 协议注册表入口指向 `C:\Users\chen.kai6\AppData\Local\SapRpaLauncher\SapWebLauncher.exe`，不是 `D:\sap_ai\bin\SapWebLauncher.exe`。网页/协议唤醒时优先检查这个目录的 exe 是否已重建。
+- 如果用户反馈“GitHub 里修过的 SAP 已登录复用/避免重复登录问题又出现”，不要先判断为代码未提交；优先检查实际运行的 `SapWebLauncher.exe` 版本、路径、协议注册入口和是否仍是旧构建。
+- 现有源码在 `Program.cs` 中会先执行 `ProbeSapSession`；探测到 ready SAP GUI session 时日志应出现 `Detected ready SAP GUI session; skip sapshcut login`。如果实际日志没有这句，重点排查运行的是不是旧 exe、服务是否未重启、`sap-rpa://` 是否指向 `%LOCALAPPDATA%\SapRpaLauncher` 旧副本。
 
 ## 最近完成的文档与安装包更新
 
