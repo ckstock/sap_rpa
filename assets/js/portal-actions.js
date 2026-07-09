@@ -106,6 +106,7 @@
       if (action === "open-schedule-modal") { openScheduleModal(el.dataset.scheduleId || ""); return render(); }
       if (action === "close-modal") { state.modal = null; return render(); }
       if (action === "save-schedule") return saveScheduleFromModal();
+      if (action === "delete-schedule") return deleteScheduleTaskFromList(el.dataset.scheduleId || "");
       if (action === "open-config-modal") return openConfigModal(el.dataset.kind, el.dataset.mode, el.dataset.id || "");
       if (action === "save-config") return saveConfigFromModal(el.dataset.kind, el.dataset.mode, el.dataset.id || "");
       if (action === "delete-config") return deleteConfigItem(el.dataset.kind, el.dataset.id || "");
@@ -142,6 +143,8 @@
           notifySuccess: task.notifySuccess !== false,
           notifyFail: task.notifyFail !== false,
           enabled: task.enabled !== false && task.status !== "停用",
+          createdBy: task.createdBy || "",
+          updatedBy: task.updatedBy || "",
           nameEdited: true
         };
       } else {
@@ -159,6 +162,8 @@
           notifySuccess: true,
           notifyFail: true,
           enabled: true,
+          createdBy: state.user.name || state.externalAuth.claimedUserName || "portal",
+          updatedBy: state.user.name || state.externalAuth.claimedUserName || "portal",
           nameEdited: false
         };
       }
@@ -217,6 +222,30 @@
           scheduledTasks: nextSchedules
         })
       });
+    }
+
+    async function deleteScheduleTaskFromList(id) {
+      if (!id) return;
+      if (!state.bridge.online || !state.config.online) {
+        toast("删除失败：本机 API 未启动或配置接口不可用", "err");
+        return;
+      }
+
+      const task = scheduleTasks.find(item => item.id === id);
+      const label = task ? `${task.name || id}（${task.tCode || "-"}）` : id;
+      if (!window.confirm(`确认彻底删除定时任务 ${label}？\n删除后 schedule_tasks 中这条配置会被移除，已产生的执行 run 历史保留。`)) {
+        return;
+      }
+
+      try {
+        await bridgeFetch(CONFIG_API_PATHS.schedules(id), { method: "DELETE" });
+        scheduleTasks = scheduleTasks.filter(item => item.id !== id);
+        await refreshConfigData({ silent: true });
+        toast("定时任务已删除", "ok");
+        render();
+      } catch (err) {
+        toast("定时任务删除失败：" + err.message, "err");
+      }
     }
 
     function upsertScheduleTaskLocal(payload) {

@@ -726,7 +726,7 @@
             <div style="height:14px"></div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>任务 ID</th><th>任务名称</th><th>事务码</th><th>业务范围</th><th>业务范围代码</th><th>工厂</th><th>时间</th><th>频率</th><th>状态</th><th>下次执行</th><th>操作</th></tr></thead>
+                <thead><tr><th>任务 ID</th><th>任务名称</th><th>事务码</th><th>业务范围</th><th>业务范围代码</th><th>工厂</th><th>时间</th><th>频率</th><th>状态</th><th>设置人</th><th>下次执行</th><th>操作</th></tr></thead>
                 <tbody>${scheduleTasks.length ? scheduleTasks.map(task => `
                   <tr>
                     <td>${esc(task.id)}</td>
@@ -738,9 +738,10 @@
                     <td>${esc(task.time || "-")}</td>
                     <td>${esc(task.frequency || "-")}</td>
                     <td><span class="tag ${getScheduleStatusClass(task.status)}">${esc(task.status || "-")}</span></td>
+                    <td><span class="tag info">${esc(getScheduleSetterName(task))}</span></td>
                     <td>${esc(task.next || "-")}</td>
-                    <td><button class="btn small" data-action="open-schedule-modal" data-schedule-id="${esc(task.id)}">${icon("pencil")}编辑</button></td>
-                  </tr>`).join("") : `<tr><td colspan="11" class="empty-cell">暂无定时任务配置</td></tr>`}</tbody>
+                    <td><span class="inline-actions"><button class="btn small" data-action="open-schedule-modal" data-schedule-id="${esc(task.id)}">${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-schedule" data-schedule-id="${esc(task.id)}">${icon("trash-2")}删除</button></span></td>
+                  </tr>`).join("") : `<tr><td colspan="12" class="empty-cell">暂无定时任务配置</td></tr>`}</tbody>
               </table>
             </div>
           </div>
@@ -1051,6 +1052,15 @@
       return "info";
     }
 
+    function getScheduleSetterName(task) {
+      return task?.updatedBy || task?.createdBy || "-";
+    }
+
+    function buildScheduleNotifyTarget() {
+      const dingTalkId = getResolvedNotifyUserId();
+      return dingTalkId ? `dingtalk:${dingTalkId}` : "dingtalk";
+    }
+
     function buildScheduleConfigPayload() {
       const tCode = readInputValue("scheduleTCode") || state.scheduleForm.tCode || tCodes[0]?.code || "";
       const factoryGroup = readInputValue("scheduleFactoryGroup") || state.scheduleForm.factoryGroup || getTCode(tCode)?.defaultPlantGroup || factoryGroups[0]?.id || "";
@@ -1060,6 +1070,9 @@
       const businessAreas = isDateRange ? [] : getBusinessAreasForSelection(tCode, plantsValue, factoryGroup);
       const frequency = readInputValue("scheduleFrequency") || state.scheduleForm.frequency || "weekly";
       const enabled = readInputChecked("scheduleEnabled");
+      const notifyEnabled = readInputChecked("scheduleNotifyStart") || readInputChecked("scheduleNotifySuccess") || readInputChecked("scheduleNotifyFail");
+      if (notifyEnabled && !getResolvedNotifyUserId()) throw new Error(notifyUserBlockingText() || "缺少定时任务通知人钉钉 ID");
+      const currentUserName = state.user.name || state.externalAuth.claimedUserName || "portal";
       const task = {
         id: state.scheduleForm.id || nextScheduleTaskId(),
         name: readInputValue("scheduleName") || defaultScheduleName(tCode),
@@ -1095,13 +1108,15 @@
         },
         enabled,
         status: enabled ? "启用" : "停用",
-        notifyEnabled: readInputChecked("scheduleNotifyStart") || readInputChecked("scheduleNotifySuccess") || readInputChecked("scheduleNotifyFail"),
+        notifyEnabled,
         notifyStart: readInputChecked("scheduleNotifyStart"),
         notifySuccess: readInputChecked("scheduleNotifySuccess"),
         notifyFail: readInputChecked("scheduleNotifyFail"),
         notifyOnSuccess: readInputChecked("scheduleNotifySuccess"),
         notifyOnFailure: readInputChecked("scheduleNotifyFail"),
-        updatedBy: state.user.name || "portal"
+        notifyTarget: notifyEnabled ? buildScheduleNotifyTarget() : "",
+        createdBy: state.scheduleForm.createdBy || currentUserName,
+        updatedBy: currentUserName
       };
       return task;
     }

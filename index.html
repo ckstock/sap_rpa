@@ -79,7 +79,7 @@
     }
     .divider::before, .divider::after { content: ""; height: 1px; background: var(--line); }
 
-    .app-shell { min-height: 100vh; display: grid; grid-template-columns: 238px minmax(0, 1fr); }
+    .app-shell { min-height: 100vh; display: grid; grid-template-columns: 176px minmax(0, 1fr); }
     .sidebar {
       position: sticky; top: 0; height: 100vh;
       background: var(--nav);
@@ -88,24 +88,25 @@
       flex-direction: column;
     }
     .logo {
-      height: 72px;
-      padding: 0 18px;
+      height: 60px;
+      padding: 0 14px;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       border-bottom: 1px solid rgba(255,255,255,.1);
       font-weight: 700;
-      font-size: 18px;
+      font-size: 16px;
     }
-    .logo .brand-mark { width: 36px; height: 36px; }
+    .logo .brand-mark { width: 32px; height: 32px; }
     .nav { padding: 0; display: grid; gap: 0; }
     .nav button {
-      height: 56px; width: 100%;
+      height: 48px; width: 100%;
       border: 0; border-radius: 0;
       background: transparent; color: #cbd5e1;
-      display: flex; align-items: center; gap: 10px;
-      padding: 0 18px; text-align: left;
-      font-size: 16px;
+      display: flex; align-items: center; gap: 8px;
+      padding: 0 14px; text-align: left;
+      font-size: 15px;
+      white-space: nowrap;
     }
     .nav button:hover { background: var(--nav-soft); color: #fff; }
     .nav button.active { background: var(--blue); color: #fff; box-shadow: none; }
@@ -826,15 +827,20 @@
       .login-page { grid-template-columns: 1fr; }
       .login-side { display: none; }
       .login-panel { min-height: 100vh; padding: 28px 20px; }
-      .app-shell { grid-template-columns: 1fr; }
-      .sidebar { position: static; height: auto; }
-      .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .app-shell { grid-template-columns: 168px minmax(0, 1fr); }
       .main { padding: 12px; }
       .topbar { align-items: flex-start; flex-direction: column; padding: 12px; }
       .quick-actions, .workflow-map, .grid.cols-4, .transaction-grid { grid-template-columns: 1fr; }
       .transaction-group-head { align-items: flex-start; flex-direction: column; }
       .agent-v2-entry { align-items: flex-start; flex-direction: column; }
       .plant-picker { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; height: auto; }
+      .logo { height: 54px; }
+      .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .nav button { justify-content: center; padding: 0 10px; }
     }
   </style>
 </head>

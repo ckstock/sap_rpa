@@ -58,6 +58,7 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 
 ```json
 {
+  "multiLogonPolicy": "takeover",
   "dingTalkOpenApi": {
     "baseUrl": "https://你的钉钉OpenAPI网关根地址/",
     "appKey": "你的真实AppKey",
@@ -68,6 +69,8 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 ```
 
 `baseUrl` 只填接口根地址，不要把 `/token` 或 `asyncsend_v2` 写进去。真实 `config.local.json`、SAP 密码、SQLite、日志和输出文件都不能提交到 GitHub。
+
+`multiLogonPolicy` 控制 SAP 多重登录弹窗处理。默认值是 `takeover`：服务器登录同一 SAP 账号时，如果 SAP 弹出“该账号已在其他终端登录”的多重登录确认，程序会选择继续本次登录并终止该账号其他登录，让服务器任务继续执行。若生产策略不允许踢掉其他终端，把它改成 `fail`，或设置环境变量 `SAP_RPA_MULTI_LOGON_POLICY=fail`，程序会遇到多重登录弹窗直接失败并写日志。
 
 ## Git 更新后的发布要求
 
@@ -163,6 +166,8 @@ D:\RPA\启动脚本\gitnexus.cmd detect-changes
 ```
 
 密码用当前 Windows 用户 DPAPI 加密。这个文件不能复制到其他 Windows 用户或其他电脑；换机器、换账号或重新部署时必须重新运行配置脚本。
+
+默认登录策略会在执行前尽量清理服务器本机残留的 SAP 登录窗口；真正“踢掉其他电脑登录”发生在 SAP 返回多重登录确认窗口后，由 `multiLogonPolicy=takeover` 选择“继续本次登录并终止其他登录”。这不会直接杀本机所有 `saplogon.exe` 进程，也不会处理非目标 SAP 账号的手工会话。
 
 如果手工 SAP GUI 登录正常，但网页执行仍反复登录、没有复用已登录会话，管理员 PowerShell 里注册 SAP GUI 脚本组件：
 

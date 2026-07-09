@@ -158,6 +158,13 @@
         status: formatScheduleStatus(item.status, enabled),
         next: item.next || item.nextRunAt || item.nextFireTime || item.nextExecutionTime || "-",
         enabled,
+        notify: item.notify || {},
+        notifyTarget: item.notifyTarget || item.notify_target || item.notify?.target || "",
+        notifyStart: boolValue(item.notifyStart ?? item.notify_on_start ?? item.notify_start ?? item.notify?.onStart, false),
+        notifySuccess: boolValue(item.notifyOnSuccess ?? item.notifySuccess ?? item.notify_success ?? item.notify?.onSuccess, false),
+        notifyFail: boolValue(item.notifyOnFailure ?? item.notifyFail ?? item.notify_failure ?? item.notify?.onFailure, true),
+        createdBy: item.createdBy || item.created_by || "",
+        updatedBy: item.updatedBy || item.updated_by || "",
         source: item.source || "api"
       };
     }

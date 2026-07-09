@@ -373,7 +373,12 @@ static class Program
         try
         {
             if (!File.Exists(ConfigFilePath))
-                return new SapLocalConfig();
+            {
+                return new SapLocalConfig
+                {
+                    MultiLogonPolicy = LoadRuntimeMultiLogonPolicy()
+                };
+            }
 
             string json = File.ReadAllText(ConfigFilePath, Encoding.UTF8);
             var config = JsonSerializer.Deserialize<SapLocalConfig>(json, new JsonSerializerOptions
@@ -384,12 +389,38 @@ static class Program
             }) ?? new SapLocalConfig();
 
             config.Password = ResolveLocalPassword(config);
+            config.MultiLogonPolicy = FirstNonEmpty(LoadRuntimeMultiLogonPolicy(), config.MultiLogonPolicy ?? "");
             return config;
         }
         catch (Exception ex)
         {
             Log($"读取本机配置失败: {ConfigFilePath}, {ex.Message}");
             return new SapLocalConfig();
+        }
+    }
+
+    static string LoadRuntimeMultiLogonPolicy()
+    {
+        try
+        {
+            if (!File.Exists(RuntimeLocalConfigFilePath))
+                return "";
+
+            using JsonDocument doc = JsonDocument.Parse(File.ReadAllText(RuntimeLocalConfigFilePath, Encoding.UTF8), new JsonDocumentOptions
+            {
+                CommentHandling = JsonCommentHandling.Skip,
+                AllowTrailingCommas = true
+            });
+
+            return FirstNonEmpty(
+                GetJsonString(doc.RootElement, "multiLogonPolicy"),
+                GetJsonString(doc.RootElement, "multi_logon_policy"),
+                GetJsonString(doc.RootElement, "sapMultiLogonPolicy"));
+        }
+        catch (Exception ex)
+        {
+            Log($"read runtime multi-logon policy failed: {RuntimeLocalConfigFilePath}, {ex.Message}");
+            return "";
         }
     }
 
@@ -423,6 +454,10 @@ static class Program
         p.Password = FirstNonEmpty(local.Password ?? "", p.Password);
         p.Language = FirstNonEmpty(local.Language ?? "", p.Language, "ZH");
         p.SysNr = FirstNonEmpty(local.SysNr ?? "", p.SysNr);
+        p.MultiLogonPolicy = ResolveSapMultiLogonPolicy(FirstNonEmpty(
+            Environment.GetEnvironmentVariable("SAP_RPA_MULTI_LOGON_POLICY") ?? "",
+            local.MultiLogonPolicy ?? "",
+            p.MultiLogonPolicy));
         ValidateLoginConfig(p);
         return p;
     }
@@ -459,6 +494,10 @@ static class Program
             Password = FirstNonEmpty(local.Password ?? "", First(query, "pw", "password") ?? ""),
             Language = FirstNonEmpty(local.Language ?? "", First(query, "lang", "language") ?? "", "ZH"),
             SysNr = FirstNonEmpty(local.SysNr ?? "", First(query, "sysnr") ?? ""),
+            MultiLogonPolicy = ResolveSapMultiLogonPolicy(FirstNonEmpty(
+                Environment.GetEnvironmentVariable("SAP_RPA_MULTI_LOGON_POLICY") ?? "",
+                local.MultiLogonPolicy ?? "",
+                First(query, "multilogonpolicy", "multi_logon_policy", "sapmultilogonpolicy") ?? "")),
             TCode = SanitizeTCode(tcode),
             Script = script,
             Plant = First(query, "plant", "werks") ?? "",
@@ -691,6 +730,28 @@ WHERE tcode=$tcode AND enabled=1;
     static string FirstNonEmpty(params string[] values)
     {
         return values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v)) ?? "";
+    }
+
+    static string ResolveSapMultiLogonPolicy(string value)
+    {
+        string normalized = Regex.Replace((value ?? "").Trim().ToLowerInvariant(), @"[\s_\-]+", "");
+        if (string.IsNullOrWhiteSpace(normalized))
+            return "takeover";
+
+        if (normalized is "fail" or "stop" or "error" or "off" or "false" or "0" or "disabled" or "disable")
+            return "fail";
+
+        if (normalized is "takeover" or "takeoverlogin" or "force" or "kill" or "killothers" or
+            "terminateothers" or "terminateotherlogons" or "terminatelogons" or "continueandterminateothers")
+            return "takeover";
+
+        Log($"Unknown SAP multi-logon policy '{value}', fallback to fail");
+        return "fail";
+    }
+
+    static bool ShouldTakeOverSapMultiLogon(SapRunParams p)
+    {
+        return ResolveSapMultiLogonPolicy(p.MultiLogonPolicy).Equals("takeover", StringComparison.OrdinalIgnoreCase);
     }
 
     static int FirstPresent(int? first, int? second, int fallback)
@@ -980,8 +1041,14 @@ WHERE tcode=$tcode AND enabled=1;
                 context.Request.HttpMethod.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
             {
                 string id = SanitizeConfigId(scheduleMatch.Groups[1].Value, "schedule id");
-                SetScheduleTaskEnabled(id, enabled: false);
-                WriteJson(context.Response, new { ok = true, id, enabled = false });
+                bool deleted = DeleteScheduleTask(id);
+                if (!deleted)
+                {
+                    WriteJson(context.Response, new { error = $"schedule not found: {id}" }, 404);
+                    return;
+                }
+
+                WriteJson(context.Response, new { ok = true, id, deleted = true });
                 return;
             }
 
@@ -1357,6 +1424,7 @@ CREATE TABLE IF NOT EXISTS schedule_tasks (
     run_time TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
     notify_enabled INTEGER NOT NULL DEFAULT 0,
+    notify_on_start INTEGER NOT NULL DEFAULT 1,
     notify_on_success INTEGER NOT NULL DEFAULT 0,
     notify_on_failure INTEGER NOT NULL DEFAULT 1,
     notify_target TEXT NOT NULL DEFAULT '',
@@ -1530,6 +1598,7 @@ ON CONFLICT(setting_key) DO UPDATE SET
         EnsureColumn(connection, "schedule_tasks", "run_time", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "schedule_tasks", "enabled", "INTEGER NOT NULL DEFAULT 1");
         EnsureColumn(connection, "schedule_tasks", "notify_enabled", "INTEGER NOT NULL DEFAULT 0");
+        EnsureColumn(connection, "schedule_tasks", "notify_on_start", "INTEGER NOT NULL DEFAULT 1");
         EnsureColumn(connection, "schedule_tasks", "notify_on_success", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(connection, "schedule_tasks", "notify_on_failure", "INTEGER NOT NULL DEFAULT 1");
         EnsureColumn(connection, "schedule_tasks", "notify_target", "TEXT NOT NULL DEFAULT ''");
@@ -3259,7 +3328,7 @@ WHERE LOWER(rp.param_key) IN ('plants', 'plant', 'werks', 'werkslist', 'plantlis
         using var command = connection.CreateCommand();
         command.CommandText = """
 SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time,
-       enabled, notify_enabled, notify_on_success, notify_on_failure, notify_target,
+       enabled, notify_enabled, notify_on_start, notify_on_success, notify_on_failure, notify_target,
        params_json, created_at, updated_at, created_by, updated_by
 FROM schedule_tasks
 ORDER BY enabled DESC, updated_at DESC, id;
@@ -3279,7 +3348,7 @@ ORDER BY enabled DESC, updated_at DESC, id;
         using var command = connection.CreateCommand();
         command.CommandText = """
 SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time,
-       enabled, notify_enabled, notify_on_success, notify_on_failure, notify_target,
+       enabled, notify_enabled, notify_on_start, notify_on_success, notify_on_failure, notify_target,
        params_json, created_at, updated_at, created_by, updated_by
 FROM schedule_tasks
 WHERE id=$id;
@@ -3311,20 +3380,21 @@ WHERE id=$id;
             ? ""
             : NormalizeScheduleFrequency(FirstNonEmpty(rawFrequency, "daily"));
         string runTime = NormalizeScheduleRunTime(FirstNonEmpty(item.Time, item.RunTime, item.ExecTime, item.RunAt, item.StartTime));
+        bool notifyOnStart = item.NotifyStart ?? false;
         bool notifyOnSuccess = item.NotifyOnSuccess ?? item.NotifySuccess ?? false;
         bool notifyOnFailure = item.NotifyOnFailure ?? item.NotifyFail ?? true;
-        bool notifyEnabled = item.NotifyEnabled ?? item.Notify ?? item.NotifyStart ?? (notifyOnSuccess || notifyOnFailure);
+        bool notifyEnabled = item.NotifyEnabled ?? item.Notify ?? (notifyOnStart || notifyOnSuccess || notifyOnFailure);
 
         using var connection = OpenDatabaseConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
 INSERT INTO schedule_tasks(
     id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time,
-    enabled, notify_enabled, notify_on_success, notify_on_failure, notify_target,
+    enabled, notify_enabled, notify_on_start, notify_on_success, notify_on_failure, notify_target,
     params_json, created_at, updated_at, created_by, updated_by
 ) VALUES(
     $id, $name, $tcode, $plantsJson, $defaultBusinessScope, $cron, $frequency, $runTime,
-    $enabled, $notifyEnabled, $notifyOnSuccess, $notifyOnFailure, $notifyTarget,
+    $enabled, $notifyEnabled, $notifyOnStart, $notifyOnSuccess, $notifyOnFailure, $notifyTarget,
     $paramsJson, $createdAt, $updatedAt, $createdBy, $updatedBy
 )
 ON CONFLICT(id) DO UPDATE SET
@@ -3337,6 +3407,7 @@ ON CONFLICT(id) DO UPDATE SET
     run_time=excluded.run_time,
     enabled=excluded.enabled,
     notify_enabled=excluded.notify_enabled,
+    notify_on_start=excluded.notify_on_start,
     notify_on_success=excluded.notify_on_success,
     notify_on_failure=excluded.notify_on_failure,
     notify_target=excluded.notify_target,
@@ -3354,6 +3425,7 @@ ON CONFLICT(id) DO UPDATE SET
         command.Parameters.AddWithValue("$runTime", runTime);
         command.Parameters.AddWithValue("$enabled", item.Enabled.GetValueOrDefault(true) ? 1 : 0);
         command.Parameters.AddWithValue("$notifyEnabled", notifyEnabled ? 1 : 0);
+        command.Parameters.AddWithValue("$notifyOnStart", notifyOnStart ? 1 : 0);
         command.Parameters.AddWithValue("$notifyOnSuccess", notifyOnSuccess ? 1 : 0);
         command.Parameters.AddWithValue("$notifyOnFailure", notifyOnFailure ? 1 : 0);
         command.Parameters.AddWithValue("$notifyTarget", item.NotifyTarget ?? "");
@@ -3402,6 +3474,41 @@ WHERE id=$id;
         command.ExecuteNonQuery();
     }
 
+    static bool DeleteScheduleTask(string id)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+
+        using (var exists = connection.CreateCommand())
+        {
+            exists.Transaction = tx;
+            exists.CommandText = "SELECT COUNT(*) FROM schedule_tasks WHERE id=$id";
+            exists.Parameters.AddWithValue("$id", id);
+            if (Convert.ToInt64(exists.ExecuteScalar() ?? 0L) == 0)
+            {
+                tx.Rollback();
+                return false;
+            }
+        }
+
+        using (var deleteRuns = connection.CreateCommand())
+        {
+            deleteRuns.Transaction = tx;
+            deleteRuns.CommandText = "DELETE FROM schedule_task_runs WHERE task_id=$id";
+            deleteRuns.Parameters.AddWithValue("$id", id);
+            deleteRuns.ExecuteNonQuery();
+        }
+
+        using var command = connection.CreateCommand();
+        command.Transaction = tx;
+        command.CommandText = "DELETE FROM schedule_tasks WHERE id=$id";
+        command.Parameters.AddWithValue("$id", id);
+        int affected = command.ExecuteNonQuery();
+        tx.Commit();
+        return affected > 0;
+    }
+
     static object ReadScheduleTask(SqliteDataReader reader)
     {
         string id = reader.GetString(0);
@@ -3410,8 +3517,8 @@ WHERE id=$id;
         string frequency = reader.GetString(6);
         string runTime = reader.GetString(7);
         bool enabled = reader.GetInt32(8) == 1;
-        string createdAt = reader.GetString(14);
-        string updatedAt = reader.GetString(15);
+        string createdAt = reader.GetString(15);
+        string updatedAt = reader.GetString(16);
         string nextRunAt = enabled ? CalculateNextScheduleRunAt(frequency, runTime, createdAt) : "";
         return new
         {
@@ -3439,15 +3546,16 @@ WHERE id=$id;
             notify = new
             {
                 enabled = reader.GetInt32(9) == 1,
-                onSuccess = reader.GetInt32(10) == 1,
-                onFailure = reader.GetInt32(11) == 1,
-                target = reader.GetString(12)
+                onStart = reader.GetInt32(10) == 1,
+                onSuccess = reader.GetInt32(11) == 1,
+                onFailure = reader.GetInt32(12) == 1,
+                target = reader.GetString(13)
             },
-            paramsJson = reader.GetString(13),
+            paramsJson = reader.GetString(14),
             createdAt,
             updatedAt,
-            createdBy = reader.GetString(16),
-            updatedBy = reader.GetString(17)
+            createdBy = reader.GetString(17),
+            updatedBy = reader.GetString(18)
         };
     }
 
@@ -3621,7 +3729,7 @@ ORDER BY sort_order, plant_code;
         using var command = connection.CreateCommand();
         command.CommandText = """
 SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time,
-       notify_enabled, notify_on_success, notify_on_failure, notify_target, params_json, created_at
+       notify_enabled, notify_on_start, notify_on_success, notify_on_failure, notify_target, params_json, created_at, created_by, updated_by
 FROM schedule_tasks
 WHERE enabled=1
 ORDER BY run_time, id;
@@ -3632,7 +3740,7 @@ ORDER BY run_time, id;
             string cron = reader.GetString(5);
             string frequency = reader.GetString(6);
             string runTime = reader.GetString(7);
-            string createdAt = reader.GetString(13);
+            string createdAt = reader.GetString(14);
             if (!string.IsNullOrWhiteSpace(cron) && string.IsNullOrWhiteSpace(frequency))
                 continue;
             if (!TryResolveScheduleSlot(frequency, runTime, createdAt, now, out DateTime scheduledAt))
@@ -3658,11 +3766,14 @@ ORDER BY run_time, id;
                 Frequency = frequency,
                 RunTime = runTime,
                 NotifyEnabled = reader.GetInt32(8) == 1,
-                NotifyOnSuccess = reader.GetInt32(9) == 1,
-                NotifyOnFailure = reader.GetInt32(10) == 1,
-                NotifyTarget = reader.GetString(11),
-                ParamsJson = reader.GetString(12),
-                ScheduledAt = scheduledAtText
+                NotifyOnStart = reader.GetInt32(9) == 1,
+                NotifyOnSuccess = reader.GetInt32(10) == 1,
+                NotifyOnFailure = reader.GetInt32(11) == 1,
+                NotifyTarget = reader.GetString(12),
+                ParamsJson = reader.GetString(13),
+                ScheduledAt = scheduledAtText,
+                CreatedBy = reader.GetString(15),
+                UpdatedBy = reader.GetString(16)
             });
         }
 
@@ -3705,18 +3816,22 @@ WHERE task_id=$taskId
 
     static CreateRunRequest BuildRunRequestFromSchedule(ScheduleTaskDue task)
     {
+        string scheduleOwner = FirstNonEmpty(task.UpdatedBy, task.CreatedBy, "Schedule Worker");
+        string dingTalkUserId = task.NotifyEnabled ? ResolveDingTalkUserIdFromNotifyTarget(task.NotifyTarget) : "";
         var request = new CreateRunRequest
         {
             TransactionCode = task.TCode,
             TCode = task.TCode,
             Code = task.TCode,
             Source = $"schedule:{task.Id}",
-            NotifyTarget = task.NotifyEnabled ? task.NotifyTarget : "",
+            NotifyTarget = task.NotifyEnabled ? NormalizeNotifyTarget(task.NotifyTarget) : "",
             Operator = new OperatorIdentity
             {
                 Id = "schedule",
-                Name = "Schedule Worker",
-                Dept = "SapRpa"
+                Name = scheduleOwner,
+                Dept = "SapRpa",
+                DingTalkUserId = dingTalkUserId,
+                Ddid = dingTalkUserId
             },
             Params = ParseScheduleParams(task.ParamsJson)
         };
@@ -5378,9 +5493,6 @@ VALUES($runId, $type, $name, $path, $size);
                 AppendRunLog(runId, "INFO", "SAP cleanup deferred to parent batch completion");
                 return;
             }
-            if (!run.RunType.Equals("parent", StringComparison.OrdinalIgnoreCase) &&
-                !run.TransactionCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase))
-                return;
 
             var request = JsonSerializer.Deserialize<CreateRunRequest>(run.RequestJson, new JsonSerializerOptions(JsonOptions)
             {
@@ -5599,6 +5711,10 @@ ORDER BY batch_index, attempt_no, child_run_id;
             {
                 AppendRunLog(runId, "INFO", "sap dingtalk notify skipped: legacy VBS notification result detected");
             }
+            else if (!ShouldSendSapDingTalkForRunEvent(runId, eventName))
+            {
+                AppendRunLog(runId, "INFO", $"sap dingtalk notify skipped: schedule notify flag disabled for {eventName}");
+            }
             else
             {
                 try
@@ -5617,6 +5733,51 @@ ORDER BY batch_index, attempt_no, child_run_id;
         AppendRunLog(runId, "INFO", $"notify {eventName} target={targetText}: {message}");
         foreach (var target in targets.Where(t => !string.IsNullOrWhiteSpace(t.Webhook)))
             SendNotification(runId, eventName, message, target);
+    }
+
+    static bool ShouldSendSapDingTalkForRunEvent(string runId, string eventName)
+    {
+        try
+        {
+            var run = LoadRun(runId, includeDetails: false);
+            string source = run?.Source ?? "";
+            const string schedulePrefix = "schedule:";
+            if (!source.StartsWith(schedulePrefix, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            string scheduleId = source[schedulePrefix.Length..].Trim();
+            if (string.IsNullOrWhiteSpace(scheduleId))
+                return true;
+
+            using var connection = OpenDatabaseConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+SELECT notify_enabled, notify_on_start, notify_on_success, notify_on_failure
+FROM schedule_tasks
+WHERE id=$id;
+""";
+            command.Parameters.AddWithValue("$id", scheduleId);
+            using var reader = command.ExecuteReader();
+            if (!reader.Read())
+                return true;
+
+            if (reader.GetInt32(0) != 1)
+                return false;
+            if (eventName.Equals("start", StringComparison.OrdinalIgnoreCase))
+                return reader.GetInt32(1) == 1;
+            if (eventName.Equals("success", StringComparison.OrdinalIgnoreCase))
+                return reader.GetInt32(2) == 1;
+            if (eventName.Equals("failure", StringComparison.OrdinalIgnoreCase) ||
+                eventName.Equals("failed", StringComparison.OrdinalIgnoreCase) ||
+                eventName.Equals("finish", StringComparison.OrdinalIgnoreCase))
+                return reader.GetInt32(3) == 1;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log($"read schedule notify flags failed: run={runId}, event={eventName}, {ex.Message}");
+            return true;
+        }
     }
 
     static bool RunRequestsSapDingTalkNotification(string runId)
@@ -5645,11 +5806,38 @@ ORDER BY batch_index, attempt_no, child_run_id;
 
     static bool IsSapDingTalkTarget(string target)
     {
-        return target.Equals("dingtalk", StringComparison.OrdinalIgnoreCase) ||
-               target.Equals("dingding", StringComparison.OrdinalIgnoreCase) ||
-               target.Equals("ding", StringComparison.OrdinalIgnoreCase) ||
-               target.Equals("sap-dingtalk", StringComparison.OrdinalIgnoreCase) ||
-               target.Equals("sap_dingtalk", StringComparison.OrdinalIgnoreCase);
+        string normalized = NormalizeNotifyTarget(target);
+        return normalized.Equals("dingtalk", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("dingding", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("ding", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("sap-dingtalk", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("sap_dingtalk", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string NormalizeNotifyTarget(string target)
+    {
+        string value = (target ?? "").Trim();
+        int delimiterIndex = value.IndexOf(':');
+        if (delimiterIndex > 0)
+            return value[..delimiterIndex].Trim();
+        return value;
+    }
+
+    static string ResolveDingTalkUserIdFromNotifyTarget(string notifyTarget)
+    {
+        foreach (string target in SplitNotifyTargets(notifyTarget))
+        {
+            int delimiterIndex = target.IndexOf(':');
+            if (delimiterIndex <= 0)
+                continue;
+
+            string kind = target[..delimiterIndex].Trim();
+            string value = target[(delimiterIndex + 1)..].Trim();
+            if (!string.IsNullOrWhiteSpace(value) && IsSapDingTalkTarget(kind))
+                return value;
+        }
+
+        return "";
     }
 
     static bool IsParentRun(string runId)
@@ -5795,6 +5983,7 @@ ORDER BY 1;
         string provider = ResolveSapDingTalkProvider();
         var run = LoadRun(runId, includeDetails: true);
         string dingTalkId = FirstNonEmpty(
+            ResolveDingTalkUserIdFromNotifyTarget(run?.NotifyTarget ?? ""),
             run?.DingTalkUserId ?? "",
             Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ID") ?? "",
             DefaultDingTalkId);
@@ -7158,7 +7347,57 @@ ORDER BY 1;
         }
         else
         {
-            if (StrictSapSessionMatching && initialProbe.HasBlockingSapGui)
+            if (initialProbe.HasPendingLoginDialog)
+            {
+                if (ShouldTakeOverSapMultiLogon(p) && TryResolvePendingSapLoginDialog(p, out string takeOverDetail))
+                {
+                    ClearSapLoginFailure(p);
+                    Log($"SAP login or multi-logon dialog handled before sapshcut login. {takeOverDetail}");
+                    Thread.Sleep(1000);
+                    initialProbe = ProbeSapSession(p, StrictSapSessionMatching);
+                    if (initialProbe.Ready)
+                    {
+                        Log($"Detected ready SAP GUI session after dialog handling; skip sapshcut login. {initialProbe.Details}");
+                    }
+                    else
+                    {
+                        string message = "SAP GUI login dialog was handled but target session is still not ready. " +
+                            $"Probe: {initialProbe.Details}; handler={takeOverDetail}";
+                        Console.Error.WriteLine(message);
+                        Log(message);
+                        RememberSapLoginFailure(p, message);
+                        return FailedRunResult(message, started);
+                    }
+                }
+                else
+                {
+                    if (ShouldTakeOverSapMultiLogon(p))
+                    {
+                        Log($"SAP GUI has a pending login dialog before sapshcut login; cleanup stale local SAP windows and retry login. Probe: {initialProbe.Details}");
+                        CleanupSapGuiSessionAfterRun(p);
+                        Thread.Sleep(1000);
+                        initialProbe = ProbeSapSession(p, StrictSapSessionMatching);
+                    }
+
+                    if (!initialProbe.Ready && initialProbe.HasPendingLoginDialog)
+                    {
+                        string message = "SAP GUI is waiting at a login or multi-logon dialog. " +
+                            "Clear the dialog or ensure the scheduled SAP account is not already logged in elsewhere before submitting another queued run. " +
+                            "Default policy is takeover; set SAP_RPA_MULTI_LOGON_POLICY=fail or config.local.json multiLogonPolicy=fail to stop instead of terminating other SAP logons. " +
+                            $"Probe: {initialProbe.Details}";
+                        Console.Error.WriteLine(message);
+                        Log(message);
+                        RememberSapLoginFailure(p, message);
+                        return FailedRunResult(message, started);
+                    }
+                }
+            }
+
+            if (initialProbe.Ready)
+            {
+                Log($"Detected ready SAP GUI session; skip sapshcut login. {initialProbe.Details}");
+            }
+            else if (StrictSapSessionMatching && initialProbe.HasBlockingSapGui)
             {
                 string message = "SAP GUI has open windows but target login session is not ready. " +
                     "Close SAP login or multi-logon dialogs before submitting another queued run. " +
@@ -7234,12 +7473,35 @@ ORDER BY 1;
                 }
 
                 loginDiagnostics = AppendDiagnostic(loginDiagnostics, $"{attempt.Name}: {loginProbe.Details}; sapguiProcesses={CountProcessByName("sapgui")}, saplogonProcesses={CountProcessByName("saplogon")}");
+                if (loginProbe.HasPendingLoginDialog)
+                {
+                    if (ShouldTakeOverSapMultiLogon(p) && TryResolvePendingSapLoginDialog(p, out string takeOverDetail))
+                    {
+                        loginDiagnostics = AppendDiagnostic(loginDiagnostics, $"{attempt.Name}: handled pending SAP login dialog: {takeOverDetail}");
+                        Log($"SAP login or multi-logon dialog handled. mode={attempt.Name}, {takeOverDetail}");
+                        loginProbe = WaitForReadySapSession(p, StrictSapSessionMatching, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(1));
+                        if (loginProbe.Ready)
+                        {
+                            ClearSapLoginFailure(p);
+                            Log($"SAP GUI login is ready after dialog handling. mode={attempt.Name}, {loginProbe.Details}");
+                        }
+                    }
+
+                    if (!loginProbe.Ready)
+                    {
+                        string detail = "SAP login stopped at login or multi-logon dialog; skip remaining sapshcut fallback attempts.";
+                        loginDiagnostics = AppendDiagnostic(loginDiagnostics, detail);
+                        Log(detail);
+                    }
+                    break;
+                }
             }
 
             if (!loginProbe.Ready)
             {
                 string message = "SAP login did not produce a ready scripting session. " +
                     "Do not submit more runs until SAP login or multi-logon dialogs are cleared. " +
+                    "Default policy is takeover; set SAP_RPA_MULTI_LOGON_POLICY=fail or config.local.json multiLogonPolicy=fail to stop instead of terminating other SAP logons. " +
                     $"Attempts: {loginDiagnostics}";
                 Console.Error.WriteLine(message);
                 Log(message);
@@ -7453,6 +7715,29 @@ ORDER BY 1;
                configuredSystem.Equals(entry.SystemId, StringComparison.OrdinalIgnoreCase);
     }
 
+    static string BuildSapTargetSystemMatcher(SapRunParams p)
+    {
+        var values = new List<string>();
+
+        void Add(string value)
+        {
+            value = (value ?? "").Trim();
+            if (value.Length > 0 && !values.Contains(value, StringComparer.OrdinalIgnoreCase))
+                values.Add(value);
+        }
+
+        Add(p.System);
+        foreach (var entry in ReadSapLogonEntries())
+        {
+            if (!SapLogonEntryMatches(entry, p.System))
+                continue;
+            Add(entry.SystemId);
+            Add(entry.Description);
+        }
+
+        return string.Join("|", values);
+    }
+
     static string NormalizeSapSystemNumber(string value)
     {
         value = (value ?? "").Trim();
@@ -7482,6 +7767,215 @@ ORDER BY 1;
         catch
         {
             return -1;
+        }
+    }
+
+    static bool DetectPendingSapLoginDialog(string details)
+    {
+        if (string.IsNullOrWhiteSpace(details))
+            return false;
+
+        bool loginProgram = details.Contains("program=SAPMSYST", StringComparison.OrdinalIgnoreCase);
+        bool loginTransaction = details.Contains("transaction=S000", StringComparison.OrdinalIgnoreCase);
+        bool loginScreen = details.Contains("screen=500", StringComparison.OrdinalIgnoreCase);
+        bool emptyUser = Regex.IsMatch(details, @"(?i)\buser=([,;]|$)");
+        bool targetNotFound = details.Contains("logged-in target SAP session not found", StringComparison.OrdinalIgnoreCase);
+
+        return (loginProgram && loginTransaction) ||
+               (loginProgram && loginScreen) ||
+               (targetNotFound && emptyUser && (loginTransaction || loginScreen));
+    }
+
+    static bool TryResolvePendingSapLoginDialog(SapRunParams p, out string detail)
+    {
+        string takeoverFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_multilogon_{Guid.NewGuid():N}.vbs");
+        string targetSystems = BuildSapTargetSystemMatcher(p);
+        string targetClient = p.Client;
+        string targetUser = p.User;
+        string takeoverScript = $"""
+On Error Resume Next
+Dim SapGuiAuto, application, connection, session, i, j, k, wnd, diag
+Dim targetSystems, targetClient, targetUser, currentSystem, currentClient, currentUser
+targetSystems = "{VbsEscape(targetSystems)}"
+targetClient = "{VbsEscape(targetClient)}"
+targetUser = "{VbsEscape(targetUser)}"
+diag = ""
+
+Sub AddDiag(ByVal value)
+   If Len(Trim(CStr(value))) = 0 Then Exit Sub
+   If Len(diag) > 0 Then diag = diag & " | "
+   diag = diag & CStr(value)
+End Sub
+
+Sub DumpChildren(ByVal node, ByVal depth)
+   On Error Resume Next
+   If depth > 2 Then Exit Sub
+   Dim idx, child, line
+   For idx = 0 To node.Children.Count - 1
+      Err.Clear
+      Set child = node.Children.Item(CInt(idx))
+      If Err.Number = 0 And IsObject(child) Then
+         line = "child id=" & child.Id & ", type=" & child.Type
+         Err.Clear
+         line = line & ", text=" & child.Text
+         Err.Clear
+         AddDiag line
+         DumpChildren child, depth + 1
+      End If
+   Next
+End Sub
+
+Function SystemMatches(ByVal value)
+   On Error Resume Next
+   SystemMatches = False
+   If Trim(CStr(targetSystems)) = "" Then Exit Function
+   Dim parts, idx, item
+   parts = Split(CStr(targetSystems), "|")
+   For idx = 0 To UBound(parts)
+      item = Trim(CStr(parts(idx)))
+      If item <> "" And UCase(Trim(CStr(value))) = UCase(item) Then
+         SystemMatches = True
+         Exit Function
+      End If
+   Next
+End Function
+
+Function MatchTarget(ByVal candidate)
+   On Error Resume Next
+   MatchTarget = True
+   currentSystem = Trim(CStr(candidate.Info.SystemName))
+   currentClient = Trim(CStr(candidate.Info.Client))
+   currentUser = Trim(CStr(candidate.Info.User))
+   If Not SystemMatches(currentSystem) Then MatchTarget = False
+   If Trim(CStr(targetClient)) <> "" And currentClient <> Trim(CStr(targetClient)) Then MatchTarget = False
+   If Trim(CStr(targetUser)) <> "" And UCase(currentUser) <> UCase(Trim(CStr(targetUser))) Then MatchTarget = False
+   Err.Clear
+End Function
+
+Function TryPressTakeover(ByVal candidate)
+   On Error Resume Next
+   TryPressTakeover = False
+   Dim modal, radio, okButton, title
+   For k = 1 To 3
+      Err.Clear
+      Set modal = candidate.findById("wnd[" & k & "]")
+      If Err.Number = 0 And IsObject(modal) Then
+         title = ""
+         Err.Clear
+         title = CStr(modal.Text)
+         Err.Clear
+         AddDiag "modal wnd[" & k & "] title=" & title
+         DumpChildren modal, 0
+
+         Err.Clear
+         Set radio = candidate.findById("wnd[" & k & "]/usr/radMULTI_LOGON_OPT1")
+         If Err.Number = 0 And IsObject(radio) Then
+            radio.Select
+            radio.SetFocus
+            Err.Clear
+            Set okButton = candidate.findById("wnd[" & k & "]/tbar[0]/btn[0]")
+            If Err.Number = 0 And IsObject(okButton) Then
+               okButton.Press
+            Else
+               Err.Clear
+               candidate.findById("wnd[" & k & "]").sendVKey 0
+            End If
+            WScript.Sleep 1000
+            AddDiag "selected MULTI_LOGON_OPT1 on wnd[" & k & "]"
+            TryPressTakeover = True
+            Exit Function
+         Else
+            AddDiag "MULTI_LOGON_OPT1 not found on wnd[" & k & "]"
+            Err.Clear
+         End If
+      End If
+   Next
+End Function
+
+Set SapGuiAuto = GetObject("SAPGUI")
+If Err.Number <> 0 Or Not IsObject(SapGuiAuto) Then
+   WScript.Echo "NO: SAPGUI object not found"
+   WScript.Quit 1
+End If
+Err.Clear
+Set application = SapGuiAuto.GetScriptingEngine
+If Err.Number <> 0 Or Not IsObject(application) Or application.Children.Count = 0 Then
+   WScript.Echo "NO: scripting engine or connection not ready"
+   WScript.Quit 2
+End If
+
+For i = 0 To application.Children.Count - 1
+   Err.Clear
+   Set connection = application.Children.Item(CInt(i))
+   If Err.Number = 0 And IsObject(connection) Then
+      For j = 0 To connection.Children.Count - 1
+         Err.Clear
+         Set session = connection.Children.Item(CInt(j))
+         If Err.Number = 0 And IsObject(session) Then
+            AddDiag "session[" & i & "," & j & "].system=" & session.Info.SystemName & ",client=" & session.Info.Client & ",user=" & session.Info.User & ",transaction=" & session.Info.Transaction & ",program=" & session.Info.Program & ",screen=" & session.Info.ScreenNumber
+            If MatchTarget(session) Then
+               If TryPressTakeover(session) Then
+                  WScript.Echo "OK: SAP multi-logon takeover selected; " & diag
+                  WScript.Quit 0
+               End If
+            Else
+               AddDiag "skip non-target session[" & i & "," & j & "]"
+            End If
+         End If
+      Next
+   End If
+Next
+
+WScript.Echo "NO: SAP multi-logon takeover option was not found; " & diag
+WScript.Quit 4
+""";
+
+        try
+        {
+            File.WriteAllText(takeoverFile, takeoverScript, Encoding.Default);
+            var psi = new ProcessStartInfo("cscript.exe", $"//T:12 //nologo \"{takeoverFile}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+
+            using var proc = Process.Start(psi);
+            if (proc == null)
+            {
+                detail = "failed to start cscript.exe";
+                return false;
+            }
+
+            if (!proc.WaitForExit(15_000))
+            {
+                proc.Kill(entireProcessTree: true);
+                detail = "timeout while selecting SAP multi-logon takeover option";
+                Log($"SAP multi-logon takeover: {detail}");
+                return false;
+            }
+
+            string output = proc.StandardOutput.ReadToEnd().Trim();
+            string error = proc.StandardError.ReadToEnd().Trim();
+            detail = string.Join(" ", new[] { output, error }.Where(x => !string.IsNullOrWhiteSpace(x)));
+            Log($"SAP multi-logon takeover: exit={proc.ExitCode}, {detail}");
+            return proc.ExitCode == 0 && output.StartsWith("OK:", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            detail = ex.Message;
+            Log($"SAP multi-logon takeover failed: {ex}");
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(takeoverFile))
+                    File.Delete(takeoverFile);
+            }
+            catch { }
         }
     }
 
@@ -7632,7 +8126,7 @@ WScript.Quit 0
 
             using var proc = Process.Start(psi);
             if (proc == null)
-                return new SapSessionProbeResult(false, false, false, "failed to start cscript.exe");
+                return new SapSessionProbeResult(false, false, false, false, "failed to start cscript.exe");
 
             proc.WaitForExit(10_000);
             string output = proc.StandardOutput.ReadToEnd().Trim();
@@ -7640,16 +8134,18 @@ WScript.Quit 0
             string merged = string.Join(" ", new[] { output, error }.Where(x => !string.IsNullOrWhiteSpace(x)));
             Log($"SAP session probe: exit={proc.ExitCode}, {merged}");
             bool hasSapGui = proc.ExitCode != 1 && proc.ExitCode != 2;
+            bool hasPendingLoginDialog = DetectPendingSapLoginDialog(merged);
             return new SapSessionProbeResult(
                 Ready: proc.ExitCode == 0 && output.StartsWith("OK:", StringComparison.OrdinalIgnoreCase),
                 HasSapGui: hasSapGui,
                 HasBlockingSapGui: hasSapGui && !merged.Contains("target SAP session not found", StringComparison.OrdinalIgnoreCase),
+                HasPendingLoginDialog: hasPendingLoginDialog,
                 Details: merged);
         }
         catch (Exception ex)
         {
             Log($"SAP session probe failed: {ex.Message}");
-            return new SapSessionProbeResult(false, false, false, ex.Message);
+            return new SapSessionProbeResult(false, false, false, false, ex.Message);
         }
         finally
         {
@@ -7971,16 +8467,19 @@ WScript.Quit 0
     static void CleanupSapGuiSessionAfterRun(SapRunParams p)
     {
         string cleanupFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_cleanup_{Guid.NewGuid():N}.vbs");
-        string cleanupTargetSystem = StrictSapSessionMatching ? p.System : "";
-        string cleanupTargetClient = StrictSapSessionMatching ? p.Client : "";
-        string cleanupTargetUser = StrictSapSessionMatching ? p.User : "";
+        string cleanupTargetSystems = BuildSapTargetSystemMatcher(p);
+        string cleanupTargetClient = p.Client;
+        string cleanupTargetUser = p.User;
         string cleanupScript = $"""
 On Error Resume Next
-Dim SapGuiAuto, application, connection, session, i, j, okcd
-Dim targetSystem, targetClient, targetUser, currentSystem, currentClient, currentUser
-targetSystem = "{VbsEscape(cleanupTargetSystem)}"
+Dim SapGuiAuto, application, connection, session, i, j, k, okcd, wnd, closedCount, attemptedCount, skippedCount
+Dim targetSystems, targetClient, targetUser, currentSystem, currentClient, currentUser
+targetSystems = "{VbsEscape(cleanupTargetSystems)}"
 targetClient = "{VbsEscape(cleanupTargetClient)}"
 targetUser = "{VbsEscape(cleanupTargetUser)}"
+closedCount = 0
+attemptedCount = 0
+skippedCount = 0
 Set SapGuiAuto = GetObject("SAPGUI")
 If Err.Number <> 0 Or Not IsObject(SapGuiAuto) Then
    WScript.Echo "CLEANUP: SAPGUI object not found"
@@ -7992,40 +8491,85 @@ If Err.Number <> 0 Or Not IsObject(application) Then
    WScript.Echo "CLEANUP: scripting engine not available"
    WScript.Quit 0
 End If
-For i = 0 To application.Children.Count - 1
+Function SystemMatches(ByVal value)
+   On Error Resume Next
+   SystemMatches = False
+   If Trim(CStr(targetSystems)) = "" Then Exit Function
+   Dim parts, idx, item
+   parts = Split(CStr(targetSystems), "|")
+   For idx = 0 To UBound(parts)
+      item = Trim(CStr(parts(idx)))
+      If item <> "" And UCase(Trim(CStr(value))) = UCase(item) Then
+         SystemMatches = True
+         Exit Function
+      End If
+   Next
+End Function
+Function IsTargetSession(ByVal candidate)
+   On Error Resume Next
+   IsTargetSession = True
+   currentSystem = Trim(CStr(candidate.Info.SystemName))
+   currentClient = Trim(CStr(candidate.Info.Client))
+   currentUser = Trim(CStr(candidate.Info.User))
+   If Not SystemMatches(currentSystem) Then IsTargetSession = False
+   If Trim(CStr(targetClient)) <> "" And currentClient <> Trim(CStr(targetClient)) Then IsTargetSession = False
+   If Trim(CStr(targetUser)) <> "" And UCase(currentUser) <> UCase(Trim(CStr(targetUser))) Then IsTargetSession = False
+   Err.Clear
+End Function
+For i = application.Children.Count - 1 To 0 Step -1
    Err.Clear
    Set connection = application.Children.Item(CInt(i))
    If Err.Number = 0 And IsObject(connection) Then
-      For j = 0 To connection.Children.Count - 1
+      For j = connection.Children.Count - 1 To 0 Step -1
           Err.Clear
           Set session = connection.Children.Item(CInt(j))
           If Err.Number = 0 And IsObject(session) Then
              currentSystem = Trim(CStr(session.Info.SystemName))
              currentClient = Trim(CStr(session.Info.Client))
              currentUser = Trim(CStr(session.Info.User))
-             If (Trim(CStr(targetSystem)) <> "" And UCase(currentSystem) <> UCase(Trim(CStr(targetSystem)))) Or (Trim(CStr(targetClient)) <> "" And currentClient <> Trim(CStr(targetClient))) Or (Trim(CStr(targetUser)) <> "" And UCase(currentUser) <> UCase(Trim(CStr(targetUser)))) Then
+             If Not IsTargetSession(session) Then
+                skippedCount = skippedCount + 1
                 WScript.Echo "CLEANUP: skip non-target session system=" & currentSystem & ", client=" & currentClient & ", user=" & currentUser & ", transaction=" & session.Info.Transaction
              Else
+             attemptedCount = attemptedCount + 1
              Err.Clear
              Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
              If Err.Number = 0 And IsObject(okcd) Then
                 WScript.Echo "CLEANUP: closing session system=" & session.Info.SystemName & ", client=" & session.Info.Client & ", user=" & session.Info.User & ", transaction=" & session.Info.Transaction
                 okcd.Text = "/nex"
                 session.findById("wnd[0]").sendVKey 0
-                WScript.Sleep 500
+                WScript.Sleep 800
                If Err.Number = 0 Then
                   WScript.Echo "CLEANUP: sent /nex"
+                  closedCount = closedCount + 1
                Else
                   WScript.Echo "CLEANUP: failed to send /nex - " & Err.Description
                 End If
-                WScript.Quit 0
+             Else
+                Err.Clear
+                For k = 3 To 0 Step -1
+                   Err.Clear
+                   Set wnd = session.findById("wnd[" & k & "]")
+                   If Err.Number = 0 And IsObject(wnd) Then
+                      WScript.Echo "CLEANUP: closing SAP window without okcd wnd[" & k & "] title=" & wnd.Text & ", system=" & currentSystem & ", client=" & currentClient & ", user=" & currentUser & ", transaction=" & session.Info.Transaction & ", program=" & session.Info.Program & ", screen=" & session.Info.ScreenNumber
+                      wnd.Close
+                      WScript.Sleep 500
+                      If Err.Number = 0 Then
+                         closedCount = closedCount + 1
+                         Exit For
+                      Else
+                         WScript.Echo "CLEANUP: window close failed - " & Err.Description
+                         Err.Clear
+                      End If
+                   End If
+                Next
              End If
              End If
           End If
        Next
    End If
 Next
-WScript.Echo "CLEANUP: no target closable SAP session found"
+WScript.Echo "CLEANUP: completed; attempted=" & attemptedCount & ", closed=" & closedCount & ", skipped=" & skippedCount
 WScript.Quit 0
 """;
 
@@ -8561,6 +9105,33 @@ Item1=test888
         }
 
         {
+            var local = new SapLocalConfig
+            {
+                System = "TEST_SYSTEM",
+                Client = "888",
+                User = "IT049",
+                Password = "SECRET",
+                MultiLogonPolicy = "takeover"
+            };
+            var q = new NameValueCollection
+            {
+                ["tcode"] = "ZFI019NL",
+                ["multilogonpolicy"] = "takeover"
+            };
+            string? old = Environment.GetEnvironmentVariable("SAP_RPA_MULTI_LOGON_POLICY");
+            try
+            {
+                Environment.SetEnvironmentVariable("SAP_RPA_MULTI_LOGON_POLICY", "fail");
+                var p = BuildParams(q, PrimaryProtocolName, local);
+                Check("multi-logon env fail overrides request", p.MultiLogonPolicy.Equals("fail", StringComparison.OrdinalIgnoreCase), $"policy={p.MultiLogonPolicy}");
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("SAP_RPA_MULTI_LOGON_POLICY", old);
+            }
+        }
+
+        {
             var asm = Assembly.GetExecutingAssembly();
             var names = asm.GetManifestResourceNames();
             bool found = names.Any(n => n.EndsWith("transaction_template.vbs", StringComparison.OrdinalIgnoreCase));
@@ -8811,6 +9382,7 @@ class SapRunParams
     public string Password { get; set; } = "";
     public string Language { get; set; } = "ZH";
     public string SysNr { get; set; } = "";
+    public string MultiLogonPolicy { get; set; } = "takeover";
     public string TCode { get; set; } = "ZFI019NL";
     public string Script { get; set; } = "openOnly";
     public string Plant { get; set; } = "";
@@ -8851,9 +9423,10 @@ class SapLocalConfig
     public string? PasswordProtected { get; set; }
     public string? Language { get; set; }
     public string? SysNr { get; set; }
+    public string? MultiLogonPolicy { get; set; }
 }
 
-readonly record struct SapSessionProbeResult(bool Ready, bool HasSapGui, bool HasBlockingSapGui, string Details);
+readonly record struct SapSessionProbeResult(bool Ready, bool HasSapGui, bool HasBlockingSapGui, bool HasPendingLoginDialog, string Details);
 
 readonly record struct SapLoginAttempt(string Name, List<string> Args);
 
@@ -9082,11 +9655,14 @@ class ScheduleTaskDue
     public string Frequency { get; set; } = "";
     public string RunTime { get; set; } = "";
     public bool NotifyEnabled { get; set; }
+    public bool NotifyOnStart { get; set; }
     public bool NotifyOnSuccess { get; set; }
     public bool NotifyOnFailure { get; set; }
     public string NotifyTarget { get; set; } = "";
     public string ParamsJson { get; set; } = "";
     public string ScheduledAt { get; set; } = "";
+    public string CreatedBy { get; set; } = "";
+    public string UpdatedBy { get; set; } = "";
 }
 
 class CreateRunRequest

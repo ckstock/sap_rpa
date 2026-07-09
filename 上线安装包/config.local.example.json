@@ -1,4 +1,5 @@
 {
+  "multiLogonPolicy": "takeover",
   "dingTalkOpenApi": {
     "baseUrl": "https://你的钉钉OpenAPI网关根地址/",
     "appKey": "你的真实AppKey",
