@@ -122,7 +122,6 @@ Function SessionIsUsable(candidate)
    If Not IsObject(candidate) Then Exit Function
    Err.Clear
    If candidate.Info.User = "" Then Err.Clear: Exit Function
-   If candidate.Info.Transaction = "S000" Then Err.Clear: Exit Function
    If Err.Number <> 0 Then Err.Clear: Exit Function
    Set session = candidate
    If ObjectExists("wnd[0]/tbar[0]/okcd") Then SessionIsUsable = True

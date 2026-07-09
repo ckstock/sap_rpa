@@ -63,7 +63,7 @@
     if (localStorage.getItem("sapRpaApiBase") === "http://127.0.0.1:17890") {
       localStorage.removeItem("sapRpaApiBase");
     }
-    const BRIDGE_API = localStorage.getItem("sapRpaApiBase") || window.SAP_RPA_API_BASE || DEFAULT_BRIDGE_API;
+    const BRIDGE_API = window.SAP_RPA_API_BASE || localStorage.getItem("sapRpaApiBase") || DEFAULT_BRIDGE_API;
     const CONFIG_API_PATHS = {
       root: "/api/config",
       plants: code => "/api/config/plants/" + encodeURIComponent(code),

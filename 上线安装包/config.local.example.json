@@ -1,0 +1,8 @@
+{
+  "dingTalkOpenApi": {
+    "baseUrl": "https://你的钉钉OpenAPI网关根地址/",
+    "appKey": "你的真实AppKey",
+    "appSecret": "你的真实AppSecret",
+    "agentId": "你的真实AgentId"
+  }
+}

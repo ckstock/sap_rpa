@@ -538,7 +538,7 @@
 
       <h3 id="overview-runtime">运行拓扑</h3>
       <div class="flow">
-        <div class="step"><b>1. 打开页面</b>用户访问 <code>D:\sap_ai\index.html</code> 或公司门户嵌入页。</div>
+        <div class="step"><b>1. 打开页面</b>用户访问 <code>D:\RPA\index.html</code> 或公司门户嵌入页。</div>
         <div class="step"><b>2. 读取配置</b>页面调用 <code>http://127.0.0.1:8080/api/config</code>。</div>
         <div class="step"><b>3. 创建任务</b>页面提交 <code>POST /api/runs</code>，API 写入 <code>runs</code>。</div>
         <div class="step"><b>4. 串行执行</b>执行器按队列调用 VBS 和 SAP GUI。</div>
@@ -581,7 +581,7 @@
           <tr><th>模块</th><th>职责</th><th>设计约束</th></tr>
         </thead>
         <tbody>
-          <tr><td class="nowrap">SQLite Repository</td><td>创建/迁移表结构，读写配置、任务、日志、输出文件、定时任务运行记录。</td><td>数据库文件位于 <code>D:\sap_ai\data\sap-rpa-config.db</code>，运行库不提交 Git。</td></tr>
+          <tr><td class="nowrap">SQLite Repository</td><td>创建/迁移表结构，读写配置、任务、日志、输出文件、定时任务运行记录。</td><td>数据库文件位于 <code>D:\RPA\data\sap-rpa-config.db</code>，运行库不提交 Git。</td></tr>
           <tr><td class="nowrap">Run Queue</td><td>将 <code>queued</code> 状态 run 串行改为 <code>running</code> 并执行。</td><td>同一交互式桌面会话只允许一个 SAP GUI 脚本执行，避免窗口和登录态互相干扰。</td></tr>
           <tr><td class="nowrap">VBS Runner</td><td>按事务码找到脚本，替换 <code>{YEAR}</code>、<code>{WEEK}</code>、<code>{PLANTS}</code>、<code>{PERIOD}</code>、<code>{WEEK_END}</code> 等占位符，捕获标准输出。</td><td><code>ZFIR034.vbs</code> 写入 <code>S_BUDAT-LOW/HIGH</code> 和 <code>P_WEEK</code>；未传日期时脚本自身也会按系统日期计算上一完整周，并由最终开始日期推导周次。<code>P_WEEK</code> 优先写 <code>wnd[0]/usr/txtP_WEEK</code>，兜底写 <code>wnd[0]/usr/ctxtP_WEEK</code>。</td></tr>
           <tr><td class="nowrap">Notification Adapter</td><td>根据 run 状态、操作人和机器人绑定选择通知目标，调用 DingTalk OpenAPI。</td><td>密钥只来自环境变量或 <code>config.local.json</code>，不能下发前端。</td></tr>
@@ -596,16 +596,16 @@
         <tbody>
           <tr><td><code>Program.cs</code></td><td>C# / .NET 8</td><td>SapWebLauncher 的进程入口，启动 HTTP API，注册 SQLite 仓储、队列 worker、VBS runner、通知适配器，并处理 <code>--serve</code>、<code>--init-db</code> 等运行模式。</td></tr>
           <tr><td><code>SapWebLauncher.csproj</code></td><td>.NET 工程文件</td><td>定义目标框架、可执行程序输出、SQLite/HTTP/JSON 等依赖和发布参数，是生成 <code>SapWebLauncher.exe</code> 的工程清单。</td></tr>
-          <tr><td><code>D:\sap_ai\index.html</code></td><td>HTML / CSS</td><td>本地操作台页面外壳、样式、容器和脚本加载顺序。</td></tr>
-          <tr><td><code>D:\sap_ai\assets\js\portal-state.js</code></td><td>JavaScript</td><td>默认状态、fallback 配置和页面共享状态。</td></tr>
-          <tr><td><code>D:\sap_ai\assets\js\portal-utils.js</code></td><td>JavaScript</td><td>日期、格式化、数组去重、DOM 等通用工具。</td></tr>
-          <tr><td><code>D:\sap_ai\assets\js\portal-api.js</code></td><td>JavaScript</td><td>本地 API 请求、配置归一化、运行/队列/报表/配置刷新。</td></tr>
-          <tr><td><code>D:\sap_ai\assets\js\portal-render.js</code></td><td>JavaScript</td><td>页面渲染、表格、卡片、弹窗和黑底日志面板。该文件仍偏大，下一轮建议继续按页面拆细。</td></tr>
-          <tr><td><code>D:\sap_ai\assets\js\portal-actions.js</code></td><td>JavaScript</td><td>按钮事件、保存、删除、执行提交、轮询、导出和 toast。</td></tr>
-          <tr><td><code>D:\sap_ai\assets\js\main.js</code></td><td>JavaScript</td><td>前端启动入口，按顺序初始化 API、状态、渲染和事件绑定。</td></tr>
-          <tr><td><code>D:\sap_ai\transactions\ZFI072A.vbs</code></td><td>VBScript / SAP GUI Script</td><td>ZFI072A 事务脚本，只接收执行器传入的年度、周、工厂等运行参数，驱动 SAP GUI，并把关键步骤、SAP 状态栏和导出结果写到标准输出。</td></tr>
-          <tr><td><code>D:\sap_ai\data\sap-rpa-config.db</code></td><td>SQLite 数据库</td><td>V2 主配置和运行审计库，保存事务配置、工厂规则、<code>runs</code>、<code>run_logs</code>、<code>run_files</code>、通知绑定和定时任务记录。</td></tr>
-          <tr><td><code>D:\sap_ai\config.local.json</code></td><td>本机 JSON 配置</td><td>保存只属于当前服务器的运行参数，例如 DingTalk OpenAPI 根地址、appKey/appSecret/agentId、默认目录和联调开关；不得返回前端或提交真实密钥。</td></tr>
+          <tr><td><code>D:\RPA\index.html</code></td><td>HTML / CSS</td><td>本地操作台页面外壳、样式、容器和脚本加载顺序。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\portal-state.js</code></td><td>JavaScript</td><td>默认状态、fallback 配置和页面共享状态。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\portal-utils.js</code></td><td>JavaScript</td><td>日期、格式化、数组去重、DOM 等通用工具。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\portal-api.js</code></td><td>JavaScript</td><td>本地 API 请求、配置归一化、运行/队列/报表/配置刷新。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\portal-render.js</code></td><td>JavaScript</td><td>页面渲染、表格、卡片、弹窗和黑底日志面板。该文件仍偏大，下一轮建议继续按页面拆细。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\portal-actions.js</code></td><td>JavaScript</td><td>按钮事件、保存、删除、执行提交、轮询、导出和 toast。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\main.js</code></td><td>JavaScript</td><td>前端启动入口，按顺序初始化 API、状态、渲染和事件绑定。</td></tr>
+          <tr><td><code>D:\RPA\transactions\ZFI072A.vbs</code></td><td>VBScript / SAP GUI Script</td><td>ZFI072A 事务脚本，只接收执行器传入的年度、周、工厂等运行参数，驱动 SAP GUI，并把关键步骤、SAP 状态栏和导出结果写到标准输出。</td></tr>
+          <tr><td><code>D:\RPA\data\sap-rpa-config.db</code></td><td>SQLite 数据库</td><td>V2 主配置和运行审计库，保存事务配置、工厂规则、<code>runs</code>、<code>run_logs</code>、<code>run_files</code>、通知绑定和定时任务记录。</td></tr>
+          <tr><td><code>D:\RPA\config.local.json</code></td><td>本机 JSON 配置</td><td>保存只属于当前服务器的运行参数，例如 DingTalk OpenAPI 根地址、appKey/appSecret/agentId、默认目录和联调开关；不得返回前端或提交真实密钥。</td></tr>
           <tr><td><code>%LOCALAPPDATA%\SapWebLauncher\config.json</code></td><td>DPAPI 保护配置</td><td>保存 SAP 登录配置，密码字段由当前 Windows 用户的 DPAPI 加密；只能在同一执行账号下解密，供 SapWebLauncher 启动 SAP GUI/VBS 时使用。</td></tr>
         </tbody>
       </table>
@@ -796,7 +796,7 @@ async function pollRun(runId) {
       </table>
       <div class="code-block" data-lang="VBS 输出约定">STATUS_TYPE=S
 STATUS_TEXT=SAP 状态栏文本
-OUTPUT_FILE=D:\sap_ai\outputs\...
+OUTPUT_FILE=D:\RPA\outputs\...
 ERROR=失败原因</div>
       <div class="warning-box"><strong>ZFI072A 校验：</strong>如果 <code>plants</code> 为空、未替换或缺失，VBS 应输出 <code>ERROR=</code> 并以非零退出，不得自行使用脚本内默认工厂。</div>
 
@@ -866,7 +866,7 @@ ERROR=失败原因</div>
       <div class="tip-box"><strong>降噪原则：</strong>ZFI072A 按工厂拆批后，child 失败可以详细记录日志和失败原因，但钉钉只接收开始通知和结束汇总。最终汇总必须由后端通知适配器推送到钉钉，VBS 不直接调用通知接口。</div>
 
       <h3 id="notify-secret">config.local.json 本机保存要求</h3>
-      <div class="constraint-box"><strong>禁止明文提交：</strong><code>D:\sap_ai\config.local.json</code> 只允许保存在目标服务器本机，用于联调或上线本机配置。该文件可能包含接口根地址、appKey、appSecret、agentId 等敏感信息，不能提交 Git，不能复制到文档附件，不能由 API 明文返回给前端。</div>
+      <div class="constraint-box"><strong>禁止明文提交：</strong><code>D:\RPA\config.local.json</code> 只允许保存在目标服务器本机，用于联调或上线本机配置。该文件可能包含接口根地址、appKey、appSecret、agentId 等敏感信息，不能提交 Git，不能复制到文档附件，不能由 API 明文返回给前端。</div>
       <table>
         <thead>
           <tr><th>配置项</th><th>推荐来源</th><th>安全要求</th></tr>
@@ -894,15 +894,15 @@ ERROR=失败原因</div>
           <tr><th>路径</th><th>内容</th><th>管理方式</th></tr>
         </thead>
         <tbody>
-          <tr><td><code>D:\sap_ai\index.html</code></td><td>V2 前端操作台外壳。</td><td>可从源码同步，页面通过本地 API 获取配置。</td></tr>
-          <tr><td><code>D:\sap_ai\assets\js\*.js</code></td><td>V2 前端 JS 模块。</td><td>必须与 <code>index.html</code> 同步复制；漏复制会导致白屏或按钮无响应。</td></tr>
-          <tr><td><code>D:\sap_ai\bin\SapWebLauncher.exe</code></td><td>C#/.NET 8 本地 API 和执行器。</td><td>由发布包或源码构建产物复制。</td></tr>
-          <tr><td><code>D:\sap_ai\data\sap-rpa-config.db</code></td><td>SQLite 运行库。</td><td>目标服务器本机初始化，不提交 Git。</td></tr>
-          <tr><td><code>D:\sap_ai\transactions\*.vbs</code></td><td>事务脚本，如 <code>ZFI072A.vbs</code>、<code>ZFI019NL.vbs</code>。</td><td>从源码同步到运行目录，脚本本身不得含真实密码。</td></tr>
-          <tr><td><code>D:\sap_ai\outputs\</code></td><td>SAP 导出或结果文件。</td><td>运行产物，不提交 Git，按审计策略归档。</td></tr>
-          <tr><td><code>D:\sap_ai\logs\</code></td><td>执行器日志。</td><td>运行产物，不提交 Git，保留脱敏日志。</td></tr>
+          <tr><td><code>D:\RPA\index.html</code></td><td>V2 前端操作台外壳。</td><td>可从源码同步，页面通过本地 API 获取配置。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\*.js</code></td><td>V2 前端 JS 模块。</td><td>必须与 <code>index.html</code> 同步复制；漏复制会导致白屏或按钮无响应。</td></tr>
+          <tr><td><code>D:\RPA\bin\SapWebLauncher.exe</code></td><td>C#/.NET 8 本地 API 和执行器。</td><td>由发布包或源码构建产物复制。</td></tr>
+          <tr><td><code>D:\RPA\data\sap-rpa-config.db</code></td><td>SQLite 运行库。</td><td>目标服务器本机初始化，不提交 Git。</td></tr>
+          <tr><td><code>D:\RPA\transactions\*.vbs</code></td><td>事务脚本，如 <code>ZFI072A.vbs</code>、<code>ZFI019NL.vbs</code>。</td><td>从源码同步到运行目录，脚本本身不得含真实密码。</td></tr>
+          <tr><td><code>D:\RPA\outputs\</code></td><td>SAP 导出或结果文件。</td><td>运行产物，不提交 Git，按审计策略归档。</td></tr>
+          <tr><td><code>D:\RPA\logs\</code></td><td>执行器日志。</td><td>运行产物，不提交 Git，保留脱敏日志。</td></tr>
           <tr><td><code>%LOCALAPPDATA%\SapWebLauncher\config.json</code></td><td>SAP 登录配置，密码由 DPAPI 保护。</td><td>目标 Windows 执行账号本机生成，不跨账号复制。</td></tr>
-          <tr><td><code>D:\sap_ai\config.local.json</code></td><td>DingTalk OpenAPI 本机配置。</td><td>仅目标服务器保存，不明文提交。</td></tr>
+          <tr><td><code>D:\RPA\config.local.json</code></td><td>DingTalk OpenAPI 本机配置。</td><td>仅目标服务器保存，不明文提交。</td></tr>
         </tbody>
       </table>
 

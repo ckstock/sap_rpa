@@ -95,6 +95,16 @@
       localStorage.setItem("portalLoggedIn", "1");
     }
 
+    function firstPayloadString(payload, keys) {
+      for (const key of keys) {
+        const value = payload[key];
+        if (value === null || value === undefined) continue;
+        const text = String(value).trim();
+        if (text) return text;
+      }
+      return "";
+    }
+
     function consumeExternalTokenAccountFromUrl() {
       const tokenParam = readExternalTokenFromUrl();
       if (!tokenParam) {
@@ -110,10 +120,34 @@
       }
       try {
         const payload = parseJwtPayload(tokenParam.value);
-        const claimedAccount = String(payload.Account ?? payload.account ?? "").trim();
+        const claimedAccount = firstPayloadString(payload, [
+          "Account",
+          "account",
+          "Ddid",
+          "ddid",
+          "DDID",
+          "DingTalkUserId",
+          "dingTalkUserId",
+          "dingTalkId",
+          "UserId",
+          "userId",
+          "userid"
+        ]);
+        const claimedUserName = firstPayloadString(payload, [
+          "UserName",
+          "userName",
+          "Name",
+          "name",
+          "RealName",
+          "realName",
+          "DisplayName",
+          "displayName",
+          "NickName",
+          "nickName"
+        ]);
         state.externalAuth = {
           claimedAccount,
-          claimedUserName: String(payload.UserName ?? payload.userName ?? "").trim(),
+          claimedUserName,
           status: claimedAccount ? "parsed" : "missing-account"
         };
         if (claimedAccount) {
@@ -144,15 +178,15 @@
     function notifyUserBlockingText() {
       if (!isNotifyUserBlocked()) return "";
       if (state.externalAuth.status === "invalid") return "token 无效，取消固定通知后不能提交。";
-      if (state.externalAuth.status === "missing-account") return "token 未包含 Account，取消固定通知后不能提交。";
-      return "未解析到 token 员工号，取消固定通知后不能提交。";
+      if (state.externalAuth.status === "missing-account") return "token 未包含钉钉 ID，取消固定通知后不能提交。";
+      return "未解析到 token 钉钉 ID，取消固定通知后不能提交。";
     }
 
     function notifyUserSourceText() {
       if (state.form.useDefaultNotifyUser !== false) return "联调默认";
-      if (state.externalAuth.claimedAccount) return "URL token Account";
+      if (state.externalAuth.claimedAccount) return "URL token 钉钉 ID";
       if (state.externalAuth.status === "invalid") return "token 无效";
-      if (state.externalAuth.status === "missing-account") return "token 未包含 Account";
+      if (state.externalAuth.status === "missing-account") return "token 未包含钉钉 ID";
       return "未识别 token";
     }
 

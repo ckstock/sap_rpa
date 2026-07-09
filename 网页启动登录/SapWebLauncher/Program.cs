@@ -53,6 +53,9 @@ static class Program
     private static bool DatabaseInitialized;
     private static readonly object ActiveRunLock = new();
     private static readonly HashSet<string> ActiveExecutingRunIds = new(StringComparer.OrdinalIgnoreCase);
+    private static readonly object SapLoginStateLock = new();
+    private static readonly TimeSpan SapLoginFailureCooldown = TimeSpan.FromMinutes(2);
+    private static SapLoginFailure? LastSapLoginFailure;
     private static readonly HttpClient NotificationHttpClient = new()
     {
         Timeout = TimeSpan.FromSeconds(8)
@@ -159,11 +162,36 @@ static class Program
         if (!string.IsNullOrWhiteSpace(configured))
             return Path.GetFullPath(Environment.ExpandEnvironmentVariables(configured));
 
+        string installedRuntimeRoot = Path.GetFullPath(Path.Combine(ExeDirectory, ".."));
+        if (LooksLikeRuntimeRoot(installedRuntimeRoot))
+            return installedRuntimeRoot;
+
         const string handoffRoot = @"D:\sap_ai";
         if (Directory.Exists(handoffRoot))
             return handoffRoot;
 
         return LocalConfigDirectory;
+    }
+
+    static bool LooksLikeRuntimeRoot(string path)
+    {
+        try
+        {
+            if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
+                return false;
+
+            string binPath = Path.Combine(path, "bin");
+            return Directory.Exists(binPath) &&
+                   Path.GetFullPath(binPath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                       .Equals(Path.GetFullPath(ExeDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) &&
+                   (File.Exists(Path.Combine(path, "index.html")) ||
+                    Directory.Exists(Path.Combine(path, "transactions")) ||
+                    Directory.Exists(Path.Combine(path, "assets")));
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     static void EnsureRuntimeDirectories()
@@ -5563,7 +5591,11 @@ ORDER BY batch_index, attempt_no, child_run_id;
         bool parentBatchStart = eventName.Equals("start", StringComparison.OrdinalIgnoreCase) && IsParentRun(runId);
         if (IsRunFinishedEvent(eventName) || parentBatchStart)
         {
-            if (skipSapDingTalk)
+            if (!RunRequestsSapDingTalkNotification(runId))
+            {
+                AppendRunLog(runId, "INFO", "sap dingtalk notify skipped: notifyTarget is not dingtalk");
+            }
+            else if (skipSapDingTalk)
             {
                 AppendRunLog(runId, "INFO", "sap dingtalk notify skipped: legacy VBS notification result detected");
             }
@@ -5585,6 +5617,39 @@ ORDER BY batch_index, attempt_no, child_run_id;
         AppendRunLog(runId, "INFO", $"notify {eventName} target={targetText}: {message}");
         foreach (var target in targets.Where(t => !string.IsNullOrWhiteSpace(t.Webhook)))
             SendNotification(runId, eventName, message, target);
+    }
+
+    static bool RunRequestsSapDingTalkNotification(string runId)
+    {
+        try
+        {
+            using var connection = OpenDatabaseConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT notify_target FROM runs WHERE run_id=$runId";
+            command.Parameters.AddWithValue("$runId", runId);
+            string notifyTarget = command.ExecuteScalar() as string ?? "";
+            return SplitNotifyTargets(notifyTarget).Any(IsSapDingTalkTarget);
+        }
+        catch (Exception ex)
+        {
+            Log($"read notify target failed: {runId}, {ex.Message}");
+            return false;
+        }
+    }
+
+    static IEnumerable<string> SplitNotifyTargets(string notifyTarget)
+    {
+        return (notifyTarget ?? "")
+            .Split(new[] { ',', ';', '|', ' ' }, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+    }
+
+    static bool IsSapDingTalkTarget(string target)
+    {
+        return target.Equals("dingtalk", StringComparison.OrdinalIgnoreCase) ||
+               target.Equals("dingding", StringComparison.OrdinalIgnoreCase) ||
+               target.Equals("ding", StringComparison.OrdinalIgnoreCase) ||
+               target.Equals("sap-dingtalk", StringComparison.OrdinalIgnoreCase) ||
+               target.Equals("sap_dingtalk", StringComparison.OrdinalIgnoreCase);
     }
 
     static bool IsParentRun(string runId)
@@ -5622,9 +5687,6 @@ ORDER BY batch_index, attempt_no, child_run_id;
                     notifyTarget = reader.GetString(1);
                 }
             }
-
-            if (!string.IsNullOrWhiteSpace(notifyTarget))
-                targets.Add(new NotificationTarget { Label = notifyTarget });
 
             using var command = connection.CreateCommand();
             command.CommandText = """
@@ -6474,7 +6536,7 @@ ORDER BY 1;
         var config = LoadDingTalkOpenApiConfig();
         if (!config.IsComplete)
         {
-            AppendRunLog(runId, "INFO", "sap dingtalk openapi skipped: missing baseUrl/appKey/appSecret/agentId config");
+            AppendRunLog(runId, "WARN", $"sap dingtalk openapi skipped: missing {config.MissingFieldsSummary} config");
             return;
         }
 
@@ -7114,40 +7176,76 @@ ORDER BY 1;
                 return FailedRunResult("未找到 sapshcut.exe，请安装 SAP GUI", started);
             }
 
-            var args = new[]
+            if (TryGetRecentSapLoginFailure(p, out var recentFailure))
             {
-                $"-sysname={EscapeArg(p.System)}",
-                $"-client={EscapeArg(p.Client)}",
-                $"-user={EscapeArg(p.User)}",
-                $"-pw={EscapeArg(p.Password)}",
-                "-GuiSize=Maximized",
-                $"-language={EscapeArg(p.Language)}"
-            };
-
-            var startInfo = new ProcessStartInfo
-            {
-                FileName = sapshcut,
-                UseShellExecute = false,
-                CreateNoWindow = false
-            };
-            foreach (string arg in args)
-                startInfo.ArgumentList.Add(arg);
-
-            Log($"未检测到可用 SAP GUI 会话，启动 SAP GUI: path={sapshcut}, args={MaskSapArgs(string.Join(" ", args))}");
-            Process.Start(startInfo);
-            Log("SAP GUI started; waiting for logged-in scripting session before running VBS");
-            var loginProbe = WaitForReadySapSession(p, StrictSapSessionMatching, TimeSpan.FromSeconds(35), TimeSpan.FromSeconds(2));
-            if (!loginProbe.Ready)
-            {
-                string message = "SAP login did not produce a ready scripting session. " +
-                    "Do not submit more runs until SAP login or multi-logon dialogs are cleared. " +
-                    $"Probe: {loginProbe.Details}";
+                string message = "SAP login recently failed; skip repeated sapshcut login for this queued item. " +
+                    "Clear the SAP Logon/login dialog or fix the SAP connection, then submit again. " +
+                    $"Last failure: {recentFailure.Details}";
                 Console.Error.WriteLine(message);
                 Log(message);
                 return FailedRunResult(message, started);
             }
 
-            Log($"SAP GUI login is ready. {loginProbe.Details}");
+            var loginAttempts = BuildSapLoginAttempts(p);
+            if (loginAttempts.Count == 0)
+            {
+                string message = "SAP login config did not produce any sapshcut launch attempt. " +
+                    "Check system/client/user/password and SAP Logon entries.";
+                Console.Error.WriteLine(message);
+                Log(message);
+                RememberSapLoginFailure(p, message);
+                return FailedRunResult(message, started);
+            }
+
+            SapSessionProbeResult loginProbe = initialProbe;
+            string loginDiagnostics = "";
+            foreach (var attempt in loginAttempts)
+            {
+                var startInfo = new ProcessStartInfo
+                {
+                    FileName = sapshcut,
+                    UseShellExecute = false,
+                    CreateNoWindow = false
+                };
+                foreach (string arg in attempt.Args)
+                    startInfo.ArgumentList.Add(arg);
+
+                Log($"未检测到可用 SAP GUI 会话，启动 SAP GUI: mode={attempt.Name}, path={sapshcut}, args={MaskSapArgs(string.Join(" ", attempt.Args))}");
+                try
+                {
+                    using var sapProcess = Process.Start(startInfo);
+                    Log($"SAP GUI launch requested: mode={attempt.Name}, pid={(sapProcess?.Id.ToString(CultureInfo.InvariantCulture) ?? "unknown")}");
+                }
+                catch (Exception ex)
+                {
+                    string detail = $"{attempt.Name}: failed to start sapshcut - {ex.Message}";
+                    loginDiagnostics = AppendDiagnostic(loginDiagnostics, detail);
+                    Log(detail);
+                    continue;
+                }
+
+                Log($"SAP GUI started; waiting for logged-in scripting session before running VBS. mode={attempt.Name}");
+                loginProbe = WaitForReadySapSession(p, StrictSapSessionMatching, TimeSpan.FromSeconds(35), TimeSpan.FromSeconds(2));
+                if (loginProbe.Ready)
+                {
+                    ClearSapLoginFailure(p);
+                    Log($"SAP GUI login is ready. mode={attempt.Name}, {loginProbe.Details}");
+                    break;
+                }
+
+                loginDiagnostics = AppendDiagnostic(loginDiagnostics, $"{attempt.Name}: {loginProbe.Details}; sapguiProcesses={CountProcessByName("sapgui")}, saplogonProcesses={CountProcessByName("saplogon")}");
+            }
+
+            if (!loginProbe.Ready)
+            {
+                string message = "SAP login did not produce a ready scripting session. " +
+                    "Do not submit more runs until SAP login or multi-logon dialogs are cleared. " +
+                    $"Attempts: {loginDiagnostics}";
+                Console.Error.WriteLine(message);
+                Log(message);
+                RememberSapLoginFailure(p, message);
+                return FailedRunResult(message, started);
+            }
 
             Log("SAP GUI 已启动，3 秒后开始执行 VBS 自动化");
             Thread.Sleep(3000);
@@ -7182,6 +7280,253 @@ ORDER BY 1;
         return last;
     }
 
+    static List<SapLoginAttempt> BuildSapLoginAttempts(SapRunParams p)
+    {
+        return BuildSapLoginAttempts(p, GetSapLogonIniPaths());
+    }
+
+    static List<SapLoginAttempt> BuildSapLoginAttempts(SapRunParams p, IEnumerable<string> sapLogonIniPaths)
+    {
+        var attempts = new List<SapLoginAttempt>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        void Add(string name, IEnumerable<string> args)
+        {
+            var list = args.Where(a => !string.IsNullOrWhiteSpace(a)).ToList();
+            string signature = string.Join("\n", list);
+            if (list.Count > 0 && seen.Add(signature))
+                attempts.Add(new SapLoginAttempt(name, list));
+        }
+
+        var common = BuildCommonSapShortcutArgs(p).ToList();
+        string system = EscapeArg(p.System);
+        if (!string.IsNullOrWhiteSpace(system))
+            Add("saplogon-description", new[] { $"-sysname={system}" }.Concat(common));
+
+        foreach (var entry in ReadSapLogonEntries(sapLogonIniPaths))
+        {
+            if (!SapLogonEntryMatches(entry, p.System))
+                continue;
+
+            string sid = FirstNonEmpty(entry.SystemId, entry.Description, p.System);
+            string server = entry.Server;
+            string sysNr = FirstNonEmpty(NormalizeSapSystemNumber(p.SysNr), entry.SystemNumber);
+            if (!string.IsNullOrWhiteSpace(sid) &&
+                !string.IsNullOrWhiteSpace(server) &&
+                !string.IsNullOrWhiteSpace(sysNr))
+            {
+                Add("saplogon-direct-guiparm", new[]
+                {
+                    $"-system={EscapeArg(sid)}",
+                    $"-guiparm={EscapeArg(server)} {EscapeArg(sysNr)}"
+                }.Concat(common));
+            }
+
+            if (!string.IsNullOrWhiteSpace(sid) &&
+                !sid.Equals(p.System, StringComparison.OrdinalIgnoreCase))
+            {
+                Add("saplogon-system-id", new[] { $"-system={EscapeArg(sid)}" }.Concat(common));
+            }
+        }
+
+        string normalizedConfigSysNr = NormalizeSapSystemNumber(p.SysNr);
+        if (!string.IsNullOrWhiteSpace(system) && !string.IsNullOrWhiteSpace(normalizedConfigSysNr))
+        {
+            Add("configured-system-sysnr", new[]
+            {
+                $"-system={system}",
+                $"-sysnr={EscapeArg(normalizedConfigSysNr)}"
+            }.Concat(common));
+        }
+
+        return attempts;
+    }
+
+    static List<string> BuildCommonSapShortcutArgs(SapRunParams p)
+    {
+        var args = new List<string>();
+        if (!string.IsNullOrWhiteSpace(p.Client))
+            args.Add($"-client={EscapeArg(p.Client)}");
+        if (!string.IsNullOrWhiteSpace(p.User))
+            args.Add($"-user={EscapeArg(p.User)}");
+        if (!string.IsNullOrWhiteSpace(p.Password))
+            args.Add($"-pw={EscapeArg(p.Password)}");
+        if (!string.IsNullOrWhiteSpace(p.Language))
+            args.Add($"-language={EscapeArg(p.Language)}");
+        args.Add("-maxgui");
+        return args;
+    }
+
+    static List<SapLogonEntry> ReadSapLogonEntries()
+    {
+        return ReadSapLogonEntries(GetSapLogonIniPaths());
+    }
+
+    static List<SapLogonEntry> ReadSapLogonEntries(IEnumerable<string> paths)
+    {
+        var entries = new List<SapLogonEntry>();
+        foreach (string path in paths)
+        {
+            try
+            {
+                if (!File.Exists(path))
+                    continue;
+
+                var values = ReadIniSections(path);
+                var descriptions = values.TryGetValue("Description", out var d) ? d : new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                foreach (var pair in descriptions)
+                {
+                    string key = pair.Key;
+                    var entry = new SapLogonEntry
+                    {
+                        SourcePath = path,
+                        ItemKey = key,
+                        Description = pair.Value,
+                        Server = GetIniValue(values, "Server", key),
+                        SystemNumber = NormalizeSapSystemNumber(GetIniValue(values, "Database", key)),
+                        SystemId = GetIniValue(values, "MSSysName", key),
+                        Router = FirstNonEmpty(GetIniValue(values, "Router", key), GetIniValue(values, "Router2", key))
+                    };
+                    entries.Add(entry);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"read saplogon.ini failed: {path}, {ex.Message}");
+            }
+        }
+
+        return entries;
+    }
+
+    static IEnumerable<string> GetSapLogonIniPaths()
+    {
+        string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        string commonAppData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+        yield return Path.Combine(appData, "SAP", "Common", "saplogon.ini");
+        yield return Path.Combine(commonAppData, "SAP", "Common", "saplogon.ini");
+    }
+
+    static Dictionary<string, Dictionary<string, string>> ReadIniSections(string path)
+    {
+        var sections = new Dictionary<string, Dictionary<string, string>>(StringComparer.OrdinalIgnoreCase);
+        string current = "";
+        foreach (string rawLine in File.ReadLines(path, Encoding.Default))
+        {
+            string line = rawLine.Trim();
+            if (line.Length == 0 || line.StartsWith(";", StringComparison.Ordinal) || line.StartsWith("#", StringComparison.Ordinal))
+                continue;
+
+            if (line.StartsWith("[", StringComparison.Ordinal) && line.EndsWith("]", StringComparison.Ordinal))
+            {
+                current = line[1..^1].Trim();
+                if (!sections.ContainsKey(current))
+                    sections[current] = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+                continue;
+            }
+
+            int equals = line.IndexOf('=');
+            if (equals <= 0 || string.IsNullOrWhiteSpace(current))
+                continue;
+
+            string key = line[..equals].Trim();
+            string value = line[(equals + 1)..].Trim();
+            sections[current][key] = value;
+        }
+
+        return sections;
+    }
+
+    static string GetIniValue(Dictionary<string, Dictionary<string, string>> sections, string section, string key)
+    {
+        if (sections.TryGetValue(section, out var values) && values.TryGetValue(key, out string? value))
+            return value.Trim();
+        return "";
+    }
+
+    static bool SapLogonEntryMatches(SapLogonEntry entry, string configuredSystem)
+    {
+        if (string.IsNullOrWhiteSpace(configuredSystem))
+            return false;
+
+        return configuredSystem.Equals(entry.Description, StringComparison.OrdinalIgnoreCase) ||
+               configuredSystem.Equals(entry.SystemId, StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string NormalizeSapSystemNumber(string value)
+    {
+        value = (value ?? "").Trim();
+        if (!Regex.IsMatch(value, @"^\d{1,2}$"))
+            return "";
+
+        return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int sysNr)
+            ? sysNr.ToString("00", CultureInfo.InvariantCulture)
+            : "";
+    }
+
+    static string AppendDiagnostic(string current, string next)
+    {
+        if (string.IsNullOrWhiteSpace(next))
+            return current;
+        if (string.IsNullOrWhiteSpace(current))
+            return next;
+        return current + " | " + next;
+    }
+
+    static int CountProcessByName(string processName)
+    {
+        try
+        {
+            return Process.GetProcessesByName(processName).Length;
+        }
+        catch
+        {
+            return -1;
+        }
+    }
+
+    static string SapLoginFailureKey(SapRunParams p)
+    {
+        return $"{p.System}|{p.Client}|{p.User}".ToUpperInvariant();
+    }
+
+    static bool TryGetRecentSapLoginFailure(SapRunParams p, out SapLoginFailure failure)
+    {
+        lock (SapLoginStateLock)
+        {
+            if (LastSapLoginFailure is { } last &&
+                last.Key.Equals(SapLoginFailureKey(p), StringComparison.OrdinalIgnoreCase) &&
+                DateTime.UtcNow - last.AtUtc < SapLoginFailureCooldown)
+            {
+                failure = last;
+                return true;
+            }
+        }
+
+        failure = default!;
+        return false;
+    }
+
+    static void RememberSapLoginFailure(SapRunParams p, string details)
+    {
+        lock (SapLoginStateLock)
+        {
+            LastSapLoginFailure = new SapLoginFailure(SapLoginFailureKey(p), DateTime.UtcNow, details);
+        }
+    }
+
+    static void ClearSapLoginFailure(SapRunParams p)
+    {
+        lock (SapLoginStateLock)
+        {
+            if (LastSapLoginFailure is { } last &&
+                last.Key.Equals(SapLoginFailureKey(p), StringComparison.OrdinalIgnoreCase))
+            {
+                LastSapLoginFailure = null;
+            }
+        }
+    }
+
     static SapSessionProbeResult ProbeSapSession(SapRunParams p, bool strictMatch)
     {
         string probeFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_probe_{Guid.NewGuid():N}.vbs");
@@ -7191,7 +7536,7 @@ ORDER BY 1;
         string probeScript = $"""
 On Error Resume Next
 Dim SapGuiAuto, application, connection, session, i, j, detail, okcd, foundTarget
-Dim targetSystem, targetClient, targetUser, currentSystem, currentClient, currentUser
+Dim targetSystem, targetClient, targetUser, currentSystem, currentClient, currentUser, currentTransaction
 targetSystem = "{VbsEscape(targetSystem)}"
 targetClient = "{VbsEscape(targetClient)}"
 targetUser = "{VbsEscape(targetUser)}"
@@ -7199,7 +7544,7 @@ detail = ""
 foundTarget = False
 Set SapGuiAuto = GetObject("SAPGUI")
 If Err.Number <> 0 Then
-   WScript.Echo "NO: SAPGUI object not found"
+   WScript.Echo "NO: SAPGUI object not found; only SAP Logon or a non-scriptable/non-logged-in GUI may be open"
    WScript.Quit 1
 End If
 Set application = SapGuiAuto.GetScriptingEngine
@@ -7208,6 +7553,22 @@ If Err.Number <> 0 Or Not IsObject(application) Or application.Children.Count = 
    WScript.Quit 2
 End If
 detail = "connections=" & application.Children.Count
+Function SessionLooksReady(candidate)
+   Dim candidateUser, candidateTransaction, candidateOkcd
+   SessionLooksReady = False
+   If Not IsObject(candidate) Then Exit Function
+   Err.Clear
+   candidateUser = Trim(CStr(candidate.Info.User))
+   candidateTransaction = UCase(Trim(CStr(candidate.Info.Transaction)))
+   If Err.Number <> 0 Then Err.Clear: Exit Function
+   If candidateUser = "" Then Exit Function
+   If candidateTransaction = "" Then Exit Function
+   Err.Clear
+   Set candidateOkcd = candidate.findById("wnd[0]/tbar[0]/okcd")
+   If Err.Number = 0 And IsObject(candidateOkcd) Then SessionLooksReady = True
+   Err.Clear
+End Function
+
 For i = 0 To application.Children.Count - 1
    Err.Clear
    Set connection = application.Children.Item(CInt(i))
@@ -7220,11 +7581,10 @@ For i = 0 To application.Children.Count - 1
             currentSystem = Trim(CStr(session.Info.SystemName))
             currentClient = Trim(CStr(session.Info.Client))
             currentUser = Trim(CStr(session.Info.User))
-            detail = detail & "; session[" & i & "," & j & "].system=" & currentSystem & ",client=" & currentClient & ",user=" & currentUser & ",transaction=" & session.Info.Transaction & ",program=" & session.Info.Program & ",screen=" & session.Info.ScreenNumber
+            currentTransaction = Trim(CStr(session.Info.Transaction))
+            detail = detail & "; session[" & i & "," & j & "].system=" & currentSystem & ",client=" & currentClient & ",user=" & currentUser & ",transaction=" & currentTransaction & ",program=" & session.Info.Program & ",screen=" & session.Info.ScreenNumber
             If (Trim(CStr(targetSystem)) = "" Or UCase(currentSystem) = UCase(Trim(CStr(targetSystem)))) And (Trim(CStr(targetClient)) = "" Or currentClient = Trim(CStr(targetClient))) And (Trim(CStr(targetUser)) = "" Or UCase(currentUser) = UCase(Trim(CStr(targetUser)))) Then
-               Err.Clear
-               Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
-               If Err.Number = 0 And IsObject(okcd) Then
+               If SessionLooksReady(session) Then
                   foundTarget = True
                   Exit For
                End If
@@ -7237,8 +7597,7 @@ For i = 0 To application.Children.Count - 1
           currentClient = Trim(CStr(session.Info.Client))
           currentUser = Trim(CStr(session.Info.User))
           If (Trim(CStr(targetSystem)) = "" Or UCase(currentSystem) = UCase(Trim(CStr(targetSystem)))) And (Trim(CStr(targetClient)) = "" Or currentClient = Trim(CStr(targetClient))) And (Trim(CStr(targetUser)) = "" Or UCase(currentUser) = UCase(Trim(CStr(targetUser)))) Then
-             Set okcd = session.findById("wnd[0]/tbar[0]/okcd")
-             If Err.Number = 0 And IsObject(okcd) Then
+             If SessionLooksReady(session) Then
                 foundTarget = True
                 Exit For
              End If
@@ -7247,7 +7606,7 @@ For i = 0 To application.Children.Count - 1
    End If
 Next
 If Err.Number <> 0 Or Not IsObject(session) Or Not CBool(foundTarget) Then
-   WScript.Echo "NO: target SAP session not found; target=" & targetSystem & "/" & targetClient & "/" & targetUser & "; " & detail
+   WScript.Echo "NO: logged-in target SAP session not found; target=" & targetSystem & "/" & targetClient & "/" & targetUser & "; " & detail
    WScript.Quit 4
 End If
 Err.Clear
@@ -7987,6 +8346,17 @@ WScript.Quit 0
         }
 
         {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["period"] = "2025.12.29",
+                ["weekEnd"] = "2026.01.04"
+            };
+            AddDefaultExecutionDateParams("ZFI072A", values);
+            bool ok = GetParamValue(values, "year").Equals("2025", StringComparison.OrdinalIgnoreCase);
+            Check("weekly year uses range low", ok, $"period={GetParamValue(values, "period")}, weekEnd={GetParamValue(values, "weekEnd")}, year={GetParamValue(values, "year")}, week={GetParamValue(values, "week")}");
+        }
+
+        {
             var run = new RunRecordView
             {
                 RunId = "RUN-SELFTEST-ZFI019NL",
@@ -8122,6 +8492,14 @@ WScript.Quit 0
         }
 
         {
+            bool ok = IsSapDingTalkTarget("dingtalk") &&
+                      IsSapDingTalkTarget("sap-dingtalk") &&
+                      SplitNotifyTargets("dingtalk,local|robot").SequenceEqual(new[] { "dingtalk", "local", "robot" }) &&
+                      new DingTalkOpenApiConfig().MissingFieldsSummary.Equals("baseUrl/appKey/appSecret/agentId", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk notify diagnostics", ok, "notifyTarget=dingtalk is a SAP DingTalk request, not a sent robot target");
+        }
+
+        {
             var q = new NameValueCollection
             {
                 ["system"] = "URLSYS",
@@ -8144,6 +8522,42 @@ WScript.Quit 0
             bool ok = p.System == "TEST_SYSTEM" && p.Client == "TEST_CLIENT" && p.User == "TEST_USER" &&
                       p.Password == "TEST_PASSWORD" && p.Language == "ZH" && p.SysNr == "TEST_SYSNR";
             Check("本机配置优先", ok, $"system={p.System}, client={p.Client}, user={p.User}, lang={p.Language}, sysnr={p.SysNr}");
+        }
+
+        {
+            string ini = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_saplogon_{Guid.NewGuid():N}.ini");
+            File.WriteAllText(ini, """
+[Server]
+Item1=10.0.40.212
+[Database]
+Item1=10
+[MSSysName]
+Item1=TD1
+[Description]
+Item1=test888
+""", Encoding.ASCII);
+            try
+            {
+                var p = new SapRunParams
+                {
+                    System = "test888",
+                    Client = "888",
+                    User = "IT049",
+                    Password = "SECRET",
+                    Language = "ZH",
+                    SysNr = "10000000000000000000000"
+                };
+                var attempts = BuildSapLoginAttempts(p, new[] { ini });
+                bool ok = attempts.Any(a =>
+                    a.Name.Equals("saplogon-direct-guiparm", StringComparison.OrdinalIgnoreCase) &&
+                    a.Args.Any(x => x.Equals("-system=TD1", StringComparison.OrdinalIgnoreCase)) &&
+                    a.Args.Any(x => x.Equals("-guiparm=10.0.40.212 10", StringComparison.OrdinalIgnoreCase)));
+                Check("sapshcut guiparm fallback", ok, string.Join(" | ", attempts.Select(a => $"{a.Name}:{MaskSapArgs(string.Join(" ", a.Args))}")));
+            }
+            finally
+            {
+                try { File.Delete(ini); } catch { }
+            }
         }
 
         {
@@ -8440,6 +8854,21 @@ class SapLocalConfig
 }
 
 readonly record struct SapSessionProbeResult(bool Ready, bool HasSapGui, bool HasBlockingSapGui, string Details);
+
+readonly record struct SapLoginAttempt(string Name, List<string> Args);
+
+readonly record struct SapLoginFailure(string Key, DateTime AtUtc, string Details);
+
+class SapLogonEntry
+{
+    public string SourcePath { get; set; } = "";
+    public string ItemKey { get; set; } = "";
+    public string Description { get; set; } = "";
+    public string Server { get; set; } = "";
+    public string SystemNumber { get; set; } = "";
+    public string SystemId { get; set; } = "";
+    public string Router { get; set; } = "";
+}
 
 class TransactionConfigRequest
 {
@@ -8836,6 +9265,23 @@ class DingTalkOpenApiConfig
         !string.IsNullOrWhiteSpace(AppKey) &&
         !string.IsNullOrWhiteSpace(AppSecret) &&
         !string.IsNullOrWhiteSpace(AgentId);
+
+    public string MissingFieldsSummary
+    {
+        get
+        {
+            var missing = new List<string>();
+            if (string.IsNullOrWhiteSpace(BaseUrl))
+                missing.Add("baseUrl");
+            if (string.IsNullOrWhiteSpace(AppKey))
+                missing.Add("appKey");
+            if (string.IsNullOrWhiteSpace(AppSecret))
+                missing.Add("appSecret");
+            if (string.IsNullOrWhiteSpace(AgentId))
+                missing.Add("agentId");
+            return missing.Count == 0 ? "none" : string.Join("/", missing);
+        }
+    }
 }
 
 class DingTalkOpenApiSendResult

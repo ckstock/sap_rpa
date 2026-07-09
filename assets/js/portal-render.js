@@ -160,8 +160,9 @@
     }
 
     function renderShell() {
-      const headerUserText = state.externalAuth.claimedAccount || state.user.name;
-      const headerAvatarText = headerUserText.slice(0, 1) || "用";
+      const headerUserName = state.user.name || state.externalAuth.claimedUserName || "本机用户";
+      const headerDingTalkId = state.user.dingTalkUserId || state.externalAuth.claimedAccount || DEFAULT_DINGTALK_USER_ID;
+      const headerAvatarText = headerUserName.slice(0, 1) || "用";
       return `
         <div class="app-shell">
           <aside class="sidebar">
@@ -184,8 +185,10 @@
                 <span class="badge ${state.role === "viewer" ? "viewer" : "executor"}">${icon(state.role === "viewer" ? "search" : "shield-check")} ${state.role === "viewer" ? "查询员" : "执行员"}</span>
                 <button class="btn small" data-action="toggle-role">${icon("refresh-cw")}切换角色</button>
                 <span class="avatar">${esc(headerAvatarText)}</span>
-                <span>${esc(headerUserText)}</span>
-                <button class="btn small" data-action="logout">${icon("user-x")}清除身份</button>
+                <span class="identity-pill" title="姓名：${esc(headerUserName)}&#10;钉钉ID：${esc(headerDingTalkId)}">
+                  <span class="identity-name">${esc(headerUserName)}</span>
+                  <span class="identity-ddid">钉钉ID：${esc(headerDingTalkId)}</span>
+                </span>
               </div>
             </header>
             ${renderCurrentPage()}
@@ -346,34 +349,104 @@
       `;
     }
 
+    const dashboardWorkflowGroups = [
+      {
+        title: "采购价",
+        summary: "ZFI072A → ZFI072N",
+        entries: [
+          { code: "ZFI072A", note: "四个集采工厂 + 其他工厂" },
+          { code: "ZFI072N" }
+        ]
+      },
+      {
+        title: "产值拆分",
+        summary: "ZFI057 → ZCO020",
+        entries: [
+          { code: "ZFI057" },
+          { code: "ZCO020" }
+        ]
+      },
+      {
+        title: "实际领料",
+        summary: "ZFIR034 → ZFI080 → ZFI080B",
+        entries: [
+          { code: "ZFIR034", displayName: "实际领料日期范围" },
+          { code: "ZFI080" },
+          { code: "ZFI080B" }
+        ]
+      },
+      {
+        title: "标准价",
+        summary: "ZCO019-明细、ZCO019汇总",
+        entries: [
+          { code: "ZCO019", displayCode: "ZCO019-明细", note: "明细" },
+          { code: "ZCO019", displayCode: "ZCO019汇总", note: "汇总" }
+        ]
+      },
+      {
+        title: "周结完工成本明细表",
+        summary: "ZFI019NL、ZFI019NA",
+        entries: [
+          { code: "ZFI019NL" },
+          { code: "ZFI019NA" }
+        ]
+      }
+    ];
+
     function renderTransactionGroups() {
-      return `<div class="transaction-groups">${stageOrder.map(stage => {
-        const items = activeTCodes().filter(t => t.stage === stage);
+      const activeByCode = new Map(activeTCodes().map(item => [String(item.code || "").toUpperCase(), item]));
+      const groups = dashboardWorkflowGroups.map((group, groupIndex) => {
+        const items = group.entries.map((entry, index) => {
+          const base = activeByCode.get(String(entry.code || "").toUpperCase());
+          if (!base) return null;
+          return {
+            ...base,
+            displayCode: entry.displayCode || base.code,
+            displayName: entry.displayName || base.name,
+            dashboardNote: entry.note || "",
+            workflowTitle: group.title,
+            workflowStep: index + 1,
+            runCode: base.code
+          };
+        }).filter(Boolean);
         if (!items.length) return "";
         return `
           <div class="transaction-group">
-            <div class="transaction-group-head"><span>${esc(stage)}（${items.length}个事务码）</span></div>
+            <div class="transaction-group-head">
+              <div class="transaction-group-title">
+                <span class="workflow-index">${String(groupIndex + 1).padStart(2, "0")}</span>
+                <div>
+                  <div class="transaction-group-name">${esc(group.title)}</div>
+                </div>
+              </div>
+              <span class="tag info">${items.length}个入口</span>
+            </div>
             <div class="transaction-grid">${items.map(renderTransactionCard).join("")}</div>
           </div>
         `;
-      }).join("")}</div>`;
+      }).filter(Boolean).join("");
+      return `<div class="transaction-groups">${groups || `<div class="notice warn">暂无可展示事务码，请在基础配置启用对应事务码。</div>`}</div>`;
     }
 
     function renderTransactionCard(item) {
+      const displayCode = item.displayCode || item.code;
+      const displayName = item.displayName || item.name || item.code;
+      const runCode = item.runCode || item.code;
       return `
         <div class="transaction-card">
+          <div class="transaction-step">步骤 ${esc(item.workflowStep || "-")}</div>
           <div class="transaction-card-head">
             <div class="action-icon">${icon(item.icon || "terminal")}</div>
             <div class="transaction-meta">
-              <div class="transaction-code">${esc(item.code)}</div>
-              <div class="transaction-name">${esc(item.name)}</div>
+              <div class="transaction-code">${esc(displayCode)}</div>
+              <div class="transaction-name">${esc(displayName)}</div>
+              ${item.dashboardNote ? `<div class="transaction-note">${esc(item.dashboardNote)}</div>` : ""}
               <div class="transaction-tags">
-                <span class="tag info">${esc(item.stage || "-")}</span>
                 <span class="tag ${item.automation === "script" ? "ok" : "info"}">${item.automation === "script" ? "脚本" : "打开"}</span>
               </div>
             </div>
           </div>
-          <button class="btn primary small" data-action="go-execute" data-tcode="${esc(item.code)}">${icon("send")}提交</button>
+          <button class="btn primary small" data-action="go-execute" data-tcode="${esc(runCode)}">${icon("send")}提交</button>
         </div>
       `;
     }
@@ -1066,9 +1139,9 @@
             <div class="modal">
               <div class="modal-header"><strong>本机协议注册</strong><button class="btn small" data-action="close-modal">${icon("x")}关闭</button></div>
               <div class="modal-body">
-                <div class="notice">当前正式注册 <strong>sap-rpa://</strong>。旧的临时测试协议不再安装；如电脑上曾导入过旧协议，可用上线安装包的卸载脚本清理。</div>
+                <div class="notice">当前服务端上线以手工安装清单为准。旧的临时测试协议不再安装；如电脑上曾导入过旧协议，按安装文档手工核对并清理。</div>
                 <div style="height:12px"></div>
-                <div class="launch-link">D:\\工作\\SapRpa上线安装包\\01_安装到本机.bat<br>D:\\工作\\SapRpa上线安装包\\04_配置SAP登录信息.bat</div>
+                <div class="launch-link">D:\\RPA\\RpaProject\\上线安装包\\上线安装文档清单.md<br>D:\\RPA\\RpaProject\\上线安装包\\04_配置SAP登录信息.bat</div>
               </div>
               <div class="modal-footer"><button class="btn primary" data-action="close-modal">关闭</button></div>
             </div>

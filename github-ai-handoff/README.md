@@ -134,28 +134,29 @@ D:\工作\SapRpa上线安装包\04_配置SAP登录信息.bat
 
 Do not commit this config file or any real SAP password.
 
-## Installer And Registry
+## Manual Install Package
 
-The official browser protocol is:
+The package no longer uses the old one-click installer flow. Use the manual runbook and checklist first:
 
 ```text
-sap-rpa://
+上线安装包\上线安装文档清单.md
+上线安装包\最终上线部署步骤\README_V2_Windows_Server_上线部署.md
 ```
 
-The old temporary `sap-zck://` test protocol should not be installed. The uninstall script can clean old leftovers.
+Kept scripts:
 
-Target computer install order:
+1. `00_生成上线安装包.cmd`
+2. `04_配置SAP登录信息.bat`
+3. `scripts\make_package.ps1`
+4. `scripts\configure_sap_login.ps1`
 
-1. Copy the whole generated `D:\工作\SapRpa上线安装包` folder to the computer.
-2. Run `01_安装到本机.bat`.
-3. Run `04_配置SAP登录信息.bat`.
-4. Run `02_检测环境.bat`.
-5. Open the Netlify page and execute a transaction.
-
-Registry location:
+Deleted legacy entries:
 
 ```text
-HKEY_CURRENT_USER\Software\Classes\sap-rpa
+01_安装到本机.bat
+02_检测环境.bat
+03_卸载协议和程序.bat
+服务器一键安装包\
 ```
 
 No administrator permission should be required because the protocol is registered under HKCU.

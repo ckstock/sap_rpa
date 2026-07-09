@@ -83,7 +83,6 @@
 
     function handleAction(el) {
       const action = el.dataset.action;
-      if (action === "logout") return logout();
       if (action === "toggle-role") return toggleRole();
       if (action === "go-execute") return goExecute(el.dataset.tcode);
       if (action === "wake-protocol") return wakeProtocol();
@@ -574,21 +573,6 @@
       }
 
       state.modal = "log:" + id;
-      render();
-    }
-
-    function logout() {
-      localStorage.removeItem("portalLoggedIn");
-      localStorage.removeItem("portalUser");
-      localStorage.removeItem("portalDingTalkUserId");
-      state.loggedIn = true;
-      state.user.name = "张三";
-      state.user.dingTalkUserId = DEFAULT_DINGTALK_USER_ID;
-      state.externalAuth = { claimedAccount: "", claimedUserName: "", status: "none" };
-      state.form.useDefaultNotifyUser = true;
-      localStorage.setItem("portalUseDefaultNotifyUser", "1");
-      state.page = "dashboard";
-      toast("已清除页面身份，仍保留门户入口", "ok");
       render();
     }
 

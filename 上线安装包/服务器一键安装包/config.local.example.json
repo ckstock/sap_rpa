@@ -1,8 +1,0 @@
-{
-  "dingTalkOpenApi": {
-    "baseUrl": "请填写接口根地址",
-    "appKey": "请填写真实AppKey",
-    "appSecret": "请填写真实AppSecret",
-    "agentId": "请填写真实AgentId"
-  }
-}

@@ -1,353 +1,243 @@
-# SAP RPA V2 Windows Server 最终上线部署步骤
+# SAP RPA V2 Windows Server 手工上线部署
 
-本文档用于公司 Windows Server 上线 SAP RPA V2。当前 `上线安装包` 目录里的原有脚本仍然需要保留：
+本文档是 Windows Server 上线 runbook。当前安装包不再提供一键安装器；上线由管理员按清单手工执行、核对和验收。
 
-- `00_生成上线安装包.cmd`：开发/打包机生成发布包。
-- `01_安装到本机.bat`：把 `SapWebLauncher` 安装到当前 Windows 用户目录，并注册 `sap-rpa://` 协议。
-- `02_检测环境.bat`：检查执行器、协议、事务脚本、SAP GUI、SAP 登录配置。
-- `03_卸载协议和程序.bat`：清理当前用户安装。
-- `04_配置SAP登录信息.bat`：在目标 Windows 用户下生成本机 SAP 登录配置，密码用 DPAPI 保护。
-- `scripts/`：上述批处理调用的 PowerShell 脚本。
+## 1. 前置条件
 
-V2 与旧版的区别是：公司服务器不只是注册浏览器协议，还要运行本地 API、SQLite 配置库、执行历史、VBS 脚本目录和输出目录。SAP 密码仍然只保存在服务器 Windows 执行账号本地，不进入浏览器页面和普通数据库。
+1. 使用固定 Windows 执行账号登录服务器交互式桌面。
+2. SAP GUI 已安装，并启用 SAP GUI Scripting。
+3. 手工登录 SAP 成功，目标事务码权限可用。
+4. 目标服务器已有 Git、.NET 8 SDK 或可用的打包产物。
+5. 已确认运行目录、端口、对外路径、防火墙和访问入口。
+6. SAP GUI 自动化不要跑在纯 Session 0 Windows Service 中。
 
-## 1. 服务器前置条件
+## 2. 必填参数
 
-1. 准备一台公司 Windows Server 或专用 Windows 机器。
-2. 使用固定 Windows 执行账号登录服务器桌面。
-3. 安装 SAP GUI，并确认 SAP GUI Scripting 已启用。
-4. 不要让多人共用并手工操作同一个执行桌面会话。
-5. 执行器必须运行在已登录的交互式桌面会话中，不要作为纯 Session 0 Windows Service 运行。
-6. 若需要从其他机器访问本地 API，提前确认防火墙和端口策略；默认优先本机访问。
+| 参数 | 当前服务器示例 | 说明 |
+| --- | --- | --- |
+| 源码仓库目录 | `D:\RPA\RpaProject` | GitHub 拉取位置，只用于源码和构建。 |
+| 运行根目录 | `D:\RPA` | 线上实际运行目录。 |
+| 后端 exe | `D:\RPA\bin\SapWebLauncher.exe` | API 只能以运行目录下的 exe 为准。 |
+| 本机 API | `http://127.0.0.1:8080` | SapWebLauncher 默认只监听本机。 |
+| 对外 URL | `http://10.0.41.158:6174/rpa/` | 给用户访问的链接，网关和防火墙另行确认。 |
+| SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` | 在固定 Windows 执行账号下生成。 |
+| 钉钉真实配置 | `D:\RPA\config.local.json` | 只保存在服务器本机，不提交 Git。 |
+| 钉钉模板 | `D:\RPA\config.local.example.json` | 只能作为字段说明。 |
 
-## 2. 代码和运行目录
+## 3. 运行目录结构
 
-推荐保留两个目录：
-
-```text
-源码仓库：D:\工作\sap_rpa
-运行目录：D:\sap_ai
-```
-
-运行目录建议包含：
+运行目录至少包含：
 
 ```text
-D:\sap_ai\index.html
-D:\sap_ai\assets\js\*.js
-D:\sap_ai\data\sap-rpa-config.db
-D:\sap_ai\transactions\*.vbs
-D:\sap_ai\outputs\
-D:\sap_ai\logs\
+D:\RPA\
+  index.html
+  assets\js\*.js
+  bin\SapWebLauncher.exe
+  transactions\*.vbs
+  transactions\transaction-config.json
+  data\sap-rpa-config.db
+  logs\
+  outputs\
+  config.local.example.json
+  config.local.json
 ```
 
-可通过环境变量覆盖运行根目录：
+不要提交或覆盖这些服务器本机状态：
 
-```powershell
-setx SAP_RPA_HOME "D:\sap_ai"
+```text
+D:\RPA\data\sap-rpa-config.db
+D:\RPA\logs\
+D:\RPA\outputs\
+D:\RPA\config.local.json
+%LOCALAPPDATA%\SapWebLauncher\config.json
 ```
 
-设置后重新打开终端或重新登录，确保执行器读取到新的环境变量。
+## 4. 拉取源码并发布
 
-### 2.1 Git 拉取和运行目录边界
-
-公司服务器上线时，源码和 VBS 可以直接从 GitHub 拉取当前 V2 分支：
+首次部署：
 
 ```powershell
-git clone https://github.com/ckstock/sap_rpa.git "D:\工作\sap_rpa"
-cd /d "D:\工作\sap_rpa"
+git clone https://github.com/ckstock/sap_rpa.git "D:\RPA\RpaProject"
+Set-Location "D:\RPA\RpaProject"
 git checkout codex/v2-local-api-sqlite
 git pull
 ```
 
-已有仓库时只需要：
+已有仓库时：
 
 ```powershell
-cd /d "D:\工作\sap_rpa"
+Set-Location "D:\RPA\RpaProject"
 git pull
 ```
 
-Git 只负责同步源码、页面、部署脚本和 VBS，例如：
-
-```text
-D:\工作\sap_rpa\index.html
-D:\工作\sap_rpa\assets\js\*.js
-D:\工作\sap_rpa\网页启动登录\SapWebLauncher\Program.cs
-D:\工作\sap_rpa\网页启动登录\transactions\ZFI072A.vbs
-```
-
-以下运行产物不要从 Git 复制，也不要提交到 Git：
-
-```text
-D:\sap_ai\data\sap-rpa-config.db
-D:\sap_ai\logs\
-D:\sap_ai\outputs\
-%LOCALAPPDATA%\SapWebLauncher\config.json
-```
-
-SQLite 的表结构和迁移逻辑在 `SapWebLauncher` 代码中，第一次执行 `--init-db` 或 `--serve` 时自动创建/升级。`sap-rpa-config.db` 只保存目标服务器本机配置、运行历史和运行日志，迁移到公司服务器时应在服务器上重新初始化，然后通过基础配置页面维护业务数据。
-
-SAP 登录配置必须在目标服务器固定 Windows 执行账号下重新生成，不能从开发电脑复制。密码由 DPAPI 绑定当前 Windows 用户保护。
-
-### 2.2 从 Git 更新到运行目录
-
-每次从 Git 拉取新版本后，按以下顺序同步到运行目录：
+发布后端：
 
 ```powershell
-cd /d "D:\工作\sap_rpa"
-git pull
-
-dotnet build "D:\工作\sap_rpa\网页启动登录\SapWebLauncher\SapWebLauncher.csproj"
-
-Copy-Item "D:\工作\sap_rpa\index.html" "D:\sap_ai\index.html" -Force
-Copy-Item "D:\工作\sap_rpa\assets" "D:\sap_ai\assets" -Recurse -Force
-Copy-Item "D:\工作\sap_rpa\网页启动登录\SapWebLauncher\bin\Debug\net8.0-windows\*" "D:\sap_ai\bin" -Recurse -Force
-Copy-Item "D:\工作\sap_rpa\网页启动登录\transactions\*.vbs" "D:\sap_ai\transactions\" -Force
+dotnet publish "D:\RPA\RpaProject\网页启动登录\SapWebLauncher\SapWebLauncher.csproj" -c Release -o "D:\RPA\RpaProject\publish\SapWebLauncher"
 ```
 
-前端已经拆成 `index.html + assets/js/*.js`。如果只复制 `index.html` 而漏掉 `assets/js`，页面可能白屏或按钮无响应。如果只改了 VBS，也仍建议从 Git 拉取后复制 `transactions\*.vbs` 到 `D:\sap_ai\transactions\`，确保运行脚本和源码一致。
-
-前端模块化回退方式：
+同步到运行目录：
 
 ```powershell
-cd /d "D:\工作\sap_rpa"
-git revert 41befc0
-git push origin codex/v2-local-api-sqlite
+New-Item -ItemType Directory -Force -Path "D:\RPA\bin","D:\RPA\data","D:\RPA\transactions","D:\RPA\logs","D:\RPA\outputs" | Out-Null
+
+Copy-Item "D:\RPA\RpaProject\publish\SapWebLauncher\*" "D:\RPA\bin" -Recurse -Force
+Copy-Item "D:\RPA\RpaProject\index.html" "D:\RPA\index.html" -Force
+Copy-Item "D:\RPA\RpaProject\assets" "D:\RPA\assets" -Recurse -Force
+Copy-Item "D:\RPA\RpaProject\网页启动登录\transactions\*.vbs" "D:\RPA\transactions\" -Force
+Copy-Item "D:\RPA\RpaProject\网页启动登录\transactions\transaction-config.json" "D:\RPA\transactions\" -Force
+Copy-Item "D:\RPA\RpaProject\上线安装包\config.local.example.json" "D:\RPA\config.local.example.json" -Force
 ```
 
-回退后必须重新同步运行目录的 `index.html` 和 `assets`。不要让旧 `index.html` 与新 `assets/js` 混用，也不要让新 `index.html` 缺少 `assets/js`。
+关键边界：
 
-同步后重启本地 API：
+1. 只 `git pull` 不会让线上生效。
+2. 后端改动必须 `dotnet publish` 并复制到 `D:\RPA\bin`。
+3. 前端改动必须复制 `index.html` 和整个 `assets`。
+4. VBS 改动必须复制到 `D:\RPA\transactions`。
+5. 运行中的服务读取 `D:\RPA`，不是源码目录。
 
-```powershell
-Get-Process SapWebLauncher -ErrorAction SilentlyContinue | Stop-Process -Force
-Start-Process -FilePath "D:\sap_ai\bin\SapWebLauncher.exe" -ArgumentList "--serve" -WorkingDirectory "D:\sap_ai\bin"
-```
+## 5. 配置 SAP 登录
 
-## 3. 生成上线包
-
-在开发/打包机执行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File "D:\工作\sap_rpa\上线安装包\scripts\make_package.ps1"
-```
-
-或双击：
+在目标服务器固定 Windows 执行账号下运行：
 
 ```text
-D:\工作\sap_rpa\上线安装包\00_生成上线安装包.cmd
+D:\RPA\RpaProject\上线安装包\04_配置SAP登录信息.bat
 ```
 
-默认输出：
-
-```text
-D:\工作\SapRpa上线安装包
-```
-
-生成后把整个 `SapRpa上线安装包` 文件夹复制到目标服务器。
-
-## 4. 安装执行器和协议
-
-在目标服务器上，用固定 Windows 执行账号登录后执行：
-
-```text
-01_安装到本机.bat
-```
-
-安装后执行器位于：
-
-```text
-%LOCALAPPDATA%\SapRpaLauncher
-```
-
-协议注册位于：
-
-```text
-HKEY_CURRENT_USER\Software\Classes\sap-rpa
-```
-
-该注册使用 HKCU，不需要管理员权限。
-
-## 5. 配置 SAP 登录信息
-
-在目标服务器同一个 Windows 执行账号下执行：
-
-```text
-04_配置SAP登录信息.bat
-```
-
-按提示输入 SAP system、client、user、password、language、sysnr。
-
-生成文件：
+按提示输入 `system/client/user/password/language/sysnr`。生成文件：
 
 ```text
 %LOCALAPPDATA%\SapWebLauncher\config.json
 ```
 
-密码字段使用 `passwordProtected`，由 Windows DPAPI 按当前 Windows 用户加密。不要把这个文件复制到其他 Windows 用户或其他电脑；迁移服务器时必须重新运行配置脚本。
+密码由当前 Windows 用户 DPAPI 加密。不要把这个文件复制到其他用户或其他电脑。
 
-## 6. 初始化 V2 运行目录和 SQLite
-
-确认运行目录存在：
+如果手工登录 SAP 正常，但程序仍检测不到已登录 GUI、反复打开登录窗口，用管理员 PowerShell 注册组件：
 
 ```powershell
-New-Item -ItemType Directory -Force -Path "D:\sap_ai\data","D:\sap_ai\transactions","D:\sap_ai\outputs","D:\sap_ai\logs"
+Set-Location "C:\Program Files (x86)\SAP\FrontEnd\SAPgui"
+C:\Windows\SysWOW64\regsvr32.exe saprotwr.dll
+C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 ```
 
-复制页面和 VBS：
+## 6. 配置钉钉 OpenAPI
+
+从模板复制真实配置：
 
 ```powershell
-Copy-Item "D:\工作\sap_rpa\index.html" "D:\sap_ai\index.html" -Force
-Copy-Item "D:\工作\sap_rpa\assets" "D:\sap_ai\assets" -Recurse -Force
-Copy-Item "D:\工作\sap_rpa\网页启动登录\transactions\*.vbs" "D:\sap_ai\transactions\" -Force
-Copy-Item "D:\工作\sap_rpa\网页启动登录\transactions\transaction-config.json" "D:\sap_ai\transactions\" -Force
+Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 ```
 
-初始化数据库：
+填写：
+
+```json
+{
+  "dingTalkOpenApi": {
+    "baseUrl": "https://你的钉钉OpenAPI网关根地址/",
+    "appKey": "你的真实AppKey",
+    "appSecret": "你的真实AppSecret",
+    "agentId": "你的真实AgentId"
+  }
+}
+```
+
+`baseUrl` 只填接口根地址。程序会自动访问：
+
+```text
+{baseUrl}/token
+{baseUrl}/dingtalk-oa/topapi/message/corpconversation/asyncsend_v2?token=...
+```
+
+只有 `config.local.example.json` 或只勾选固定通知人都不会推送钉钉。缺配置时日志应出现：
+
+```text
+sap dingtalk openapi skipped: missing baseUrl/appKey/appSecret/agentId config
+```
+
+发送成功时日志应出现：
+
+```text
+sap dingtalk openapi sent: userid=...
+```
+
+## 7. 初始化数据库
+
+首次部署或需要确认迁移时执行：
 
 ```powershell
-& "%LOCALAPPDATA%\SapRpaLauncher\SapWebLauncher.exe" --init-db
+& "D:\RPA\bin\SapWebLauncher.exe" --init-db
 ```
 
 预期数据库：
 
 ```text
-D:\sap_ai\data\sap-rpa-config.db
+D:\RPA\data\sap-rpa-config.db
 ```
 
-## 7. 启动本地 API
+升级时不要删除数据库，除非已经备份并明确接受会丢失配置、运行历史和日志。
 
-在目标服务器交互式桌面会话中启动：
+## 8. 启动或重启本项目后端
+
+只停止当前项目的 `SapWebLauncher.exe --serve`：
 
 ```powershell
-& "%LOCALAPPDATA%\SapRpaLauncher\SapWebLauncher.exe" --serve
+Get-CimInstance Win32_Process |
+  Where-Object { $_.Name -eq "SapWebLauncher.exe" -and $_.CommandLine -like "*D:\RPA\bin\SapWebLauncher.exe*--serve*" } |
+  ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 ```
 
-如后续改为开机自动启动，建议使用“任务计划程序”，触发条件为固定 Windows 执行账号登录后启动。不要改成纯后台 Windows Service 直接跑 SAP GUI 自动化。
-
-## 8. 验证命令
-
-执行器自测：
+启动：
 
 ```powershell
-& "%LOCALAPPDATA%\SapRpaLauncher\SapWebLauncher.exe" test
+Start-Process -FilePath "D:\RPA\bin\SapWebLauncher.exe" -ArgumentList "--serve" -WorkingDirectory "D:\RPA"
 ```
 
-环境检测：
+不要停止其他项目的 `node.exe`，不要改别人的 80、6173 等端口。
 
-```text
-02_检测环境.bat
-```
+## 9. 验收
 
-API 检查：
+基础检查：
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8080/api/health
-Invoke-RestMethod http://127.0.0.1:8080/api/config
-Invoke-RestMethod http://127.0.0.1:8080/api/schema
+& "D:\RPA\bin\SapWebLauncher.exe" test
+Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 ```
 
-浏览器检查：
+必须继续做真实业务验收：
+
+1. 打开 `http://10.0.41.158:6174/rpa/`。
+2. 提交一次受控事务码任务。
+3. 确认 `runs` 有记录，`run_logs` 或 `run_result_logs` 有日志。
+4. 确认 VBS 从 `D:\RPA\transactions` 执行，并写回标准结果。
+5. 已登录 SAP GUI 时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
+6. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
+7. 页面/API 不返回 SAP 密码、钉钉 `appSecret`、token。
+
+## 10. 常见漏项
+
+1. 只复制 `index.html`，漏复制 `assets\js`。
+2. 只改源码 VBS，漏复制到运行目录 `transactions`。
+3. 只 `git pull`，没有 publish 到 `D:\RPA\bin`。
+4. 后端仍运行旧 exe，或协议入口指向旧的 `%LOCALAPPDATA%\SapRpaLauncher`。
+5. 只有 `config.local.example.json`，没有真实 `config.local.json`。
+6. `baseUrl` 填成 `/token` 或完整发送接口。
+7. 手工 SAP GUI 正常，但脚本组件未注册，程序检测不到 ready session。
+8. 健康检查通过，但真实任务没有写数据库、没有跑 VBS 或没有发钉钉。
+
+## 11. 生成上线包
+
+在开发/打包机执行。不要直接用 `powershell -File` 运行这个中文路径脚本，Windows PowerShell 5.1 可能按旧编码解析中文路径；使用下面的 UTF-8 ScriptBlock 方式，或直接双击 `.cmd`：
+
+```powershell
+$script = Get-Content -LiteralPath "D:\RPA\RpaProject\上线安装包\scripts\make_package.ps1" -Raw -Encoding UTF8
+& ([ScriptBlock]::Create($script)) -PackageSource "D:\RPA\RpaProject\上线安装包"
+```
+
+或双击：
 
 ```text
-D:\sap_ai\index.html
-D:\sap_ai\assets\js\portal-state.js
-D:\sap_ai\assets\js\portal-utils.js
-D:\sap_ai\assets\js\portal-api.js
-D:\sap_ai\assets\js\portal-render.js
-D:\sap_ai\assets\js\portal-actions.js
-D:\sap_ai\assets\js\main.js
+D:\RPA\RpaProject\上线安装包\00_生成上线安装包.cmd
 ```
 
-页面应能显示工作台、执行任务、定时任务、基础配置，并从 API 读取配置。基础配置页面不应显示 SAP 密码、通知机器人 webhook 原文或 secret 原文。浏览器加载时必须能找到 `assets/js/*.js`，否则说明运行目录同步不完整。
-
-## 9. ZFI072A 验收
-
-ZFI072A 的 plants 必须来自页面/API/执行器传入参数，VBS 不再硬编码固定工厂。
-
-验收点：
-
-1. 页面选择或 API 传入 plants。
-2. 创建运行记录后，run 参数中包含 `plants`。
-3. 执行器替换 VBS 中 `{PLANTS}`。
-4. VBS 执行后输出标准 key：
-
-```text
-STATUS_TYPE=
-STATUS_TEXT=
-OUTPUT_FILE=
-ERROR=
-```
-
-如果未传 plants，脚本应失败并输出 `ERROR=`，不能自行使用默认固定工厂。
-
-## 10. 上线前人工确认
-
-1. SAP GUI Scripting 已在客户端和服务器策略中启用。
-2. 固定 Windows 执行账号可登录服务器桌面。
-3. SAP 技术账号权限覆盖目标事务码。
-4. SAP 密码只通过 `04_配置SAP登录信息.bat` 在服务器本机生成。
-5. SQLite、日志、输出目录不提交到 Git。
-6. 通知机器人 webhook/secret 不明文返回前端。
-7. 如 API 要给局域网访问，需要 IT 确认端口、防火墙、认证和反向代理策略。
-
-## 11. 钉钉通知和 SAP 现成推送程序
-
-执行成功、失败或开始执行后的通知由本地 API 负责，不由 VBS 负责。VBS 只执行 SAP GUI 自动化并返回标准结果：
-
-```text
-STATUS_TYPE=
-STATUS_TEXT=
-OUTPUT_FILE=
-ERROR=
-```
-
-推荐通知链路：
-
-1. 页面提交任务时带上操作人信息和钉钉用户标识，例如 `operatorId`、`operatorName`、`operatorDept`、`dingTalkUserId`。
-2. API 创建 `runs` 记录并进入串行队列。
-3. 队列开始执行时写入 `run_logs`，可推送“任务开始执行”。
-4. `ZFI072A.vbs` 执行结束后，API 更新 `runs.status`、`sap_status_type`、`sap_status_text`、`message`。
-5. API 根据运行结果调用通知适配器。
-6. API 根据服务器本地配置调用 DingTalk OpenAPI，不再通过 SAP Gateway OData 或 SAP 事务码做通知推送。
-
-不建议用 VBS 再打开一个 SAP 事务码去做通知推送。原因是 SAP GUI 桌面是串行资源，通知如果也占用 SAP GUI，会拖慢后续任务，并且高并发时更容易产生多登录窗口。
-
-当前推荐后端直连 DingTalk OpenAPI：
-
-```text
-POST <DINGTALK_OPENAPI_BASE>/token
-POST <DINGTALK_OPENAPI_BASE>/dingtalk-oa/topapi/message/corpconversation/asyncsend_v2?token=<token>
-```
-
-API 侧配置建议：
-
-```text
-SAP_RPA_DINGTALK_PROVIDER=openapi
-SAP_RPA_DINGTALK_OPENAPI_BASE_URL=<接口根地址，末尾可带 /，不提交 Git>
-SAP_RPA_DINGTALK_OPENAPI_APP_KEY=<from environment or server-local config>
-SAP_RPA_DINGTALK_OPENAPI_APP_SECRET=<from environment or server-local secret config>
-SAP_RPA_DINGTALK_OPENAPI_AGENT_ID=<from environment or server-local config>
-```
-
-也可以在服务器运行目录放置不提交 Git 的 `D:\sap_ai\config.local.json`：
-
-```json
-{
-  "dingTalkOpenApi": {
-    "baseUrl": "<接口根地址>",
-    "appKey": "<appKey>",
-    "appSecret": "<appSecret>",
-    "agentId": "<agentId>"
-  }
-}
-```
-
-注意：接口根地址是服务器本地配置项，不能在代码或前端里硬编码；`appKey`、`appSecret`、`agentId` 必须使用环境变量或服务器本地 config，`appSecret` 不得明文返回前端、不得提交 Git。当前临时阶段 `Ddid=11464769` 只作为联调写死值；上线扫码登录后应由登录态写入真实钉钉用户 ID，或由服务器本地配置映射得到。通知时 API 从数据库 run 记录或登录态取接收人钉钉 ID，并把事务码、工厂、运行状态、SAP 返回消息、runId、耗时等信息拼入 DingTalk OpenAPI 消息体。若临时联调方案和上线方案不一致，必须先向用户说明差异和风险，得到确认后再调整部署或代码。
-
-建议后续新增 `notification_outbox` 表，执行任务完成后先把通知写入 outbox，再由后台异步发送和重试。这样即使 DingTalk OpenAPI 临时失败，也不会阻塞 SAP GUI 串行队列。
-
-## 12. 当前仍需保留的安装文件
-
-本目录现有安装文件仍然需要保留。它们负责“生成发布包、安装执行器、注册协议、配置 SAP 登录、检测环境”。V2 新增的是服务器运行目录、SQLite/API 启动和上线验收步骤，不替代这些脚本。
-
-后续目录重构时，可再把 `SapWebLauncher`、前端、VBS、部署脚本拆成更清晰的 `backend/`、`frontend/`、`sap/`、`deploy/` 结构。
+生成包只包含手工安装文档、必要脚本、发布后的 `SapWebLauncher`、前端资源、VBS 和配置模板；不包含真实 `config.local.json`、SQLite、日志、输出文件或 SAP 登录配置。

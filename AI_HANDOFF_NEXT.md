@@ -1,6 +1,6 @@
 # SAP RPA V2 下一任 AI 交接文档
 
-更新时间：2026-06-26
+更新时间：2026-07-08
 
 ## 当前项目定位
 
@@ -16,65 +16,52 @@
 
 ## 关键路径
 
-- 源码仓库：`D:\工作\sap_rpa`
-- 运行/预览/交接目录：`D:\sap_ai`
-- 前端入口：`D:\sap_ai\index.html` + `D:\sap_ai\assets\js\*.js`
-- 后端入口：`D:\工作\sap_rpa\网页启动登录\SapWebLauncher\Program.cs`
-- VBS 运行脚本：`D:\sap_ai\transactions`
-- SQLite 运行库：`D:\sap_ai\data\sap-rpa-config.db`
-- 项目规则：`D:\sap_ai\agent.md` 和 `D:\工作\sap_rpa\agent.md`
-- 功能说明书：`D:\sap_ai\SapRpa_V2_功能说明书.html`
-- 技术设计说明：`D:\sap_ai\SapRpa_V2_技术设计说明.html`
-- 数据库字段设计：`D:\sap_ai\DATABASE_FIELD_DESIGN.md`
-- 服务器一键安装包：`D:\sap_ai\上线安装包\服务器一键安装包`
-- 源码仓库一键安装包副本：`D:\工作\sap_rpa\上线安装包\服务器一键安装包`
+- 当前服务器源码仓库：`D:\RPA\RpaProject`
+- 当前服务器运行根目录：`D:\RPA`
+- 前端入口：`D:\RPA\index.html` + `D:\RPA\assets\js\*.js`
+- 后端源码入口：`D:\RPA\RpaProject\网页启动登录\SapWebLauncher\Program.cs`
+- 后端运行入口：`D:\RPA\bin\SapWebLauncher.exe --serve`
+- VBS 运行脚本：`D:\RPA\transactions`
+- SQLite 运行库：`D:\RPA\data\sap-rpa-config.db`
+- 功能说明书：`D:\RPA\RpaProject\SapRpa_V2_功能说明书.html`
+- 安装包权威清单：`D:\RPA\RpaProject\上线安装包\上线安装文档清单.md`
+- Windows Server 手工部署 runbook：`D:\RPA\RpaProject\上线安装包\最终上线部署步骤\README_V2_Windows_Server_上线部署.md`
 
 ## Git 状态
 
 - GitHub 仓库：`https://github.com/ckstock/sap_rpa`
 - 当前分支：`codex/v2-local-api-sqlite`
-- 注意：`D:\sap_ai` 是运行/预览目录，不是主要 GitHub 源码仓库；正式提交优先在 `D:\工作\sap_rpa`。
+- 注意：`D:\RPA` 是当前运行根目录，`D:\RPA\RpaProject` 是 GitHub 源码仓库。`git pull` 后必须 publish/copy 到运行目录才会线上生效。
 - 最近提交点：
   - `1a4728e fix: enforce token notify account mode`：当前 GitHub 远端 `origin/codex/v2-local-api-sqlite` 已到此提交，包含 `AI_HANDOFF_NEXT.md`、token 通知模式和前端身份入口调整。
   - `3bead51 fix: auto-login external token jumps`：外部门户 token 直跳后自动进入执行页。
-  - `cc437a2 feat: prepare server installer for port 8080`：服务器一键安装包和 `SapWebLauncher` 本地 API/SQLite/部署脚本更新。
+  - `cc437a2 feat: prepare server installer for port 8080`：历史提交，曾加入服务器一键安装包和 `SapWebLauncher` 本地 API/SQLite/部署脚本；当前安装包方向已改为手工清单。
   - `acfa314 chore: checkpoint v2 before frontend modularization`：前端模块化前回退点。
   - `41befc0 refactor: split portal javascript modules`：把 `index.html` 内联 JS 拆成 `assets/js/*.js`。
 - 当前工作前必须检查 `git status` 和 diff，确认没有数据库、日志、真实 `config.local.json`、钉钉密钥或 SAP 密码。
 
 ### 2026-07-08 运行副本漂移排查结论
 
-- 已确认 `D:\工作\sap_rpa` 本地 `HEAD`、`origin/codex/v2-local-api-sqlite` 和 GitHub 远端同名分支一致：`1a4728edd925d9a984f9d245739d7f7ada84cf59`。
+- 历史排查时曾确认旧目录 `D:\工作\sap_rpa` 的 `HEAD`、`origin/codex/v2-local-api-sqlite` 和 GitHub 远端同名分支一致：`1a4728edd925d9a984f9d245739d7f7ada84cf59`。
 - 已确认最新提交 `1a4728e` 包含本交接文档 `AI_HANDOFF_NEXT.md`。
-- 但本机运行副本没有同步到最新源码：`D:\sap_ai\bin\SapWebLauncher.exe`、`C:\Users\chen.kai6\AppData\Local\SapRpaLauncher\SapWebLauncher.exe`、`D:\工作\sap_rpa\dist\SapRpaV2_WindowsServer_8080\bin\SapWebLauncher.exe` 的 `ProductVersion` 仍是 `1.0.0+8d0a6bd5bdcbbc6b2ccb089bbb71a01ac3a36b5e`。
-- 当前 `sap-rpa://` 协议注册表入口指向 `C:\Users\chen.kai6\AppData\Local\SapRpaLauncher\SapWebLauncher.exe`，不是 `D:\sap_ai\bin\SapWebLauncher.exe`。网页/协议唤醒时优先检查这个目录的 exe 是否已重建。
+- 之前的问题根因是本机运行副本没有同步到最新源码；当前服务器应优先检查 `D:\RPA\bin\SapWebLauncher.exe` 是否来自最新 publish，以及是否已重启。
+- 如果还保留 `sap-rpa://` 协议注册表入口，需确认它没有指向旧的 `%LOCALAPPDATA%\SapRpaLauncher\SapWebLauncher.exe`。
 - 如果用户反馈“GitHub 里修过的 SAP 已登录复用/避免重复登录问题又出现”，不要先判断为代码未提交；优先检查实际运行的 `SapWebLauncher.exe` 版本、路径、协议注册入口和是否仍是旧构建。
 - 现有源码在 `Program.cs` 中会先执行 `ProbeSapSession`；探测到 ready SAP GUI session 时日志应出现 `Detected ready SAP GUI session; skip sapshcut login`。如果实际日志没有这句，重点排查运行的是不是旧 exe、服务是否未重启、`sap-rpa://` 是否指向 `%LOCALAPPDATA%\SapRpaLauncher` 旧副本。
 
 ## 最近完成的文档与安装包更新
 
-1. 已补充功能说明书：
-   - 服务器一键安装器作为正式入口。
-   - `SAP_RPA_HOME`、路径选择、`.bat` 入口、CLI、`ForceResetDb`、日志复制/保存、诊断日志规则。
-   - 可编排 SAP 报表链路：A/B 报表取数、result 结构化保存、C 入参、父子 run/chainRun、失败中断和重跑追溯。
-2. 已新增服务器一键安装包：
-   - `启动一键安装器.bat`
-   - `SapRpaServerSetup.ps1`
+1. 已按用户要求删除一键安装器方向，安装包改为“手工安装指南 + 必要脚本”。
+2. 当前保留的安装包入口：
+   - `上线安装文档清单.md`
+   - `最终上线部署步骤\README_V2_Windows_Server_上线部署.md`
    - `config.local.example.json`
-   - `README_服务器一键安装说明.md`
-   - `关键功能说明.md`
-3. 一键安装器已支持：
-   - 运行根目录和源码/发布包根目录由用户填写。
-   - 一键部署/升级。
-   - 配置 SAP 登录，密码走当前 Windows 用户 DPAPI。
-   - 初始化/迁移 SQLite。
-   - 启动/停止本地 API。
-   - 检测上线状态。
-   - 打开运行页面。
-   - 备份当前运行目录。
-   - 备份并重建 SQLite，GUI 二次确认，CLI 要 `-ForceResetDb`。
-   - 一键复制日志、保存诊断日志。
-4. 已修复安装器读取 `SapWebLauncher.exe test` 输出乱码问题：PowerShell 端按系统默认编码读回 stdout/stderr。
+   - `00_生成上线安装包.cmd`
+   - `scripts\make_package.ps1`
+   - `04_配置SAP登录信息.bat`
+   - `scripts\configure_sap_login.ps1`
+3. 已删除旧的一键安装、检测、卸载、服务器一键安装包，以及最终上线部署步骤中的自动准备/安装/初始化/启动/检测/打开页面脚本。
+4. 安装指南已补充路径清单、真实 `config.local.json`、SAP GUI 脚本组件注册、Git 更新后必须 publish/copy 到 `D:\RPA\bin/assets/transactions`、只重启本项目 `SapWebLauncher.exe --serve` 的要求。
 5. 已完成前端 JS 第一阶段模块化：
    - `index.html` 只保留页面结构、样式和脚本引用。
    - `assets/js/portal-state.js`：默认状态、fallback 配置和共享状态。
@@ -95,7 +82,7 @@
 - 多工厂执行应记录父 run 和每个工厂子 run；开始通知一次，结束汇总通知一次，失败工厂支持重跑。
 - ZFIR034 已接入为日期范围事务：页面/API/协议入口/定时触发器都不传 `plants` 或 `businessAreas`，默认按运行时系统日期取上一完整自然周并写入 `period/weekEnd`；VBS 写 `S_BUDAT-LOW/HIGH`，并按最终开始日期推导周次后写入 `P_WEEK`（优先 `wnd[0]/usr/txtP_WEEK`，兜底 `wnd[0]/usr/ctxtP_WEEK`）。系统日期 `2026-07-02` 时应得到 `2026.06.22` 到 `2026.06.28`，`P_WEEK=26`。钉钉通知只显示日期范围，不显示工厂或业务范围。
 - 钉钉通知由后端发送，不由 VBS 进入 SAP 再调用函数。
-- 外部门户可通过页面 URL 传入 `?token=<jwt>`、`?authorization=Bearer ...` 或 `?access_token=<jwt>`；前端只解析 JWT payload 的 `Account` 作为联调通知员工号，不验签、不保存 token 原文，并在加载后清理 URL。页面不再显示账号/密码或“钉钉扫码登录”界面，对方平台按 URL token 直跳；执行页保留“勾选固定通知 11464769”复选框，勾选时提交 `11464769`，不勾选时必须使用本次 URL token Account。识别到合法 URL token Account 后页面进入执行页、顶部身份位置显示该员工号并自动取消固定通知勾选，提交 `/api/runs` 时把解析出的 `Account` 写入 `operator.dingTalkUserId` 和 `operator.ddid`；不勾选且未解析到 Account 时禁止触发执行。生产可信身份仍必须由后端/SSO 验签确认。
+- 外部门户 `https://lydctest.lstech.com/dataAnalysis.financial.sapschedule` 会调用本页面，可通过页面 URL 传入 `?token=<jwt>`、`?authorization=Bearer ...` 或 `?access_token=<jwt>`；前端兼容解析 JWT payload 的 `Account/Ddid/ddid/DingTalkUserId/UserId` 作为钉钉 ID，兼容解析 `UserName/Name/RealName/DisplayName` 作为姓名，不验签、不保存 token 原文，并在加载后清理 URL。页面不再显示账号/密码、“钉钉扫码登录”界面或“清除身份”按钮；执行页保留“勾选固定通知 11464769”复选框，勾选时提交 `11464769`，不勾选时必须使用本次 URL token 解析出的钉钉 ID。识别到合法钉钉 ID 后页面进入执行页、顶部身份位置同时显示姓名和钉钉 ID 并自动取消固定通知勾选，提交 `/api/runs` 时把钉钉 ID 写入 `operator.dingTalkUserId` 和 `operator.ddid`；不勾选且未解析到钉钉 ID 时禁止触发执行。生产可信身份仍必须由后端/SSO 验签确认。
 - VBS 保持 ASCII/WSH 安全格式；VBS 只接收执行器传入的最终参数。
 - 前端后续修改必须按 `assets/js` 模块定位：改 API 合约优先看 `portal-api.js`，改展示优先看 `portal-render.js`，改按钮/保存/执行优先看 `portal-actions.js`，改默认数据优先看 `portal-state.js`。
 - `portal-render.js` 仍然偏大。下一任 AI 如果继续做页面维护，建议先把它按页面拆成 `render-workbench.js`、`render-execute.js`、`render-config.js`、`render-reports.js`、`render-schedule.js` 或等价模块，再做较大 UI 改造。
@@ -127,13 +114,13 @@
 
 ```text
 请继续 SAP RPA V2。先读：
-D:\sap_ai\agent.md
-D:\sap_ai\SapRpa_V2_功能说明书.html
-D:\sap_ai\SapRpa_V2_技术设计说明.html
-D:\sap_ai\DATABASE_FIELD_DESIGN.md
-D:\sap_ai\AI_HANDOFF_NEXT.md
+D:\RPA\RpaProject\agent.md
+D:\RPA\RpaProject\SapRpa_V2_功能说明书.html
+D:\RPA\RpaProject\上线安装包\最终上线部署步骤\SapRpa_V2_技术设计说明.html
+D:\RPA\RpaProject\DATABASE_FIELD_DESIGN.md
+D:\RPA\RpaProject\AI_HANDOFF_NEXT.md
 
-当前前端已经完成第一阶段模块化：入口是 D:\sap_ai\index.html，脚本在 D:\sap_ai\assets\js\*.js。
+当前前端已经完成第一阶段模块化：源码入口是 D:\RPA\RpaProject\index.html，脚本在 D:\RPA\RpaProject\assets\js\*.js；线上运行入口是 D:\RPA\index.html + D:\RPA\assets\js\*.js。
 后续改页面时不要重新写回大段内联 JS；先按模块定位：
 - API/归一化：portal-api.js
 - 渲染：portal-render.js
@@ -198,16 +185,16 @@ portal-render.js 仍然偏大，下一步建议继续按页面拆细，降低后
 ## 常用验证命令
 
 ```powershell
-git -C "D:\工作\sap_rpa" status --short --branch
+git -C "D:\RPA\RpaProject" status --short --branch
 
 $node='C:\Users\chen.kai6\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe'
-Get-ChildItem 'D:\sap_ai\assets\js\*.js' | ForEach-Object { & $node --check $_.FullName }
-Select-String -Path 'D:\sap_ai\index.html' -Pattern 'assets/js/portal-state.js','assets/js/portal-utils.js','assets/js/portal-api.js','assets/js/portal-render.js','assets/js/portal-actions.js','assets/js/main.js'
+Get-ChildItem 'D:\RPA\RpaProject\assets\js\*.js' | ForEach-Object { & $node --check $_.FullName }
+Select-String -Path 'D:\RPA\RpaProject\index.html' -Pattern 'assets/js/portal-state.js','assets/js/portal-utils.js','assets/js/portal-api.js','assets/js/portal-render.js','assets/js/portal-actions.js','assets/js/main.js'
 
-D:\sap_ai\bin\SapWebLauncher.exe test
+D:\RPA\bin\SapWebLauncher.exe test
 
-$setup='D:\sap_ai\上线安装包\服务器一键安装包\SapRpaServerSetup.ps1'
-$text=Get-Content -LiteralPath $setup -Raw -Encoding UTF8
+$packageScript='D:\RPA\RpaProject\上线安装包\scripts\make_package.ps1'
+$text=Get-Content -LiteralPath $packageScript -Raw -Encoding UTF8
 [ScriptBlock]::Create($text) | Out-Null
 ```
 

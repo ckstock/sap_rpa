@@ -64,7 +64,7 @@ Sub ResolveDates()
    parsedEnd = ParseDateOrEmpty(weekEndValue)
    If IsEmpty(parsedStart) Then parsedStart = defaultStart
    If IsEmpty(parsedEnd) Then parsedEnd = defaultEnd
-   If Trim(CStr(yearValue)) = "" Then yearValue = Year(parsedStart)
+   yearValue = Year(parsedStart)
    If Trim(CStr(weekValue)) = "" Then weekValue = DatePart("ww", parsedStart, vbMonday, vbFirstFourDays)
    dateLowValue = FormatSapDate(parsedStart)
    dateHighValue = FormatSapDate(parsedEnd)
