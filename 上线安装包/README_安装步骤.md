@@ -79,12 +79,14 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 | --- | --- |
 | 前端 | `index.html`、`assets\js\*.js` |
 | 网关 | `gateway\rpa-gateway.js`、`gateway\start-rpa-gateway.ps1` |
-| 启动脚本 | `启动脚本\start_sap_rpa_services.cmd`、`check_sap_rpa_services.cmd`、`01_start_sap_rpa_services.ps1`、`02_check_sap_rpa_services.ps1`、`gitnexus.cmd`、`gitnexus.ps1` |
+| 启动脚本 | `启动脚本\00_register_sap_gui_components.cmd`、`00_register_sap_gui_components.ps1`、`start_sap_rpa_services.cmd`、`check_sap_rpa_services.cmd`、`01_start_sap_rpa_services.ps1`、`02_check_sap_rpa_services.ps1`、`gitnexus.cmd`、`gitnexus.ps1` |
 | 后端 | `dotnet publish` 后的全部输出复制到 `D:\RPA\bin\` |
 | 事务脚本 | `网页启动登录\transactions\*.vbs` 和 `transaction-config.json` 复制到 `D:\RPA\transactions\` |
 | 配置模板 | `上线安装包\config.local.example.json` 复制到 `D:\RPA\config.local.example.json` |
 
 生产机本地生成或保留的内容不要从开发机覆盖：`D:\RPA\config.local.json`、`D:\RPA\data\sap-rpa-config.db`、`D:\RPA\logs\`、`D:\RPA\outputs\`、`D:\RPA\certs\lstech.com\`、`%LOCALAPPDATA%\SapWebLauncher\config.json`。
+
+可以把当前 `D:\RPA` 整包拷贝到生产机，但只把它当作程序包。全新生产机拷贝后必须重新填写真实 `config.local.json`、重新生成 SAP 登录配置、重新放置生产证书；升级已有生产机时必须先备份并保留生产机自己的 `config.local.json`、SQLite 数据库和证书目录，不要被测试机文件覆盖。
 
 ```powershell
 Set-Location "D:\RPA\RpaProject"
@@ -163,6 +165,22 @@ D:\RPA\启动脚本\gitnexus.cmd detect-changes
 密码用当前 Windows 用户 DPAPI 加密。这个文件不能复制到其他 Windows 用户或其他电脑；换机器、换账号或重新部署时必须重新运行配置脚本。
 
 如果手工 SAP GUI 登录正常，但网页执行仍反复登录、没有复用已登录会话，管理员 PowerShell 里注册 SAP GUI 脚本组件：
+
+推荐直接运行：
+
+```text
+D:\RPA\启动脚本\00_register_sap_gui_components.cmd
+```
+
+只检查注册状态：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\RPA\启动脚本\00_register_sap_gui_components.ps1" -CheckOnly
+```
+
+预期看到 `SapROTWr.SapROTWrapper: True` 和 `Sapgui.ScriptingCtrl.1: True`。
+
+手工兜底命令：
 
 ```powershell
 Set-Location "C:\Program Files (x86)\SAP\FrontEnd\SAPgui"

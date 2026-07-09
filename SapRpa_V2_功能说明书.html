@@ -446,7 +446,9 @@
           <tbody>
             <tr><td><code>上线安装文档清单.md</code></td><td>上线前、上线中、上线后的人工核对清单。</td><td>必须先填清源码目录、运行目录、后端 exe、SAP 登录配置、钉钉真实配置和对外访问入口。</td></tr>
             <tr><td><code>04_配置SAP登录信息.bat</code></td><td>在目标 Windows 执行账号下生成 SAP 登录配置。</td><td>密码使用当前 Windows 用户 DPAPI 保护，生成的 <code>%LOCALAPPDATA%\SapWebLauncher\config.json</code> 不能复制到其他账号或机器。</td></tr>
+            <tr><td><code>启动脚本\00_register_sap_gui_components.cmd</code></td><td>生产机首次部署、SAP GUI 重装或程序反复登录时，管理员提权注册 SAP GUI 脚本组件。</td><td>脚本注册 <code>saprotwr.dll</code> 和 <code>sapfewse.ocx</code>，并可用 <code>00_register_sap_gui_components.ps1 -CheckOnly</code> 验证 <code>SapROTWr.SapROTWrapper</code> 与 <code>Sapgui.ScriptingCtrl.1</code> 均为 <code>True</code>。</td></tr>
             <tr><td>源码更新发布</td><td>从 <code>D:\RPA\RpaProject</code> 构建 publish，再复制到 <code>D:\RPA\bin</code>，并同步 <code>index.html</code>、<code>assets</code>、<code>gateway</code>、<code>transactions</code> 到 <code>D:\RPA</code>。</td><td>复制后只重启本项目的 <code>D:\RPA\bin\SapWebLauncher.exe --serve</code> 和 <code>D:\RPA\gateway\start-rpa-gateway.ps1</code>；不要动其他端口、其他 Node 服务或其他项目进程。</td></tr>
+            <tr><td>整包拷贝 <code>D:\RPA</code></td><td>可把当前运行目录作为程序包整体拷贝到生产机。</td><td>只能把它当作程序文件包；生产机必须重新填写真实 <code>config.local.json</code>、重新生成 SAP DPAPI 登录配置、重新放置生产证书。升级已有生产机时默认保留生产机自己的 SQLite、证书、日志、输出和真实配置。</td></tr>
             <tr><td><code>00_生成上线安装包.cmd</code></td><td>开发/打包机生成上线包。</td><td>生成包只包含文档、必要脚本、发布产物、前端资源、VBS 和配置模板，不包含真实 <code>config.local.json</code>、SQLite、日志或 SAP 登录配置。</td></tr>
           </tbody>
         </table>
@@ -627,16 +629,16 @@
           <tbody>
             <tr><td>运行根目录</td><td>管理员确认服务器运行目录；当前服务器为 <code>D:\RPA</code>。</td><td>目录下保存页面、执行器、VBS、SQLite、日志、输出和配置。运行目录是线上权威目录，不等同于 Git 源码目录。</td></tr>
             <tr><td>源码根目录</td><td>管理员确认 Git 拉取后的仓库根目录；当前服务器为 <code>D:\RPA\RpaProject</code>。</td><td>从这里构建 publish，并复制 <code>index.html</code>、<code>assets/js</code>、<code>transactions</code> 和后端发布产物到运行目录。</td></tr>
-            <tr><td>手工部署/升级</td><td>按 runbook 准备目录、复制页面、<code>assets/js</code>、VBS、执行器、配置模板、初始化 SQLite、启动 API 并做真实任务验收。</td><td>默认保留 SQLite、日志、输出、<code>config.local.json</code> 和 SAP DPAPI 登录配置；升级后必须验证实际进程来自 <code>D:\RPA\bin</code>。</td></tr>
+            <tr><td>手工部署/升级</td><td>按 runbook 准备目录，或把 <code>D:\RPA</code> 作为程序包整体拷贝，再复制页面、<code>assets/js</code>、VBS、执行器、配置模板、初始化 SQLite、启动 API 并做真实任务验收。</td><td>默认保留生产机 SQLite、日志、输出、<code>config.local.json</code>、证书和 SAP DPAPI 登录配置；整包拷贝时不要用测试机运行态文件覆盖生产机状态，升级后必须验证实际进程来自 <code>D:\RPA\bin</code>。</td></tr>
             <tr><td>手工源码发布</td><td>源码更新后必须先 publish <code>SapWebLauncher</code>，再复制 publish 输出到 <code>D:\RPA\bin</code>，并同步 <code>assets</code>、<code>gateway</code> 和 <code>transactions</code>。</td><td>完成复制后只重启 <code>D:\RPA\bin\SapWebLauncher.exe --serve</code> 和 <code>D:\RPA\gateway\start-rpa-gateway.ps1</code>。<code>git pull</code>、编译成功或文件已保存都不等于线上已生效。</td></tr>
             <tr><td>HTTPS 网关</td><td>正式用户入口为 <code>https://fi_automation.srv.lstech.com/rpa/</code>，兼容入口为 <code>http://10.0.41.158:6174/rpa/</code>。</td><td>443 负责 HTTPS，6174 保持 HTTP；不要使用 <code>https://域名:6174/rpa/</code>。证书目录 <code>D:\RPA\certs\lstech.com</code> 不提交 Git，权限限制为执行账号、Administrators 和 SYSTEM。</td></tr>
-            <tr><td>服务器重启后启动</td><td>运行 <code>D:\RPA\启动脚本\start_sap_rpa_services.cmd</code>，再运行 <code>D:\RPA\启动脚本\check_sap_rpa_services.cmd</code>。</td><td>必须启动三类本项目服务：<code>D:\RPA\bin\SapWebLauncher.exe --serve</code> 监听 <code>127.0.0.1:8080</code>，HTTP 网关监听 <code>0.0.0.0:6174</code>，HTTPS 网关监听 <code>0.0.0.0:443</code>。脚本只匹配本项目路径，不处理其他项目服务。</td></tr>
+            <tr><td>服务器重启后启动</td><td>运行 <code>D:\RPA\启动脚本\start_sap_rpa_services.cmd</code>，再运行 <code>D:\RPA\启动脚本\check_sap_rpa_services.cmd</code>。</td><td>必须启动三类本项目服务：<code>D:\RPA\bin\SapWebLauncher.exe --serve</code> 监听 <code>127.0.0.1:8080</code>，HTTP 网关监听 <code>0.0.0.0:6174</code>，HTTPS 网关监听 <code>0.0.0.0:443</code>；检查脚本同时输出 SAP GUI COM 注册状态。脚本只匹配本项目路径，不处理其他项目服务。</td></tr>
             <tr><td>启动脚本副本边界</td><td><code>D:\RPA\启动脚本</code> 是线上运行入口；<code>D:\RPA\RpaProject\启动脚本</code> 是 Git 源码副本。</td><td>两处脚本默认 <code>RuntimeRoot = D:\RPA</code>，即使从源码目录双击，也会操作线上运行目录的本项目 API 和网关；不要把源码副本当作独立测试环境。</td></tr>
             <tr><td>功能说明书同步（fs-skill）</td><td>跨前端、后端、VBS、数据库、网关、启动脚本、安装包、配置或部署规则的变更，必须同步本功能说明书和上线安装文档。</td><td>功能说明书是后续 agent 和人工运维的外置记忆。不能等上线出错后再补文档；新增坑点要同步到 <code>反思.md</code> 和安装清单。</td></tr>
             <tr><td>配置 SAP 登录</td><td>在当前 Windows 执行账号下录入 SAP 登录信息。</td><td>密码写入 DPAPI 保护的 <code>%LOCALAPPDATA%\SapWebLauncher\config.json</code>，不进入页面和 Git。</td></tr>
             <tr><td>初始化/迁移 SQLite</td><td>调用 <code>SapWebLauncher.exe --init-db</code>。</td><td>已有数据库先备份再迁移，不直接清空。</td></tr>
             <tr><td>钉钉真实配置</td><td>从 <code>config.local.example.json</code> 复制生成 <code>D:\RPA\config.local.json</code>，并填写真实 <code>baseUrl/appKey/appSecret/agentId</code>。</td><td>真实配置不提交 Git，不返回前端；只有模板或只有固定通知人不会发送钉钉。</td></tr>
-            <tr><td>SAP GUI 组件</td><td>手工 SAP 登录正常但程序仍反复登录时，注册 <code>saprotwr.dll</code> 和 <code>sapfewse.ocx</code>。</td><td>PowerShell 使用 <code>Set-Location</code> 进入 SAP GUI 目录，不使用 cmd 的 <code>cd /d</code> 语法。</td></tr>
+            <tr><td>SAP GUI 组件</td><td>手工 SAP 登录正常但程序仍反复登录时，运行 <code>D:\RPA\启动脚本\00_register_sap_gui_components.cmd</code> 注册 <code>saprotwr.dll</code> 和 <code>sapfewse.ocx</code>。</td><td>脚本会弹 UAC 让管理员确认；注册后 <code>00_register_sap_gui_components.ps1 -CheckOnly</code> 或 <code>check_sap_rpa_services.cmd</code> 必须显示 <code>SapROTWr.SapROTWrapper</code>、<code>Sapgui.ScriptingCtrl.1</code> 为 <code>True</code>。手工命令只作为排障兜底。</td></tr>
           </tbody>
         </table>
       </div>
@@ -651,6 +653,8 @@
             <tr><td>API base 缓存漂移</td><td>正式域名页面能打开，但配置、执行或历史接口请求仍打到旧 IP、旧端口、<code>127.0.0.1</code> 或旧 <code>/charge</code>。</td><td>网关必须注入 <code>window.SAP_RPA_API_BASE = window.location.origin + "/rpa"</code> 并覆盖 <code>localStorage.sapRpaApiBase</code>；前端优先使用网关注入值。验收时用浏览器开发者工具确认请求为 <code>https://fi_automation.srv.lstech.com/rpa/api/*</code>。</td></tr>
             <tr><td>证书异常</td><td>443 端口可连接，但浏览器出现证书不受信任、域名不匹配或过期告警。</td><td>检查证书 SAN 是否包含 <code>*.srv.lstech.com</code>，有效期是否覆盖当前日期，客户端是否信任内部 CA；确认 <code>D:\RPA\certs\lstech.com</code> 私钥、PFX 和 <code>passwd.txt</code> 仅执行账号、Administrators、SYSTEM 可读。</td></tr>
             <tr><td>SAP 登录失败</td><td>run 失败，日志出现登录或连接错误。</td><td>重新运行 SAP 登录配置步骤，在服务器执行账号下生成 DPAPI 配置。</td></tr>
+            <tr><td>SAP GUI 组件未注册</td><td>手工 SAP GUI 已登录，但网页提交后仍反复打开登录窗口，或日志没有出现 <code>Detected ready SAP GUI session; skip sapshcut login</code>。</td><td>先运行 <code>D:\RPA\启动脚本\00_register_sap_gui_components.cmd</code>；再运行 <code>D:\RPA\启动脚本\00_register_sap_gui_components.ps1 -CheckOnly</code> 或 <code>check_sap_rpa_services.cmd</code>，确认两个 COM ProgID 均为 <code>True</code>。</td></tr>
+            <tr><td>整包拷贝后状态错乱</td><td>生产机能打开页面，但钉钉不发、数据库记录不对、证书告警或 SAP 登录信息仍是测试机状态。</td><td>检查是否把测试机 <code>config.local.json</code>、<code>data\sap-rpa-config.db</code>、<code>certs</code> 或 SAP DPAPI 登录配置覆盖到了生产机。生产机真实配置、数据库、证书和 <code>%LOCALAPPDATA%\SapWebLauncher\config.json</code> 必须重新生成或从生产备份恢复。</td></tr>
             <tr><td>工厂数据量过大</td><td>单个工厂执行时间过长，可能超过默认超时。</td><td>提高事务码超时秒数，按工厂拆批执行，失败后只重跑失败工厂。</td></tr>
             <tr><td>VBS 未执行或脚本错误</td><td>run 无 SAP 步骤日志、退出码异常或标准输出为空。</td><td>检查脚本路径、VBS ASCII/WSH 格式、SAP GUI Scripting 权限和当前桌面会话。</td></tr>
             <tr><td>输出文件缺失</td><td>任务成功但 run_files 无记录。</td><td>检查 VBS 保存按钮、导出路径、文件权限和执行账号目录。</td></tr>
@@ -666,7 +670,7 @@
       <h3 id="exception-validation">验收检查</h3>
       <div class="flow">
         <div class="flow-step"><div><strong>API 健康</strong>访问 <code>GET /api/health</code>，确认 API、SQLite、队列状态。</div></div>
-        <div class="flow-step"><div><strong>启动脚本</strong>运行 <code>D:\RPA\启动脚本\check_sap_rpa_services.cmd</code>，确认本地 API、HTTPS 页面、HTTPS API 代理和 HTTP 兼容入口均返回 <code>200 OK</code>。</div></div>
+        <div class="flow-step"><div><strong>启动脚本</strong>运行 <code>D:\RPA\启动脚本\check_sap_rpa_services.cmd</code>，确认 SAP GUI COM 注册状态、本地 API、HTTPS 页面、HTTPS API 代理和 HTTP 兼容入口均正常。</div></div>
         <div class="flow-step"><div><strong>网关与证书</strong>确认 <code>0.0.0.0:443</code>、<code>0.0.0.0:6174</code>、<code>127.0.0.1:8080</code> 均监听；浏览器无证书告警，证书匹配 <code>fi_automation.srv.lstech.com</code>。</div></div>
         <div class="flow-step"><div><strong>API base</strong>从正式域名打开页面，确认浏览器请求使用 <code>https://fi_automation.srv.lstech.com/rpa/api/*</code>，不存在旧 <code>127.0.0.1</code>、旧 IP、旧端口或旧 <code>/charge</code>。</div></div>
         <div class="flow-step"><div><strong>配置读取</strong>访问 <code>GET /api/config</code>，确认事务码、工厂、业务范围和规则返回正常。</div></div>
@@ -689,8 +693,10 @@
             <tr><td><code>D:\RPA\bin\SapWebLauncher.exe</code></td><td>后端实际执行器。线上只应重启这个本项目进程，不影响其他项目服务。</td></tr>
             <tr><td><code>D:\RPA\gateway\rpa-gateway.js</code></td><td>对外入口网关，当前路径为 <code>/rpa/</code>；443 提供 HTTPS 域名入口，6174 保留 HTTP 兼容入口。</td></tr>
             <tr><td><code>D:\RPA\gateway\start-rpa-gateway.ps1</code></td><td>只重启本项目网关进程，启动 <code>https://fi_automation.srv.lstech.com/rpa/</code> 和 <code>http://10.0.41.158:6174/rpa/</code>。</td></tr>
+            <tr><td><code>D:\RPA\启动脚本\00_register_sap_gui_components.cmd</code></td><td>生产机首次部署或 SAP GUI 异常时的管理员入口，注册 SAP GUI 脚本组件 <code>saprotwr.dll</code> 和 <code>sapfewse.ocx</code>。</td></tr>
+            <tr><td><code>D:\RPA\启动脚本\00_register_sap_gui_components.ps1</code></td><td>支持 <code>-CheckOnly</code> 只读检查，验证 <code>SapROTWr.SapROTWrapper</code> 与 <code>Sapgui.ScriptingCtrl.1</code> 是否已注册。</td></tr>
             <tr><td><code>D:\RPA\启动脚本\start_sap_rpa_services.cmd</code></td><td>服务器重启后的总入口：确认或启动本地 API，再启动 6174 HTTP 网关和 443 HTTPS 网关，并自动访问关键 URL 验证。</td></tr>
-            <tr><td><code>D:\RPA\启动脚本\check_sap_rpa_services.cmd</code></td><td>只读检查入口：列出本项目进程、端口和 URL 检查结果，用于确认服务是否可访问。</td></tr>
+            <tr><td><code>D:\RPA\启动脚本\check_sap_rpa_services.cmd</code></td><td>只读检查入口：列出 SAP GUI COM 注册状态、本项目进程、端口和 URL 检查结果，用于确认服务是否可访问。</td></tr>
             <tr><td><code>D:\RPA\启动脚本\gitnexus.cmd</code></td><td>GitNexus 兜底入口。旧 PowerShell、Codex 或任务会话没有刷新用户 PATH 时，直接运行 <code>D:\RPA\启动脚本\gitnexus.cmd status</code>、<code>D:\RPA\启动脚本\gitnexus.cmd detect-changes</code>，脚本会切到 <code>D:\RPA\RpaProject</code> 并优先调用 <code>C:\Users\Marcus\AppData\Roaming\npm\gitnexus.cmd</code>。</td></tr>
             <tr><td><code>D:\RPA\RpaProject\启动脚本</code></td><td>Git 源码副本，用于提交和重新打包。脚本默认仍指向 <code>D:\RPA</code> 运行目录。</td></tr>
             <tr><td><code>D:\RPA\index.html</code> + <code>D:\RPA\assets\js\*.js</code></td><td>线上前端操作台入口和本地 JS 模块。后续页面改动应按 state、utils、api、render、actions、main 模块定位并同步到运行目录。</td></tr>

@@ -32,6 +32,12 @@
 D:\RPA\
   index.html
   assets\js\*.js
+  gateway\rpa-gateway.js
+  gateway\start-rpa-gateway.ps1
+  启动脚本\00_register_sap_gui_components.cmd
+  启动脚本\00_register_sap_gui_components.ps1
+  启动脚本\start_sap_rpa_services.cmd
+  启动脚本\check_sap_rpa_services.cmd
   bin\SapWebLauncher.exe
   transactions\*.vbs
   transactions\transaction-config.json
@@ -51,6 +57,12 @@ D:\RPA\outputs\
 D:\RPA\config.local.json
 %LOCALAPPDATA%\SapWebLauncher\config.json
 ```
+
+可以把当前 `D:\RPA` 整包拷贝到生产机，但要把它当作程序包，而不是直接把测试机状态搬成生产状态：
+
+1. 可以直接带走 `index.html`、`assets`、`gateway`、`启动脚本`、`bin`、`transactions`、`config.local.example.json`。
+2. 全新生产机拷贝后必须重新填写真实 `D:\RPA\config.local.json`、重新生成 `%LOCALAPPDATA%\SapWebLauncher\config.json`、重新放置生产证书。
+3. 升级已有生产机时，先备份并保留生产机自己的 `config.local.json`、`data\sap-rpa-config.db` 和 `certs\lstech.com`，不要被测试机文件覆盖。
 
 ## 4. 拉取源码并发布
 
@@ -113,7 +125,27 @@ D:\RPA\RpaProject\上线安装包\04_配置SAP登录信息.bat
 
 密码由当前 Windows 用户 DPAPI 加密。不要把这个文件复制到其他用户或其他电脑。
 
-如果手工登录 SAP 正常，但程序仍检测不到已登录 GUI、反复打开登录窗口，用管理员 PowerShell 注册组件：
+如果手工登录 SAP 正常，但程序仍检测不到已登录 GUI、反复打开登录窗口，优先运行生产机注册脚本：
+
+```text
+D:\RPA\启动脚本\00_register_sap_gui_components.cmd
+```
+
+这个入口会弹出 UAC，需要管理员确认。注册后只检查状态：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\RPA\启动脚本\00_register_sap_gui_components.ps1" -CheckOnly
+```
+
+预期看到：
+
+```text
+SapROTWr.SapROTWrapper: True
+Sapgui.ScriptingCtrl.1: True
+SAP GUI scripting COM registration is ready.
+```
+
+手工兜底命令：
 
 ```powershell
 Set-Location "C:\Program Files (x86)\SAP\FrontEnd\SAPgui"
@@ -207,12 +239,13 @@ Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 必须继续做真实业务验收：
 
 1. 打开 `http://10.0.41.158:6174/rpa/`。
-2. 提交一次受控事务码任务。
-3. 确认 `runs` 有记录，`run_logs` 或 `run_result_logs` 有日志。
-4. 确认 VBS 从 `D:\RPA\transactions` 执行，并写回标准结果。
-5. 已登录 SAP GUI 时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
-6. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
-7. 页面/API 不返回 SAP 密码、钉钉 `appSecret`、token。
+2. 运行 `D:\RPA\启动脚本\check_sap_rpa_services.cmd`，确认 SAP GUI COM 两个 ProgID 均为 `True`，四个 URL 均为 `200 OK`。
+3. 提交一次受控事务码任务。
+4. 确认 `runs` 有记录，`run_logs` 或 `run_result_logs` 有日志。
+5. 确认 VBS 从 `D:\RPA\transactions` 执行，并写回标准结果。
+6. 已登录 SAP GUI 时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
+7. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
+8. 页面/API 不返回 SAP 密码、钉钉 `appSecret`、token。
 
 ## 10. 常见漏项
 
@@ -224,6 +257,7 @@ Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 6. `baseUrl` 填成 `/token` 或完整发送接口。
 7. 手工 SAP GUI 正常，但脚本组件未注册，程序检测不到 ready session。
 8. 健康检查通过，但真实任务没有写数据库、没有跑 VBS 或没有发钉钉。
+9. 整包拷贝 `D:\RPA` 时把测试机 `config.local.json`、SQLite、证书或 SAP DPAPI 登录配置覆盖到生产机。
 
 ## 11. 生成上线包
 

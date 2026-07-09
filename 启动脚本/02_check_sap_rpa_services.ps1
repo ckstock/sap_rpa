@@ -8,6 +8,21 @@ $ProgressPreference = "SilentlyContinue"
 $gatewayScript = Join-Path $RuntimeRoot "gateway\rpa-gateway.js"
 $launcher = Join-Path $RuntimeRoot "bin\SapWebLauncher.exe"
 
+Write-Host "SAP GUI COM check:"
+$sapComResults = @("SapROTWr.SapROTWrapper", "Sapgui.ScriptingCtrl.1") | ForEach-Object {
+    $registered = $false
+    try {
+        $registered = $null -ne [type]::GetTypeFromProgID($_)
+    } catch {
+        $registered = $false
+    }
+    [pscustomobject]@{ ProgId = $_; Registered = $registered }
+}
+$sapComResults | Format-Table -AutoSize
+if (@($sapComResults | Where-Object { -not $_.Registered }).Count -gt 0) {
+    Write-Warning "SAP GUI scripting COM registration is incomplete. Run: D:\RPA\启动脚本\00_register_sap_gui_components.cmd"
+}
+
 Write-Host "Process check:"
 Get-CimInstance Win32_Process |
     Where-Object {
