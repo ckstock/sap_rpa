@@ -145,6 +145,8 @@ Sapgui.ScriptingCtrl.1: True
 SAP GUI scripting COM registration is ready.
 ```
 
+脚本会读取 `saprotwr.dll` 和 `sapfewse.ocx` 的 PE machine 类型自动选择 `regsvr32.exe`：32 位组件使用 `C:\Windows\SysWOW64\regsvr32.exe`，64 位组件通常使用 `C:\Windows\System32\regsvr32.exe`；如果脚本从 32 位 PowerShell 进程里运行 64 位组件注册，则使用 `C:\Windows\Sysnative\regsvr32.exe` 避免文件系统重定向。`-CheckOnly` 输出里的 `Registration bitness plan` 会显示实际选择。
+
 手工兜底命令：
 
 ```powershell
@@ -152,6 +154,8 @@ Set-Location "C:\Program Files (x86)\SAP\FrontEnd\SAPgui"
 C:\Windows\SysWOW64\regsvr32.exe saprotwr.dll
 C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 ```
+
+手工注册时必须按组件位数选择：32 位 SAP GUI 组件用 `C:\Windows\SysWOW64\regsvr32.exe`，64 位 SAP GUI 组件通常用 `C:\Windows\System32\regsvr32.exe`；如果当前 shell 是 32 位进程，改用 `C:\Windows\Sysnative\regsvr32.exe`。
 
 ## 6. 配置钉钉 OpenAPI
 
