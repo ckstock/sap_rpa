@@ -7825,6 +7825,37 @@ Sub DumpChildren(ByVal node, ByVal depth)
    Next
 End Sub
 
+Function NodeContainsText(ByVal node, ByVal needle, ByVal depth)
+   On Error Resume Next
+   NodeContainsText = False
+   If Len(Trim(CStr(needle))) = 0 Then
+      NodeContainsText = True
+      Exit Function
+   End If
+   If depth > 4 Then Exit Function
+   Dim text, idx, child
+   text = ""
+   Err.Clear
+   text = CStr(node.Text)
+   If Err.Number = 0 Then
+      If InStr(1, UCase(text), UCase(Trim(CStr(needle))), vbTextCompare) > 0 Then
+         NodeContainsText = True
+         Exit Function
+      End If
+   End If
+   Err.Clear
+   For idx = 0 To node.Children.Count - 1
+      Err.Clear
+      Set child = node.Children.Item(CInt(idx))
+      If Err.Number = 0 And IsObject(child) Then
+         If NodeContainsText(child, needle, depth + 1) Then
+            NodeContainsText = True
+            Exit Function
+         End If
+      End If
+   Next
+End Function
+
 Function SystemMatches(ByVal value)
    On Error Resume Next
    SystemMatches = False
@@ -7848,14 +7879,14 @@ Function MatchTarget(ByVal candidate)
    currentUser = Trim(CStr(candidate.Info.User))
    If Not SystemMatches(currentSystem) Then MatchTarget = False
    If Trim(CStr(targetClient)) <> "" And currentClient <> Trim(CStr(targetClient)) Then MatchTarget = False
-   If Trim(CStr(targetUser)) <> "" And UCase(currentUser) <> UCase(Trim(CStr(targetUser))) Then MatchTarget = False
+   If Trim(CStr(targetUser)) <> "" And currentUser <> "" And UCase(currentUser) <> UCase(Trim(CStr(targetUser))) Then MatchTarget = False
    Err.Clear
 End Function
 
 Function TryPressTakeover(ByVal candidate)
    On Error Resume Next
    TryPressTakeover = False
-   Dim modal, radio, okButton, title
+   Dim modal, radio, okButton, title, canPress
    For k = 1 To 3
       Err.Clear
       Set modal = candidate.findById("wnd[" & k & "]")
@@ -7870,20 +7901,30 @@ Function TryPressTakeover(ByVal candidate)
          Err.Clear
          Set radio = candidate.findById("wnd[" & k & "]/usr/radMULTI_LOGON_OPT1")
          If Err.Number = 0 And IsObject(radio) Then
-            radio.Select
-            radio.SetFocus
-            Err.Clear
-            Set okButton = candidate.findById("wnd[" & k & "]/tbar[0]/btn[0]")
-            If Err.Number = 0 And IsObject(okButton) Then
-               okButton.Press
-            Else
-               Err.Clear
-               candidate.findById("wnd[" & k & "]").sendVKey 0
+            canPress = True
+            If Trim(CStr(targetUser)) <> "" And Trim(CStr(currentUser)) = "" Then
+               If Not NodeContainsText(modal, targetUser, 0) Then
+                  AddDiag "skip takeover on wnd[" & k & "]: session user is empty and modal text does not contain target user"
+                  Err.Clear
+                  canPress = False
+               End If
             End If
-            WScript.Sleep 1000
-            AddDiag "selected MULTI_LOGON_OPT1 on wnd[" & k & "]"
-            TryPressTakeover = True
-            Exit Function
+            If canPress Then
+               radio.Select
+               radio.SetFocus
+               Err.Clear
+               Set okButton = candidate.findById("wnd[" & k & "]/tbar[0]/btn[0]")
+               If Err.Number = 0 And IsObject(okButton) Then
+                  okButton.Press
+               Else
+                  Err.Clear
+                  candidate.findById("wnd[" & k & "]").sendVKey 0
+               End If
+               WScript.Sleep 1000
+               AddDiag "selected MULTI_LOGON_OPT1 on wnd[" & k & "]"
+               TryPressTakeover = True
+               Exit Function
+            End If
          Else
             AddDiag "MULTI_LOGON_OPT1 not found on wnd[" & k & "]"
             Err.Clear
