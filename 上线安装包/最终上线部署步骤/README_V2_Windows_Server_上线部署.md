@@ -239,7 +239,7 @@ Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 必须继续做真实业务验收：
 
 1. 打开 `http://10.0.41.158:6174/rpa/`。
-2. 运行 `D:\RPA\启动脚本\check_sap_rpa_services.cmd`，确认 SAP GUI COM 两个 ProgID 均为 `True`，四个 URL 均为 `200 OK`。
+2. 运行 `D:\RPA\启动脚本\check_sap_rpa_services.cmd`，确认 SAP GUI COM 两个 ProgID 均为 `True`，四个 URL 均为 `200 OK`。脚本对 HTTPS 使用 `curl.exe --ssl-no-revoke`，只跳过内网 CRL/OCSP 吊销查询，不跳过证书链和域名校验。
 3. 提交一次受控事务码任务。
 4. 确认 `runs` 有记录，`run_logs` 或 `run_result_logs` 有日志。
 5. 确认 VBS 从 `D:\RPA\transactions` 执行，并写回标准结果。
@@ -258,6 +258,7 @@ Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 7. 手工 SAP GUI 正常，但脚本组件未注册，程序检测不到 ready session。
 8. 健康检查通过，但真实任务没有写数据库、没有跑 VBS 或没有发钉钉。
 9. 整包拷贝 `D:\RPA` 时把测试机 `config.local.json`、SQLite、证书或 SAP DPAPI 登录配置覆盖到生产机。
+10. 内网服务器访问不到证书吊销服务器时，PowerShell `Invoke-WebRequest` 可能报 TLS 通道错误；验收以 `check_sap_rpa_services.cmd` 的 GET 检查和浏览器证书结果为准。
 
 ## 11. 生成上线包
 

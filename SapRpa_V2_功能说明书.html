@@ -652,6 +652,7 @@
             <tr><td>HTTPS 网关未启动</td><td>域名页面无法访问，但 <code>http://127.0.0.1:8080/api/health</code> 仍正常。</td><td>运行 <code>powershell -ExecutionPolicy Bypass -File D:\RPA\gateway\start-rpa-gateway.ps1</code>，确认 <code>0.0.0.0:443</code> 和 <code>0.0.0.0:6174</code> 均由本项目 <code>rpa-gateway.js</code> 监听。</td></tr>
             <tr><td>API base 缓存漂移</td><td>正式域名页面能打开，但配置、执行或历史接口请求仍打到旧 IP、旧端口、<code>127.0.0.1</code> 或旧 <code>/charge</code>。</td><td>网关必须注入 <code>window.SAP_RPA_API_BASE = window.location.origin + "/rpa"</code> 并覆盖 <code>localStorage.sapRpaApiBase</code>；前端优先使用网关注入值。验收时用浏览器开发者工具确认请求为 <code>https://fi_automation.srv.lstech.com/rpa/api/*</code>。</td></tr>
             <tr><td>证书异常</td><td>443 端口可连接，但浏览器出现证书不受信任、域名不匹配或过期告警。</td><td>检查证书 SAN 是否包含 <code>*.srv.lstech.com</code>，有效期是否覆盖当前日期，客户端是否信任内部 CA；确认 <code>D:\RPA\certs\lstech.com</code> 私钥、PFX 和 <code>passwd.txt</code> 仅执行账号、Administrators、SYSTEM 可读。</td></tr>
+            <tr><td>HTTPS 检查误报</td><td>浏览器能打开正式域名，但 PowerShell 健康检查报 <code>CRYPT_E_REVOCATION_OFFLINE</code> 或 TLS 通道错误。</td><td>内网服务器可能访问不到证书吊销服务器。<code>check_sap_rpa_services.cmd</code> 对 HTTPS 使用 <code>curl.exe --ssl-no-revoke</code> 做 GET 检查，只跳过 CRL/OCSP 吊销查询，不跳过证书链和域名校验；最终仍以浏览器无证书告警为准。</td></tr>
             <tr><td>SAP 登录失败</td><td>run 失败，日志出现登录或连接错误。</td><td>重新运行 SAP 登录配置步骤，在服务器执行账号下生成 DPAPI 配置。</td></tr>
             <tr><td>SAP GUI 组件未注册</td><td>手工 SAP GUI 已登录，但网页提交后仍反复打开登录窗口，或日志没有出现 <code>Detected ready SAP GUI session; skip sapshcut login</code>。</td><td>先运行 <code>D:\RPA\启动脚本\00_register_sap_gui_components.cmd</code>；再运行 <code>D:\RPA\启动脚本\00_register_sap_gui_components.ps1 -CheckOnly</code> 或 <code>check_sap_rpa_services.cmd</code>，确认两个 COM ProgID 均为 <code>True</code>。</td></tr>
             <tr><td>整包拷贝后状态错乱</td><td>生产机能打开页面，但钉钉不发、数据库记录不对、证书告警或 SAP 登录信息仍是测试机状态。</td><td>检查是否把测试机 <code>config.local.json</code>、<code>data\sap-rpa-config.db</code>、<code>certs</code> 或 SAP DPAPI 登录配置覆盖到了生产机。生产机真实配置、数据库、证书和 <code>%LOCALAPPDATA%\SapWebLauncher\config.json</code> 必须重新生成或从生产备份恢复。</td></tr>
@@ -670,7 +671,7 @@
       <h3 id="exception-validation">验收检查</h3>
       <div class="flow">
         <div class="flow-step"><div><strong>API 健康</strong>访问 <code>GET /api/health</code>，确认 API、SQLite、队列状态。</div></div>
-        <div class="flow-step"><div><strong>启动脚本</strong>运行 <code>D:\RPA\启动脚本\check_sap_rpa_services.cmd</code>，确认 SAP GUI COM 注册状态、本地 API、HTTPS 页面、HTTPS API 代理和 HTTP 兼容入口均正常。</div></div>
+        <div class="flow-step"><div><strong>启动脚本</strong>运行 <code>D:\RPA\启动脚本\check_sap_rpa_services.cmd</code>，确认 SAP GUI COM 注册状态、本地 API、HTTPS 页面、HTTPS API 代理和 HTTP 兼容入口均正常。HTTPS 检查使用 <code>curl.exe --ssl-no-revoke</code> 避免内网吊销查询误报，但不跳过证书链和域名校验。</div></div>
         <div class="flow-step"><div><strong>网关与证书</strong>确认 <code>0.0.0.0:443</code>、<code>0.0.0.0:6174</code>、<code>127.0.0.1:8080</code> 均监听；浏览器无证书告警，证书匹配 <code>fi_automation.srv.lstech.com</code>。</div></div>
         <div class="flow-step"><div><strong>API base</strong>从正式域名打开页面，确认浏览器请求使用 <code>https://fi_automation.srv.lstech.com/rpa/api/*</code>，不存在旧 <code>127.0.0.1</code>、旧 IP、旧端口或旧 <code>/charge</code>。</div></div>
         <div class="flow-step"><div><strong>配置读取</strong>访问 <code>GET /api/config</code>，确认事务码、工厂、业务范围和规则返回正常。</div></div>

@@ -195,7 +195,7 @@ C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 1. 页面 `https://fi_automation.srv.lstech.com/rpa/` 能打开。
 2. `https://fi_automation.srv.lstech.com/rpa/api/health` 返回正常。
 3. 兼容入口 `http://10.0.41.158:6174/rpa/` 能打开。
-4. `D:\RPA\启动脚本\check_sap_rpa_services.cmd` 输出四个 URL 检查均为 `200 OK`。
+4. `D:\RPA\启动脚本\check_sap_rpa_services.cmd` 输出四个 URL 检查均为 `200 OK`。脚本对 HTTPS 使用 `curl.exe --ssl-no-revoke`，只跳过内网 CRL/OCSP 吊销查询，不跳过证书链和域名校验。
 5. 浏览器从正式域名打开时，API 请求走 `https://fi_automation.srv.lstech.com/rpa/api/*`，不是旧的 `127.0.0.1`、旧 IP 或旧 `/charge`。
 6. 证书域名匹配 `fi_automation.srv.lstech.com`，有效期未过期，浏览器无证书告警。
 7. `D:\RPA\certs\lstech.com\*.key`、`*.pfx`、`passwd.txt` 仅执行账号、Administrators、SYSTEM 可读。
