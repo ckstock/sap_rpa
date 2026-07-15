@@ -690,7 +690,8 @@
       const runParams = payload.rangeKind === "dateRange"
         ? {
             period: payload.period,
-            weekEnd: payload.weekEnd
+            weekEnd: payload.weekEnd,
+            runStrategy: payload.runStrategy
           }
         : {
             plants: payload.plantsCsv,
@@ -701,6 +702,7 @@
             businessAreas: payload.businessAreasCsv,
             period: payload.period,
             weekEnd: payload.weekEnd,
+            runStrategy: payload.runStrategy,
             remark: payload.remark
           };
       return bridgeFetch("/api/runs", {
@@ -838,6 +840,7 @@
         period: dateRange.period,
         weekEnd: dateRange.weekEnd,
         rangeKind: isDateRange ? "dateRange" : (isBusinessAreaRange ? "businessArea" : "plant"),
+        runStrategy: state.form.tCode === "ZFI057" ? "auto3step" : "",
         rangeLabel,
         rangeValues,
         rangeCsv: rangeValues.join(","),
@@ -862,6 +865,7 @@
         dingTalkUserId: notifyUserId,
         ddid: notifyUserId
       });
+      if (p.runStrategy) params.set("runStrategy", p.runStrategy);
       if (p.rangeKind !== "dateRange") {
         params.set("plant", p.plant);
         params.set("plants", p.plantsCsv);

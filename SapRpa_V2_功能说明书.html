@@ -425,19 +425,30 @@
         <table>
           <thead><tr><th>入口/控件</th><th>用户可见行为</th><th>数据落点</th></tr></thead>
           <tbody>
-            <tr><td>对方平台 URL token 直跳</td><td><code>https://lydctest.lstech.com/dataAnalysis.financial.sapschedule</code> 的 SAP 数据调度入口调用本页面，并通过 <code>?token=&lt;jwt&gt;</code>、<code>?authorization=Bearer ...</code> 或 <code>?access_token=&lt;jwt&gt;</code> 传入身份。页面启动时兼容解析 <code>Account/Ddid/ddid/DingTalkUserId/UserId</code> 作为钉钉 ID，兼容解析 <code>UserName/Name/RealName/DisplayName</code> 作为姓名；成功后进入执行任务页，顶部身份位置同时显示姓名和钉钉 ID，并自动取消“勾选固定通知 11464769”。</td><td>前端状态 <code>state.externalAuth.claimedAccount</code>、<code>state.externalAuth.claimedUserName</code> 和 <code>state.page=execute</code>；提交 <code>POST /api/runs</code> 时写入 <code>operator.dingTalkUserId</code> 和 <code>operator.ddid</code>；页面不保存 token 原文，解析后清理 URL 参数。</td></tr>
+            <tr><td>对方平台 URL token 直跳</td><td><code>https://lydctest.lstech.com/dataAnalysis.financial.sapschedule</code> 的 SAP 数据调度入口调用本页面，并通过 <code>?token=&lt;jwt&gt;</code>、<code>?authorization=Bearer ...</code> 或 <code>?access_token=&lt;jwt&gt;</code> 传入身份。页面启动时兼容解析 <code>Account/Ddid/ddid/DingTalkUserId/UserId</code> 作为钉钉 ID，兼容解析 <code>UserName/Name/RealName/DisplayName</code> 作为姓名；成功后进入执行任务页，顶部身份位置同时显示姓名和钉钉 ID，并自动取消“勾选固定通知 11464769”。被对方平台 iframe 嵌入时，页面强制按执行员角色打开，避免沿用浏览器旧的 <code>portalRole=viewer</code> 缓存导致“查询员/只读”禁用提交。</td><td>前端状态 <code>state.externalAuth.claimedAccount</code>、<code>state.externalAuth.claimedUserName</code> 和 <code>state.page=execute</code>；提交 <code>POST /api/runs</code> 时写入 <code>operator.dingTalkUserId</code> 和 <code>operator.ddid</code>；页面不保存 token 原文，解析后清理 URL 参数。iframe 场景会把 <code>localStorage.portalRole</code> 纠正为 <code>executor</code>。</td></tr>
             <tr><td>无账号密码登录页</td><td>页面打开后直接进入 SAP 门户，不再显示钉钉账号/手机号、密码、扫码登录界面或“清除身份”按钮。普通打开时执行页默认勾选固定通知 <code>11464769</code>。</td><td>页面不接收账号密码；通知目标只由执行页复选框和本次 URL token 解析出的钉钉 ID 决定。</td></tr>
           </tbody>
         </table>
       </div>
       <h3 id="entry-nav">导航页签</h3>
       <div class="grid cols-2">
-        <div class="mini-card"><strong>工作台</strong>按业务流程展示事务码卡片入口：采购价（ZFI072A → ZFI072N）、产值拆分（ZFI057 → ZCO020）、实际领料（ZFIR034 → ZFI080 → ZFI080B）、标准价（ZCO019-明细、ZCO019汇总）、周结完工成本明细表（ZFI019NL、ZFI019NA）。不在该清单内的事务码不在工作台展示，但不影响执行页、基础配置、后端队列和历史数据。</div>
+        <div class="mini-card"><strong>工作台</strong>按业务流程展示事务码卡片入口：采购价（ZFI072A → ZFI072N）、产值拆分（只展示 ZFI057 单入口，后台自动执行 ZFI019NL → ZFI057 → ZCO020）、实际领料（ZFIR034 → ZFI080 → ZFI080B）、标准价（ZCO019-明细、ZCO019汇总）、周结完工成本明细表（ZFI019NL、ZFI019NA）。不在该清单内的事务码不在工作台展示，但不影响执行页、基础配置、后端队列和历史数据。</div>
         <div class="mini-card"><strong>执行任务</strong>选择事务码和参数，提交到后台串行队列。</div>
         <div class="mini-card"><strong>统计报表</strong>按统计周期查看执行总次数、成功率、平均耗时、节省工时和事务码排行。</div>
         <div class="mini-card"><strong>定时任务</strong>维护定时任务配置，保存到 API/SQLite，真正执行依赖后端常驻队列或调度。</div>
         <div class="mini-card"><strong>基础配置</strong>维护工厂、业务范围、事务码和事务码与工厂/业务范围规则。</div>
       </div>
+      <h3 id="entry-zfi057-zco020">产值拆分链路（ZFI057 单入口，后台三步）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>事务码</th><th>当前自动化状态</th><th>实际 SAP 入参</th><th>运行日志追溯</th></tr></thead>
+          <tbody>
+            <tr><td><code>ZFI057</code></td><td>工作台只展示这一个产值拆分入口；后端识别 <code>runStrategy=auto3step</code> 或默认 <code>ZFI057</code> 队列任务后，按业务范围顺序执行 <code>ZFI019NL → ZFI057 → ZCO020</code>。</td><td>页面/API 只需要提供工厂、业务范围和日期范围。第一步 <code>ZFI019NL.vbs</code> 从 ALV Grid 输出 <code>MATERIAL=...</code> / <code>MATERIALS_CSV=...</code>；第二步 <code>ZFI057.vbs</code> 写入 <code>S_WERKS</code>、<code>S_KADKY-LOW/HIGH</code>、<code>S_MTART-LOW</code>、<code>S_KADAT-LOW/HIGH</code>、<code>S_MATNR</code> 多选；第三步执行 <code>ZCO020.vbs</code> 验证。</td><td>后端 run 日志按 <code>[step 1]</code>、<code>[step 2]</code>、<code>[step 3]</code> 记录每个业务范围、工厂、日期范围、物料数量和 VBS 输出。缺少物料时 workflow 停在第一步并失败，不再要求用户手工传 <code>materials</code>，也不会静默按全物料运行。</td></tr>
+            <tr><td><code>ZCO020</code></td><td>保留后端事务配置和 <code>D:\RPA\transactions\ZCO020.vbs</code>，但不在工作台作为独立卡片展示。</td><td>作为 <code>ZFI057</code> workflow 第三步内部调用，写入 <code>S_BUDAT-LOW/HIGH</code> 与 <code>S_GSBER-LOW</code>，执行后按 <code>ZBZ1 = zpp063</code> 过滤、全选并保存/导出。</td><td>VBS 标准输出会记录业务范围、日期范围、过滤字段和保存动作。当前 SM37 <code>jobname=ZFI057</code> 复核仅记录提醒，尚未自动化重跑；如 ZCO020 结果异常，需人工检查 SAP 后台作业状态。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="warning-box"><strong>当前边界：</strong><code>ZFI019NL</code> 的 ALV Grid 物料输出已经接入 workflow；<code>ZFI_SPLIT</code> 自定义表的完整后端取数仍依赖 SAP NCo/RFC 能力，当前主程序项目未引用 <code>SAP.Middleware.Connector.dll</code>。上线验证 ZFI057 时，如果第一步未输出物料，workflow 会失败并在日志中写明原因。</div>
       <h3 id="entry-installer">本机启动与安装入口</h3>
       <p>管理员部署或排错时以 <code>上线安装包\上线安装文档清单.md</code> 和 <code>上线安装包\最终上线部署步骤\README_V2_Windows_Server_上线部署.md</code> 为准。当前服务器的 Git 源码目录是 <code>D:\RPA\RpaProject</code>，实际运行根目录是 <code>D:\RPA</code>；运行进程读取 <code>D:\RPA\bin</code>、<code>D:\RPA\assets</code>、<code>D:\RPA\transactions</code> 和 <code>D:\RPA\data</code>。只在源码目录 <code>git pull</code> 或修改代码不会自动让线上生效。</p>
       <div class="table-wrap">
@@ -654,6 +665,7 @@
             <tr><td>本地 API 未启动</td><td>页面显示 API 不可用、配置只读、无法保存或执行。</td><td>运行 <code>D:\RPA\bin\SapWebLauncher.exe --serve</code> 或上线步骤中的启动 API 脚本；当前正式入口是 <code>https://fi_automation.srv.lstech.com/rpa/</code>，兼容入口是 <code>http://10.0.41.158:6174/rpa/</code>。</td></tr>
             <tr><td>HTTPS 网关未启动</td><td>域名页面无法访问，但 <code>http://127.0.0.1:8080/api/health</code> 仍正常。</td><td>运行 <code>powershell -ExecutionPolicy Bypass -File D:\RPA\gateway\start-rpa-gateway.ps1</code>，确认 <code>0.0.0.0:443</code> 和 <code>0.0.0.0:6174</code> 均由本项目 <code>rpa-gateway.js</code> 监听。</td></tr>
             <tr><td>API base 缓存漂移</td><td>正式域名页面能打开，但配置、执行或历史接口请求仍打到旧 IP、旧端口、<code>127.0.0.1</code> 或旧 <code>/charge</code>。</td><td>网关必须注入 <code>window.SAP_RPA_API_BASE = window.location.origin + "/rpa"</code> 并覆盖 <code>localStorage.sapRpaApiBase</code>；前端优先使用网关注入值。验收时用浏览器开发者工具确认请求为 <code>https://fi_automation.srv.lstech.com/rpa/api/*</code>。</td></tr>
+            <tr><td>父系统嵌套后不能提交</td><td>单独打开 <code>https://fi_automation.srv.lstech.com/rpa/</code> 可以进入执行页提交，但嵌入 <code>https://lydctest.lstech.com/dataAnalysis.financial.sapschedule</code> 后页面提示“查询员/只读”或提交按钮不可点。</td><td>确认运行目录 <code>D:\RPA\assets\js\portal-state.js</code> 和源码目录一致；iframe 场景应自动使用 <code>executor</code>，提交按钮不应因 <code>portalRole=viewer</code> 被禁用。若按钮可点但仍失败，再检查浏览器 Network 中 <code>/rpa/api/runs</code> 的真实请求地址和错误。</td></tr>
             <tr><td>证书异常</td><td>443 端口可连接，但浏览器出现证书不受信任、域名不匹配或过期告警。</td><td>检查证书 SAN 是否包含 <code>*.srv.lstech.com</code>，有效期是否覆盖当前日期，客户端是否信任内部 CA；确认 <code>D:\RPA\certs\lstech.com</code> 私钥、PFX 和 <code>passwd.txt</code> 仅执行账号、Administrators、SYSTEM 可读。</td></tr>
             <tr><td>HTTPS 检查误报</td><td>浏览器能打开正式域名，但 PowerShell 健康检查报 <code>CRYPT_E_REVOCATION_OFFLINE</code> 或 TLS 通道错误。</td><td>内网服务器可能访问不到证书吊销服务器。<code>check_sap_rpa_services.cmd</code> 对 HTTPS 使用 <code>curl.exe --ssl-no-revoke</code> 做 GET 检查，只跳过 CRL/OCSP 吊销查询，不跳过证书链和域名校验；最终仍以浏览器无证书告警为准。</td></tr>
             <tr><td>SAP 登录失败</td><td>run 失败，日志出现登录、连接错误或多重登录确认未能处理。</td><td>重新运行 SAP 登录配置步骤，在服务器执行账号下生成 DPAPI 配置。默认多重登录策略为 <code>takeover</code>：服务器发起登录时，如 SAP 提示同账号已在其他电脑登录，程序会选择继续本次登录并终止该账号其他登录；若日志显示未找到 <code>MULTI_LOGON_OPT1</code>，需人工确认 SAP GUI 弹窗控件或截图。</td></tr>

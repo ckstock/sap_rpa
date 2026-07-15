@@ -1,15 +1,44 @@
     const DEFAULT_DINGTALK_USER_ID = "11464769";
     const EXTERNAL_TOKEN_QUERY_KEYS = ["token", "authorization", "access_token"];
-    const savedUseDefaultNotifyUser = localStorage.getItem("portalUseDefaultNotifyUser");
+    function getLocalValue(key) {
+      try {
+        return localStorage.getItem(key);
+      } catch {
+        return null;
+      }
+    }
+    function setLocalValue(key, value) {
+      try {
+        localStorage.setItem(key, value);
+      } catch {}
+    }
+    function removeLocalValue(key) {
+      try {
+        localStorage.removeItem(key);
+      } catch {}
+    }
+
+    const savedUseDefaultNotifyUser = getLocalValue("portalUseDefaultNotifyUser");
+    const isEmbeddedPortal = (() => {
+      try {
+        return window.self !== window.top;
+      } catch {
+        return true;
+      }
+    })();
+    const savedPortalRole = isEmbeddedPortal ? "executor" : getLocalValue("portalRole");
+    if (isEmbeddedPortal && getLocalValue("portalRole") !== "executor") {
+      setLocalValue("portalRole", "executor");
+    }
 
     const state = {
       loggedIn: true,
       page: "dashboard",
-      role: localStorage.getItem("portalRole") || "executor",
+      role: savedPortalRole || "executor",
       user: {
-        name: localStorage.getItem("portalUser") || "张三",
+        name: getLocalValue("portalUser") || "张三",
         dept: "财务共享中心",
-        dingTalkUserId: localStorage.getItem("portalDingTalkUserId") || DEFAULT_DINGTALK_USER_ID
+        dingTalkUserId: getLocalValue("portalDingTalkUserId") || DEFAULT_DINGTALK_USER_ID
       },
       externalAuth: {
         claimedAccount: "",
@@ -60,10 +89,10 @@
     };
 
     const DEFAULT_BRIDGE_API = "http://127.0.0.1:8080";
-    if (localStorage.getItem("sapRpaApiBase") === "http://127.0.0.1:17890") {
-      localStorage.removeItem("sapRpaApiBase");
+    if (getLocalValue("sapRpaApiBase") === "http://127.0.0.1:17890") {
+      removeLocalValue("sapRpaApiBase");
     }
-    const BRIDGE_API = window.SAP_RPA_API_BASE || localStorage.getItem("sapRpaApiBase") || DEFAULT_BRIDGE_API;
+    const BRIDGE_API = window.SAP_RPA_API_BASE || getLocalValue("sapRpaApiBase") || DEFAULT_BRIDGE_API;
     const CONFIG_API_PATHS = {
       root: "/api/config",
       plants: code => "/api/config/plants/" + encodeURIComponent(code),
@@ -77,8 +106,8 @@
       { code: "ZFI085", name: "维护特殊价格", module: "FI", stage: "并行启动", script: "ZFI085.vbs", icon: "badge-dollar-sign", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: false },
       { code: "ZFI014D", name: "维护仓领退料", module: "FI", stage: "并行启动", script: "ZFI014D.vbs", icon: "package-check", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
       { code: "ZFI072N", name: "维护采购价", module: "FI", stage: "顺序执行", script: "ZFI072N.vbs", icon: "receipt-text", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
-      { code: "ZFI057", name: "产值拆分", module: "CO", stage: "顺序执行", script: "ZFI057.vbs", icon: "trending-up", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 600, retry: 3, enabled: true },
-      { code: "ZCO020", name: "拆分验证", module: "CO", stage: "顺序执行", script: "ZCO020.vbs", icon: "list-checks", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
+      { code: "ZFI057", name: "产值拆分", module: "CO", stage: "顺序执行", script: "ZFI057.vbs", icon: "trending-up", params: ["plants", "businessAreas", "period", "weekEnd"], factoryRule: "点击后自动执行 ZFI019NL -> ZFI057 -> ZCO020；物料集合由工作流从 ZFI019NL/ZFI_SPLIT 上游取数", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 1800, retry: 1, enabled: true },
+      { code: "ZCO020", name: "拆分验证", module: "CO", stage: "顺序执行", script: "ZCO020.vbs", icon: "list-checks", params: ["businessAreas", "period", "weekEnd"], factoryRule: "按业务范围和周结日期验证 ZFI057 拆分结果", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 900, retry: 1, enabled: true },
       { code: "ZPP063", name: "验证备注", module: "PP", stage: "顺序执行", script: "ZPP063.vbs", icon: "clipboard-check", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
       { code: "ZPP063X", name: "回检验证", module: "PP", stage: "顺序执行", script: "ZPP063X.vbs", icon: "rotate-ccw", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
       { code: "ZFI019NC", name: "验证修正", module: "FI", stage: "顺序执行", script: "ZFI019NC.vbs", icon: "file-pen-line", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },

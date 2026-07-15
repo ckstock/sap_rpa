@@ -508,6 +508,7 @@ static class Program
             BusinessArea = First(query, "businessarea", "gsber") ?? "",
             BusinessAreas = First(query, "businessareas", "gsberlist", "businessarealist") ?? "",
             WeekEnd = First(query, "weekend", "date") ?? "",
+            Materials = First(query, "materials", "materiallist", "matnrs", "matnrlist", "s_matnr") ?? "",
             FactoryGroup = First(query, "factorygroup", "plantgroup") ?? "",
             RunStrategy = First(query, "runstrategy", "strategy") ?? "",
             Field1Name = First(query, "field1", "field1name") ?? "",
@@ -4086,7 +4087,7 @@ WHERE run_id=$runId;
     static bool UsesBudatDateRange(string tcode)
     {
         string code = FirstNonEmpty(tcode, "").Trim().ToUpperInvariant();
-        return code is "ZFI080" or "ZCO019" or "ZFI019NA" or "ZFI019NL" or "ZFIR034";
+        return code is "ZFI080" or "ZCO019" or "ZFI019NA" or "ZFI019NL" or "ZFIR034" or "ZFI057" or "ZCO020";
     }
 
     static bool UsesDateRangeOnlyInputs(string tcode)
@@ -5240,7 +5241,9 @@ WHERE run_id=$runId;
             pars.RunId = item.RunId;
             Log($"队列执行: runId={item.RunId}, {DescribeParams(pars)}");
 
-            var result = LaunchSapGuiAndExecute(pars);
+            var result = ShouldRunZfi057Workflow(pars)
+                ? ExecuteZfi057Workflow(pars)
+                : LaunchSapGuiAndExecute(pars);
             CompleteRun(item.RunId, result);
         }
         catch (Exception ex)
@@ -5248,6 +5251,282 @@ WHERE run_id=$runId;
             Log($"队列执行失败: runId={item.RunId}, {ex}");
             CompleteRun(item.RunId, FailedRunResult(ex.Message, started));
         }
+    }
+
+    static bool ShouldRunZfi057Workflow(SapRunParams p)
+    {
+        if (!p.TCode.Equals("ZFI057", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string strategy = FirstNonEmpty(p.RunStrategy, "").Trim();
+        return !strategy.Equals("scriptOnly", StringComparison.OrdinalIgnoreCase) &&
+               !strategy.Equals("single", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static RunResultRequest ExecuteZfi057Workflow(SapRunParams p)
+    {
+        var started = DateTime.UtcNow;
+        var aggregate = new RunResultRequest
+        {
+            Status = "success",
+            Message = "ZFI057 workflow completed"
+        };
+
+        var scopes = ResolveZfi057WorkflowScopes(p);
+        AddWorkflowLog(aggregate, "workflow", $"ZFI057 auto workflow start; scopeCount={scopes.Count}; period={p.Period}; weekEnd={p.WeekEnd}");
+        if (scopes.Count == 0)
+            return FailZfi057Workflow(aggregate, "ZFI057 workflow requires businessAreas or plants that can resolve to business areas.", started);
+
+        int scopeIndex = 0;
+        foreach (var scope in scopes)
+        {
+            scopeIndex++;
+            string area = scope.BusinessArea;
+            string[] plants = scope.Plants.Length > 0 ? scope.Plants : new[] { "" };
+            AddWorkflowLog(aggregate, "scope", $"#{scopeIndex} businessArea={area}; plants={string.Join(",", plants.Where(x => !string.IsNullOrWhiteSpace(x)))}");
+
+            if (string.IsNullOrWhiteSpace(area))
+                return FailZfi057Workflow(aggregate, $"ZFI057 workflow scope #{scopeIndex} has no business area.", started);
+
+            var step1 = CloneSapRunParams(p);
+            step1.TCode = "ZFI019NL";
+            step1.Script = "ZFI019NL.vbs";
+            step1.BusinessAreas = area;
+            step1.BusinessArea = area;
+            step1.Plants = string.Join(",", plants.Where(x => !string.IsNullOrWhiteSpace(x)));
+            step1.Plant = FirstCsvValue(step1.Plants);
+            step1.Materials = "";
+            step1.RunStrategy = "workflow-step";
+            step1.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 900);
+
+            AddWorkflowLog(aggregate, "step 1", $"run ZFI019NL to collect materials; businessArea={area}; period={p.Period}; weekEnd={p.WeekEnd}");
+            var step1Result = LaunchSapGuiAndExecute(step1);
+            AddStepResult(aggregate, "step 1 ZFI019NL", step1Result);
+            if (!IsSuccessResult(step1Result))
+                return FailZfi057Workflow(aggregate, $"ZFI057 workflow stopped at step 1 for businessArea={area}: {step1Result.Message}", started);
+
+            string materials = FirstNonEmpty(p.Materials, ExtractMaterialsFromResult(step1Result));
+            string[] materialItems = NormalizeStringArray(materials);
+            AddWorkflowLog(aggregate, "step 1", $"materialCount={materialItems.Length}");
+            if (materialItems.Length == 0)
+            {
+                return FailZfi057Workflow(aggregate,
+                    "ZFI057 workflow stopped after ZFI019NL: no material list was returned. " +
+                    "The ZFI019NL script must output MATERIAL=... or MATERIALS_CSV=... before ZFI057 can run.",
+                    started);
+            }
+
+            int plantIndex = 0;
+            foreach (string plant in plants)
+            {
+                plantIndex++;
+                var step2 = CloneSapRunParams(p);
+                step2.TCode = "ZFI057";
+                step2.Script = "ZFI057.vbs";
+                step2.BusinessAreas = area;
+                step2.BusinessArea = area;
+                step2.Plants = plant;
+                step2.Plant = plant;
+                step2.Materials = string.Join(",", materialItems);
+                step2.RunStrategy = "workflow-step";
+                step2.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 1800);
+
+                AddWorkflowLog(aggregate, "step 2", $"run ZFI057; businessArea={area}; plant={FirstNonEmpty(plant, "(script-mapped)")}; materialCount={materialItems.Length}; attempt={plantIndex}/{plants.Length}");
+                var step2Result = LaunchSapGuiAndExecute(step2);
+                AddStepResult(aggregate, "step 2 ZFI057", step2Result);
+                if (!IsSuccessResult(step2Result))
+                    return FailZfi057Workflow(aggregate, $"ZFI057 workflow stopped at step 2 for businessArea={area}, plant={plant}: {step2Result.Message}", started);
+            }
+
+            var step3 = CloneSapRunParams(p);
+            step3.TCode = "ZCO020";
+            step3.Script = "ZCO020.vbs";
+            step3.BusinessAreas = area;
+            step3.BusinessArea = area;
+            step3.Plants = string.Join(",", plants.Where(x => !string.IsNullOrWhiteSpace(x)));
+            step3.Plant = FirstCsvValue(step3.Plants);
+            step3.Materials = "";
+            step3.RunStrategy = "workflow-step";
+            step3.TimeoutSeconds = Math.Max(900, Math.Min(p.TimeoutSeconds.GetValueOrDefault(900), 1800));
+
+            AddWorkflowLog(aggregate, "step 3", $"run ZCO020 verification; businessArea={area}; period={p.Period}; weekEnd={p.WeekEnd}");
+            var step3Result = LaunchSapGuiAndExecute(step3);
+            AddStepResult(aggregate, "step 3 ZCO020", step3Result);
+            if (!IsSuccessResult(step3Result))
+                return FailZfi057Workflow(aggregate, $"ZFI057 workflow stopped at step 3 for businessArea={area}: {step3Result.Message}", started);
+        }
+
+        aggregate.Status = "success";
+        aggregate.Message = "ZFI057 auto workflow completed: ZFI019NL -> ZFI057 -> ZCO020";
+        aggregate.DurationMs = EnsureDuration(0, started);
+        return aggregate;
+    }
+
+    static RunResultRequest FailZfi057Workflow(RunResultRequest aggregate, string message, DateTime started)
+    {
+        aggregate.Status = "failed";
+        aggregate.Message = message;
+        aggregate.DurationMs = EnsureDuration(0, started);
+        aggregate.Logs.Add(new RunLogLine { Level = "ERROR", Message = message });
+        return aggregate;
+    }
+
+    static bool IsSuccessResult(RunResultRequest result)
+    {
+        return NormalizeRunStatus(result.Status).Equals("success", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void AddWorkflowLog(RunResultRequest aggregate, string step, string message)
+    {
+        aggregate.Logs.Add(new RunLogLine { Level = "INFO", Message = $"[{step}] {message}" });
+    }
+
+    static void AddStepResult(RunResultRequest aggregate, string step, RunResultRequest result)
+    {
+        foreach (var line in result.Logs)
+        {
+            aggregate.Logs.Add(new RunLogLine
+            {
+                Level = FirstNonEmpty(line.Level, "INFO"),
+                Message = $"[{step}] {line.Message}",
+                CreatedAt = line.CreatedAt
+            });
+        }
+
+        foreach (var file in result.Files)
+            aggregate.Files.Add(file);
+
+        if (!string.IsNullOrWhiteSpace(result.SapStatusType))
+            aggregate.SapStatusType = result.SapStatusType;
+        if (!string.IsNullOrWhiteSpace(result.SapStatusText))
+            aggregate.SapStatusText = result.SapStatusText;
+    }
+
+    static string ExtractMaterialsFromResult(RunResultRequest result)
+    {
+        var materials = new List<string>();
+        foreach (var line in result.Logs)
+        {
+            string message = line.Message ?? "";
+            int bracket = message.LastIndexOf(']');
+            if (bracket >= 0 && bracket + 1 < message.Length)
+                message = message[(bracket + 1)..].Trim();
+
+            if (TryReadOutputKey(message, "MATERIAL", out string material))
+                materials.Add(material);
+            else if (TryReadOutputKey(message, "MATERIALS_CSV", out string csv))
+                materials.AddRange(NormalizeStringArray(csv));
+        }
+
+        return string.Join(",", materials
+            .Select(v => v.Trim())
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
+    static List<Zfi057WorkflowScope> ResolveZfi057WorkflowScopes(SapRunParams p)
+    {
+        string[] requestedAreas = NormalizeStringArray(FirstNonEmpty(p.BusinessAreas, p.BusinessArea));
+        string[] requestedPlants = NormalizeStringArray(FirstNonEmpty(p.Plants, p.Plant));
+        var plantAreaMap = LoadPlantBusinessAreaMap();
+
+        if (requestedAreas.Length == 0 && requestedPlants.Length > 0)
+        {
+            requestedAreas = requestedPlants
+                .Select(plant => plantAreaMap.TryGetValue(plant, out string? area) ? area : "")
+                .Where(area => !string.IsNullOrWhiteSpace(area))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        if (requestedAreas.Length == 0)
+            return new List<Zfi057WorkflowScope>();
+
+        var result = new List<Zfi057WorkflowScope>();
+        foreach (string area in requestedAreas)
+        {
+            string[] plantsForArea = requestedPlants
+                .Where(plant => plantAreaMap.TryGetValue(plant, out string? plantArea) &&
+                                plantArea.Equals(area, StringComparison.OrdinalIgnoreCase))
+                .ToArray();
+
+            if (plantsForArea.Length == 0 && requestedPlants.Length > 0 && requestedAreas.Length == 1)
+                plantsForArea = requestedPlants;
+
+            if (plantsForArea.Length == 0)
+            {
+                plantsForArea = plantAreaMap
+                    .Where(pair => pair.Value.Equals(area, StringComparison.OrdinalIgnoreCase))
+                    .Select(pair => pair.Key)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+            }
+
+            result.Add(new Zfi057WorkflowScope(area, plantsForArea));
+        }
+
+        return result;
+    }
+
+    static Dictionary<string, string> LoadPlantBusinessAreaMap()
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            InitializeDatabase(seedFromScripts: true);
+            using var connection = OpenDatabaseConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT code, business_area FROM plants WHERE enabled=1";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                string code = reader.GetString(0);
+                string area = reader.GetString(1);
+                if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(area))
+                    result[code] = area;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log($"load plant business-area map failed: {ex.Message}");
+        }
+
+        return result;
+    }
+
+    static SapRunParams CloneSapRunParams(SapRunParams p)
+    {
+        return new SapRunParams
+        {
+            System = p.System,
+            Client = p.Client,
+            User = p.User,
+            Password = p.Password,
+            Language = p.Language,
+            SysNr = p.SysNr,
+            MultiLogonPolicy = p.MultiLogonPolicy,
+            TCode = p.TCode,
+            Script = p.Script,
+            Plant = p.Plant,
+            Plants = p.Plants,
+            Year = p.Year,
+            Week = p.Week,
+            Period = p.Period,
+            BusinessArea = p.BusinessArea,
+            BusinessAreas = p.BusinessAreas,
+            WeekEnd = p.WeekEnd,
+            Materials = p.Materials,
+            FactoryGroup = p.FactoryGroup,
+            RunStrategy = p.RunStrategy,
+            Field1Name = p.Field1Name,
+            Field1Value = p.Field1Value,
+            Field2Name = p.Field2Name,
+            Field2Value = p.Field2Value,
+            CaretPos = p.CaretPos,
+            ButtonId = p.ButtonId,
+            RunId = p.RunId,
+            TimeoutSeconds = p.TimeoutSeconds
+        };
     }
 
     static IDisposable StartRunHeartbeat(string runId)
@@ -5964,13 +6243,12 @@ ORDER BY 1;
                           $"- 摘要: {message}";
 
             string payload = BuildNotificationPayload(target, title, text);
-            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-            using var response = NotificationHttpClient.PostAsync(BuildNotificationUrl(target), content).GetAwaiter().GetResult();
-            string responseText = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            var response = PostNotificationJson(BuildNotificationUrl(target), payload);
+            string responseText = response.Body;
             if (response.IsSuccessStatusCode)
                 AppendRunLog(runId, "INFO", $"notify sent target={target.Label}");
             else
-                AppendRunLog(runId, "WARN", $"notify failed target={target.Label}, status={(int)response.StatusCode}, body={Truncate(responseText, 200)}");
+                AppendRunLog(runId, "WARN", $"notify failed target={target.Label}, transport={response.Transport}, status={response.StatusCode}, body={Truncate(responseText, 200)}");
         }
         catch (Exception ex)
         {
@@ -6396,6 +6674,12 @@ ORDER BY 1;
     static string[] ResolveStrictDingTalkParamKeys(string tcode)
     {
         string code = FirstNonEmpty(tcode, "").Trim().ToUpperInvariant();
+        if (code is "ZFI057")
+            return new[] { "plants", "businessAreas", "period", "weekEnd" };
+
+        if (code is "ZCO020")
+            return new[] { "businessAreas", "period", "weekEnd" };
+
         if (code is "ZFI072A" or "ZFI085" or "ZFI014D" or "ZFI072N" or "ZFI057" or
             "ZCO020" or "ZPP063" or "ZPP063X" or "ZFI019NC" or "ZFI080B" or "ZFI148")
         {
@@ -6753,17 +7037,16 @@ ORDER BY 1;
             }
         };
 
-        using var content = new StringContent(JsonSerializer.Serialize(payload, JsonOptions), Encoding.UTF8, "application/json");
-        using var response = NotificationHttpClient.PostAsync(url, content).GetAwaiter().GetResult();
-        string responseText = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        var response = PostNotificationJson(url, JsonSerializer.Serialize(payload, JsonOptions));
+        string responseText = response.Body;
         var result = ParseDingTalkOpenApiSendResponse(responseText);
         if (response.IsSuccessStatusCode && DingTalkOpenApiSuccess(result))
         {
-            AppendRunLog(runId, "INFO", $"sap dingtalk openapi sent: userid={payload.userid_list}, task_id={result.TaskId}");
+            AppendRunLog(runId, "INFO", $"sap dingtalk openapi sent: userid={payload.userid_list}, task_id={result.TaskId}, transport={response.Transport}");
             return;
         }
 
-        AppendRunLog(runId, "WARN", $"sap dingtalk openapi failed: status={(int)response.StatusCode}, errcode={result.ErrCode}, errmsg={Truncate(FirstNonEmpty(result.ErrMsg, responseText), 200)}");
+        AppendRunLog(runId, "WARN", $"sap dingtalk openapi failed: transport={response.Transport}, status={response.StatusCode}, errcode={result.ErrCode}, errmsg={Truncate(FirstNonEmpty(result.ErrMsg, responseText), 200)}");
     }
 
     static DingTalkOpenApiConfig LoadDingTalkOpenApiConfig()
@@ -6818,11 +7101,10 @@ ORDER BY 1;
             appSecret = config.AppSecret
         }, JsonOptions);
 
-        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-        using var response = NotificationHttpClient.PostAsync(url, content).GetAwaiter().GetResult();
-        string responseText = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        var response = PostNotificationJson(url, payload);
+        string responseText = response.Body;
         if (!response.IsSuccessStatusCode)
-            throw new InvalidOperationException($"token http status {(int)response.StatusCode}, body={Truncate(responseText, 200)}");
+            throw new InvalidOperationException($"token http status {response.StatusCode}, transport={response.Transport}, body={Truncate(responseText, 200)}");
 
         return ParseDingTalkOpenApiToken(responseText);
     }
@@ -6866,6 +7148,21 @@ ORDER BY 1;
                 GetJsonString(root, "errMsg"),
                 GetJsonString(root, "message"));
             result.TaskId = GetJsonString(root, "task_id");
+            if (string.IsNullOrWhiteSpace(result.TaskId) &&
+                root.TryGetProperty("data", out JsonElement data) &&
+                data.ValueKind == JsonValueKind.Object)
+            {
+                result.TaskId = FirstNonEmpty(
+                    GetJsonString(data, "task_id"),
+                    GetJsonString(data, "taskId"));
+            }
+
+            if (string.IsNullOrWhiteSpace(result.ErrCode) &&
+                root.TryGetProperty("state", out JsonElement state) &&
+                state.ValueKind == JsonValueKind.True)
+            {
+                result.ErrCode = "0";
+            }
         }
         catch
         {
@@ -6879,6 +7176,106 @@ ORDER BY 1;
     {
         return result.ErrCode.Equals("0", StringComparison.OrdinalIgnoreCase) ||
                result.ErrCode.Equals("OK", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static NotificationHttpResult PostNotificationJson(string url, string payload)
+    {
+        try
+        {
+            using var content = new StringContent(payload, Encoding.UTF8, "application/json");
+            using var response = NotificationHttpClient.PostAsync(url, content).GetAwaiter().GetResult();
+            string body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+            return new NotificationHttpResult((int)response.StatusCode, body, "httpclient");
+        }
+        catch (Exception ex) when (CanRetryNotificationWithCurl(url))
+        {
+            return PostNotificationJsonWithCurl(url, payload, ex);
+        }
+    }
+
+    static bool CanRetryNotificationWithCurl(string url)
+    {
+        return Uri.TryCreate(url, UriKind.Absolute, out Uri? uri) &&
+               (uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase) ||
+                uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)) &&
+               !string.IsNullOrWhiteSpace(ResolveCurlExePath());
+    }
+
+    static string ResolveCurlExePath()
+    {
+        string systemCurl = Path.Combine(Environment.SystemDirectory, "curl.exe");
+        if (File.Exists(systemCurl))
+            return systemCurl;
+
+        return "curl.exe";
+    }
+
+    static NotificationHttpResult PostNotificationJsonWithCurl(string url, string payload, Exception originalException)
+    {
+        string curlExe = ResolveCurlExePath();
+        string tempFile = Path.Combine(Path.GetTempPath(), $"sap-rpa-http-{Guid.NewGuid():N}.json");
+        File.WriteAllText(tempFile, payload, new UTF8Encoding(false));
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = curlExe,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            if (url.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
+                psi.ArgumentList.Add("--ssl-no-revoke");
+            psi.ArgumentList.Add("--silent");
+            psi.ArgumentList.Add("--show-error");
+            psi.ArgumentList.Add("--location");
+            psi.ArgumentList.Add("--max-time");
+            psi.ArgumentList.Add(NotificationWorkerTimeoutSeconds.ToString(CultureInfo.InvariantCulture));
+            psi.ArgumentList.Add("--header");
+            psi.ArgumentList.Add("Content-Type: application/json");
+            psi.ArgumentList.Add("--data-binary");
+            psi.ArgumentList.Add("@" + tempFile);
+            psi.ArgumentList.Add("--write-out");
+            psi.ArgumentList.Add("\nSAP_RPA_HTTP_STATUS:%{http_code}");
+            psi.ArgumentList.Add(url);
+
+            using var proc = Process.Start(psi);
+            if (proc == null)
+                throw new InvalidOperationException($"curl process not started after {originalException.GetType().Name}: {originalException.Message}");
+
+            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
+            var stderrTask = proc.StandardError.ReadToEndAsync();
+            if (!proc.WaitForExit(TimeSpan.FromSeconds(NotificationWorkerTimeoutSeconds + 3)))
+            {
+                proc.Kill(entireProcessTree: true);
+                throw new TimeoutException($"curl timed out after {NotificationWorkerTimeoutSeconds + 3}s after {originalException.GetType().Name}: {originalException.Message}");
+            }
+
+            string stdout = stdoutTask.GetAwaiter().GetResult();
+            string stderr = stderrTask.GetAwaiter().GetResult();
+            if (proc.ExitCode != 0)
+                throw new InvalidOperationException($"curl exit={proc.ExitCode}, stderr={Truncate(stderr, 200)} after {originalException.GetType().Name}: {originalException.Message}");
+
+            Match statusMatch = Regex.Match(stdout, @"\r?\nSAP_RPA_HTTP_STATUS:(\d{3})\s*$");
+            if (!statusMatch.Success)
+                throw new InvalidOperationException($"curl did not return HTTP status, output={Truncate(stdout, 200)} after {originalException.GetType().Name}: {originalException.Message}");
+
+            int status = int.Parse(statusMatch.Groups[1].Value, CultureInfo.InvariantCulture);
+            string body = stdout[..statusMatch.Index];
+            return new NotificationHttpResult(status, body, "curl");
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(tempFile);
+            }
+            catch
+            {
+                // Best-effort cleanup only.
+            }
+        }
     }
 
     static JsonDocument? LoadLocalConfigDocument()
@@ -6941,20 +7338,19 @@ ORDER BY 1;
     {
         string payload = BuildSapDingTalkRequestPayload(request);
 
-        using var content = new StringContent(payload, Encoding.UTF8, "application/json");
-        using var response = NotificationHttpClient.PostAsync(endpoint, content).GetAwaiter().GetResult();
-        string responseText = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
+        var response = PostNotificationJson(endpoint, payload);
+        string responseText = response.Body;
         var sapResult = ParseSapDingTalkNotifyResponse(responseText);
         if (!string.IsNullOrWhiteSpace(sapResult.Message))
             AppendRunLog(runId, "INFO", $"sap dingtalk notify EV_TYPE={sapResult.Type}, EV_MSG={Truncate(sapResult.Message, 200)}");
 
         if (response.IsSuccessStatusCode && !IsSapErrorType(sapResult.Type))
         {
-            AppendRunLog(runId, "INFO", $"sap dingtalk notify sent: IV_WORKNO={request.WorkNo}, IV_DDID={request.DingTalkId}");
+            AppendRunLog(runId, "INFO", $"sap dingtalk notify sent: IV_WORKNO={request.WorkNo}, IV_DDID={request.DingTalkId}, transport={response.Transport}");
             return;
         }
 
-        AppendRunLog(runId, "WARN", $"sap dingtalk notify failed: status={(int)response.StatusCode}, EV_TYPE={sapResult.Type}, body={Truncate(responseText, 200)}");
+        AppendRunLog(runId, "WARN", $"sap dingtalk notify failed: transport={response.Transport}, status={response.StatusCode}, EV_TYPE={sapResult.Type}, body={Truncate(responseText, 200)}");
     }
 
     static void SendSapDingTalkNotificationByRfc(string runId, SapDingTalkNotifyRequest request)
@@ -8371,6 +8767,7 @@ WScript.Quit 0
             .Replace("{FIELD2_VALUE}", VbsEscape(p.Field2Value))
             .Replace("{PLANTS}", VbsEscape(effectivePlants))
             .Replace("{BUSINESS_AREAS}", VbsEscape(p.BusinessAreas))
+            .Replace("{MATERIALS}", VbsEscape(p.Materials))
             .Replace("{FACTORY_GROUP}", VbsEscape(p.FactoryGroup))
             .Replace("{RUN_STRATEGY}", VbsEscape(p.RunStrategy))
             .Replace("{PERIOD}", VbsEscape(p.Period))
@@ -8886,6 +9283,38 @@ WScript.Quit 0
         }
 
         {
+            var p = new SapRunParams
+            {
+                TCode = "ZFI057",
+                Plants = "1022,6041",
+                BusinessAreas = "2800",
+                Period = "2026.06.29",
+                WeekEnd = "2026.07.05"
+            };
+            var scopes = ResolveZfi057WorkflowScopes(p);
+            bool ok = scopes.Count == 1 &&
+                      scopes[0].BusinessArea.Equals("2800", StringComparison.OrdinalIgnoreCase) &&
+                      scopes[0].Plants.Contains("1022", StringComparer.OrdinalIgnoreCase) &&
+                      scopes[0].Plants.Contains("6041", StringComparer.OrdinalIgnoreCase);
+            Check("ZFI057 workflow scope maps business area to plants", ok, $"scopeCount={scopes.Count}, plants={(scopes.Count == 0 ? "" : string.Join(",", scopes[0].Plants))}");
+        }
+
+        {
+            var vbsResult = new RunResultRequest
+            {
+                Status = "success",
+                Logs =
+                {
+                    new RunLogLine { Level = "INFO", Message = "MATERIAL=MAT001" },
+                    new RunLogLine { Level = "INFO", Message = "MATERIALS_CSV=MAT002,MAT001" }
+                }
+            };
+            string materials = ExtractMaterialsFromResult(vbsResult);
+            bool ok = materials.Equals("MAT001,MAT002", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 workflow extracts upstream materials", ok, $"materials={materials}");
+        }
+
+        {
             var request = new CreateRunRequest
             {
                 TransactionCode = "ZFI080",
@@ -9383,7 +9812,7 @@ Item1=test888
 
     static string DescribeParams(SapRunParams p)
     {
-        return $"tcode={p.TCode}, script={p.Script}, system={p.System}, client={p.Client}, user={p.User}, pw={MaskValue("pw", p.Password)}, lang={p.Language}, sysnr={p.SysNr}, year={p.Year}, week={p.Week}, plant={p.Plant}, plants={p.Plants}, period={p.Period}, businessArea={p.BusinessArea}, businessAreas={p.BusinessAreas}, weekEnd={p.WeekEnd}, factoryGroup={p.FactoryGroup}, runStrategy={p.RunStrategy}";
+        return $"tcode={p.TCode}, script={p.Script}, system={p.System}, client={p.Client}, user={p.User}, pw={MaskValue("pw", p.Password)}, lang={p.Language}, sysnr={p.SysNr}, year={p.Year}, week={p.Week}, plant={p.Plant}, plants={p.Plants}, period={p.Period}, businessArea={p.BusinessArea}, businessAreas={p.BusinessAreas}, weekEnd={p.WeekEnd}, materialsCount={NormalizeStringArray(p.Materials).Length}, factoryGroup={p.FactoryGroup}, runStrategy={p.RunStrategy}";
     }
 
     static string MaskRawArg(string? arg)
@@ -9434,6 +9863,7 @@ class SapRunParams
     public string BusinessArea { get; set; } = "";
     public string BusinessAreas { get; set; } = "";
     public string WeekEnd { get; set; } = "";
+    public string Materials { get; set; } = "";
     public string FactoryGroup { get; set; } = "";
     public string RunStrategy { get; set; } = "";
     public string Field1Name { get; set; } = "";
@@ -9447,6 +9877,8 @@ class SapRunParams
 }
 
 record BatchRunPlan(string TCode, string ParamKey, string SingleParamKey, string ListParamKey, string ItemLabel, string[] Items);
+
+record Zfi057WorkflowScope(string BusinessArea, string[] Plants);
 
 record DingTalkParamGroup(string Label, string[] Keys, bool SplitValues);
 
@@ -9906,6 +10338,21 @@ class DingTalkOpenApiSendResult
     public string ErrCode { get; set; } = "";
     public string ErrMsg { get; set; } = "";
     public string TaskId { get; set; } = "";
+}
+
+class NotificationHttpResult
+{
+    public NotificationHttpResult(int statusCode, string body, string transport)
+    {
+        StatusCode = statusCode;
+        Body = body;
+        Transport = transport;
+    }
+
+    public int StatusCode { get; }
+    public string Body { get; }
+    public string Transport { get; }
+    public bool IsSuccessStatusCode => StatusCode >= 200 && StatusCode <= 299;
 }
 
 class SapFunctionResult

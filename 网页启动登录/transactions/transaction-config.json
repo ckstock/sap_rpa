@@ -70,13 +70,16 @@
                              "script":  "ZFI057.vbs",
                              "icon":  "trending-up",
                              "params":  [
-                                            "year",
-                                            "week",
-                                            "plants"
+                                            "plants",
+                                            "businessAreas",
+                                            "period",
+                                            "weekEnd"
                                         ],
-                             "factoryRule":  "按选中厂区工厂执行",
+                             "factoryRule":  "点击 ZFI057 后自动执行 ZFI019NL -> ZFI057 -> ZCO020；物料集合由工作流从 ZFI019NL/ZFI_SPLIT 上游取数",
                              "defaultPlantGroup":  "PINGHU_ALL",
-                             "automation":  "openOnly"
+                             "automation":  "script",
+                             "timeoutSeconds":  1800,
+                             "retryCount":  1
                          },
                          {
                              "code":  "ZCO020",
@@ -85,13 +88,15 @@
                              "script":  "ZCO020.vbs",
                              "icon":  "list-checks",
                              "params":  [
-                                            "year",
-                                            "week",
-                                            "plants"
+                                            "businessAreas",
+                                            "period",
+                                            "weekEnd"
                                         ],
-                             "factoryRule":  "按选中厂区工厂执行",
+                             "factoryRule":  "按业务范围和周结日期验证 ZFI057 拆分结果",
                              "defaultPlantGroup":  "PINGHU_ALL",
-                             "automation":  "openOnly"
+                             "automation":  "script",
+                             "timeoutSeconds":  900,
+                             "retryCount":  1
                          },
                          {
                              "code":  "ZPP063",

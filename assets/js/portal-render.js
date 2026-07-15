@@ -360,10 +360,9 @@
       },
       {
         title: "产值拆分",
-        summary: "ZFI057 → ZCO020",
+        summary: "ZFI057 single workflow entry",
         entries: [
-          { code: "ZFI057" },
-          { code: "ZCO020" }
+          { code: "ZFI057" }
         ]
       },
       {
@@ -1102,6 +1101,7 @@
           plantCodes: plantsValue.join(","),
           factoryCodes: plantsValue.join(","),
           businessAreas: businessAreas.join(","),
+          runStrategy: tCode === "ZFI057" ? "auto3step" : "",
           rangeKind: isDateRange ? "dateRange" : "",
           dateRule: isDateRange ? "LAST_FULL_WEEK_BY_SYSTEM_DATE" : "",
           factoryGroup
