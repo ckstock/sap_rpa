@@ -550,13 +550,38 @@
         const label = payload.rangeKind === "dateRange" ? (index === 0 ? "开始" : "截止") + " " : "";
         return `<span class="area-chip">${esc(label + code)}</span>`;
       }).join("") || `<span class="area-chip">${esc(payload.rangeEmptyText)}</span>`;
+      const weekOverride = state.form.tCode === "ZFI057" ? renderZfi057WeekOverride(payload) : "";
       return `
         <div class="execute-range">
           <div class="execute-range-row">
             <div class="execute-range-label">执行${esc(payload.rangeLabel)}</div>
             <div class="area-chips">${chips}</div>
           </div>
+          ${weekOverride}
         </div>
+      `;
+    }
+
+    function renderZfi057WeekOverride(payload) {
+      const currentRange = normalizeZfi057WeekOverride();
+      const inputText = payload.dateRangeSource === "server"
+        ? "服务器上一完整周（提交时由后端计算）"
+        : `${payload.period} 至 ${payload.weekEnd}`;
+      return `
+          <div class="zfi057-week-override">
+            <label class="checkbox-card compact">
+              <input id="useCustomZfi057Week" type="checkbox" ${state.form.useCustomZfi057Week === false ? "" : "checked"}>
+              <span>
+                <strong>指定测试周</strong>
+                <span>勾选后按下方日期执行；取消勾选后不传日期，由后端按服务器日期计算上一完整周。</span>
+              </span>
+            </label>
+            <div class="week-range-inputs">
+              <label>开始日期<input id="customZfi057WeekStart" type="date" value="${esc(sapDateToInputValue(currentRange.period))}" ${state.form.useCustomZfi057Week === false ? "disabled" : ""}></label>
+              <label>截止日期<input id="customZfi057WeekEnd" type="date" value="${esc(sapDateToInputValue(currentRange.weekEnd))}" ${state.form.useCustomZfi057Week === false ? "disabled" : ""}></label>
+              <span class="table-hint">本次入参：${esc(inputText)}</span>
+            </div>
+          </div>
       `;
     }
     function unique(list) {
@@ -983,7 +1008,7 @@
       const code = String(transaction?.code || "").toUpperCase();
       const params = getDisplayParamsForTransaction(transaction);
       if (code === "ZFIR034" || (params.includes("period") && params.includes("weekEnd") && !params.includes("plants") && !params.includes("businessAreas"))) return "dateRange";
-      if (code === "ZFI019NL") return "businessArea";
+      if (code === "ZFI019NL" || code === "ZFI057" || code === "ZCO020") return "businessArea";
       return params.includes("businessAreas") && !params.includes("plants") ? "businessArea" : "plant";
     }
 
@@ -1022,19 +1047,26 @@
 
     function getScheduleBusinessAreas(task) {
       if (getRuleRangeKind(getTCode(task?.tCode || "")) === "dateRange") return [];
+      if (getRuleRangeKind(getTCode(task?.tCode || "")) === "businessArea") {
+        const explicitAreas = toArray(task?.businessAreas);
+        if (explicitAreas.length) return explicitAreas;
+        return toArray(task?.plants);
+      }
       const explicitAreas = toArray(task?.businessAreas);
       if (explicitAreas.length) return explicitAreas;
       return getBusinessAreasForSelection(task?.tCode || "", toArray(task?.plants), task?.factoryGroup || state.scheduleForm.factoryGroup);
     }
 
     function getScheduleScopeChips(task) {
-      if (getRuleRangeKind(getTCode(task?.tCode || "")) === "dateRange") {
+      const rangeKind = getRuleRangeKind(getTCode(task?.tCode || ""));
+      if (rangeKind === "dateRange") {
         const params = task?.params || {};
         const range = params.period && params.weekEnd
           ? { period: params.period, weekEnd: params.weekEnd }
           : getLastFullWeekDateRange();
         return renderCodeChips([`开始 ${range.period}`, `截止 ${range.weekEnd}`]);
       }
+      if (rangeKind === "businessArea") return renderCodeChips(getScheduleBusinessAreas(task));
       return renderCodeChips(task?.plants);
     }
 
@@ -1064,9 +1096,12 @@
       const tCode = readInputValue("scheduleTCode") || state.scheduleForm.tCode || tCodes[0]?.code || "";
       const factoryGroup = readInputValue("scheduleFactoryGroup") || state.scheduleForm.factoryGroup || getTCode(tCode)?.defaultPlantGroup || factoryGroups[0]?.id || "";
       const schedulePlantsInput = document.getElementById("schedulePlants");
-      const isDateRange = getRuleRangeKind(getTCode(tCode)) === "dateRange";
-      const plantsValue = isDateRange ? [] : normalizeRulePlantList(schedulePlantsInput ? schedulePlantsInput.value : state.scheduleForm.plants);
-      const businessAreas = isDateRange ? [] : getBusinessAreasForSelection(tCode, plantsValue, factoryGroup);
+      const rangeKind = getRuleRangeKind(getTCode(tCode));
+      const isDateRange = rangeKind === "dateRange";
+      const isBusinessAreaRange = rangeKind === "businessArea";
+      const rangeValue = isDateRange ? [] : normalizeRulePlantList(schedulePlantsInput ? schedulePlantsInput.value : state.scheduleForm.plants);
+      const plantsValue = isBusinessAreaRange || isDateRange ? [] : rangeValue;
+      const businessAreas = isDateRange ? [] : (isBusinessAreaRange ? rangeValue : getBusinessAreasForSelection(tCode, plantsValue, factoryGroup));
       const frequency = readInputValue("scheduleFrequency") || state.scheduleForm.frequency || "weekly";
       const enabled = readInputChecked("scheduleEnabled");
       const notifyEnabled = readInputChecked("scheduleNotifyStart") || readInputChecked("scheduleNotifySuccess") || readInputChecked("scheduleNotifyFail");
@@ -1088,7 +1123,7 @@
         factoryCodesCsv: plantsValue.join(","),
         businessAreas,
         businessAreasCsv: businessAreas.join(","),
-        rangeKind: isDateRange ? "dateRange" : "plant",
+        rangeKind: isDateRange ? "dateRange" : (isBusinessAreaRange ? "businessArea" : "plant"),
         dateRule: isDateRange ? "LAST_FULL_WEEK_BY_SYSTEM_DATE" : "",
         time: readInputValue("scheduleTime") || "08:00",
         execTime: readInputValue("scheduleTime") || "08:00",
@@ -1102,7 +1137,7 @@
           factoryCodes: plantsValue.join(","),
           businessAreas: businessAreas.join(","),
           runStrategy: tCode === "ZFI057" ? "auto3step" : "",
-          rangeKind: isDateRange ? "dateRange" : "",
+          rangeKind: isDateRange ? "dateRange" : (isBusinessAreaRange ? "businessArea" : ""),
           dateRule: isDateRange ? "LAST_FULL_WEEK_BY_SYSTEM_DATE" : "",
           factoryGroup
         },
@@ -1169,8 +1204,10 @@
           state.scheduleForm.tCode = executableTCodes[0]?.code || tCodes[0]?.code || "";
         }
         const schedulePlants = normalizeRulePlantList(state.scheduleForm.plants);
-        const isDateRange = getRuleRangeKind(getTCode(state.scheduleForm.tCode)) === "dateRange";
-        const scheduleAreas = isDateRange ? [] : getBusinessAreasForSelection(state.scheduleForm.tCode, schedulePlants, state.scheduleForm.factoryGroup);
+        const scheduleRangeKind = getRuleRangeKind(getTCode(state.scheduleForm.tCode));
+        const isDateRange = scheduleRangeKind === "dateRange";
+        const isBusinessAreaRange = scheduleRangeKind === "businessArea";
+        const scheduleAreas = isDateRange ? [] : (isBusinessAreaRange ? schedulePlants : getBusinessAreasForSelection(state.scheduleForm.tCode, schedulePlants, state.scheduleForm.factoryGroup));
         const scheduleRange = getLastFullWeekDateRange();
         const scheduleScopeEditor = isDateRange ? `
                   <div class="schedule-plant-preview">
@@ -1181,17 +1218,17 @@
                   </div>` : `
                   <div class="schedule-plant-preview">
                     <div class="rule-plant-head">
-                      <div class="schedule-plant-title">对应工厂</div>
+                      <div class="schedule-plant-title">${isBusinessAreaRange ? "业务范围代码" : "对应工厂"}</div>
                       <button type="button" class="btn small" data-action="reset-schedule-plants">${icon("rotate-ccw")}恢复默认</button>
                     </div>
                     <input type="hidden" id="schedulePlants" value="${esc(schedulePlants.join(","))}">
-                    <div id="schedulePlantChips" class="area-chips">${renderSchedulePlantChips(schedulePlants)}</div>
+                    <div id="schedulePlantChips" class="area-chips">${renderSchedulePlantChips(schedulePlants, isBusinessAreaRange ? "businessArea" : "plant")}</div>
                     <div class="rule-plant-add">
-                      <input id="schedulePlantAdd" placeholder="新增工厂代码">
+                      <input id="schedulePlantAdd" placeholder="${isBusinessAreaRange ? "新增业务范围代码" : "新增工厂代码"}">
                       <button type="button" class="btn small" data-action="add-schedule-plant">${icon("plus")}新增</button>
                     </div>
                   </div>
-                  <div class="schedule-plant-preview">
+                  <div class="schedule-plant-preview" ${isBusinessAreaRange ? "hidden" : ""}>
                     <div class="schedule-plant-title">业务范围代码</div>
                     <div id="scheduleBusinessAreaChips">${renderCodeChips(scheduleAreas)}</div>
                   </div>`;

@@ -241,6 +241,7 @@
     .checkbox-card input { width: auto; min-height: 0; margin-top: 3px; }
     .checkbox-card strong { display: block; color: #102a43; }
     .checkbox-card span { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 3px; }
+    .checkbox-card.compact { min-height: 0; padding: 9px 10px; }
     .area-chips { display: flex; gap: 8px; flex-wrap: wrap; }
     .area-chip {
       min-height: 28px;
@@ -376,6 +377,21 @@
     }
     .execute-range-label { color: #475467; line-height: 28px; }
     .execute-range-value { color: #102a43; font-weight: 800; line-height: 28px; }
+    .zfi057-week-override { display: grid; gap: 10px; }
+    .week-range-inputs {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+    .week-range-inputs label {
+      display: grid;
+      gap: 6px;
+      color: #475467;
+      font-size: 12px;
+    }
+    .week-range-inputs input { min-height: 34px; background: #fff; }
+    .week-range-inputs .table-hint { align-self: center; }
     .execute-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
     .transaction-groups { display: grid; gap: 18px; }
     .transaction-group {

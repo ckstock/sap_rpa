@@ -108,6 +108,14 @@ static class Program
             return;
         }
 
+        if (args.Length > 0 &&
+            (args[0].Equals("--test-zfi019nl-memory", StringComparison.OrdinalIgnoreCase) ||
+             args[0].Equals("test-zfi019nl-memory", StringComparison.OrdinalIgnoreCase)))
+        {
+            Environment.Exit(RunZfi019NlMemoryDiagnostic(args.Skip(1).ToArray()));
+            return;
+        }
+
         using var mutex = new Mutex(true, MutexId);
         if (!mutex.WaitOne(TimeSpan.Zero, true))
         {
@@ -148,6 +156,7 @@ static class Program
         Console.WriteLine($"用法: {Process.GetCurrentProcess().ProcessName}.exe [--register]");
         Console.WriteLine($"  初始化本机数据库: {Process.GetCurrentProcess().ProcessName}.exe --init-db");
         Console.WriteLine($"  启动本机 Bridge API: {Process.GetCurrentProcess().ProcessName}.exe --serve");
+        Console.WriteLine($"  诊断 ZFI019NL memory 取数: {Process.GetCurrentProcess().ProcessName}.exe --test-zfi019nl-memory --businessArea 2800 --period 2026.04.27 --weekEnd 2026.05.03");
         Console.WriteLine($"  或从浏览器跳转 {PrimaryProtocolName}://run?action=run&tcode=ZFI019NL&script=openOnly&plants=1022,1024");
     }
 
@@ -258,6 +267,197 @@ static class Program
             Script = "openOnly"
         });
         LaunchSapGuiAndExecute(p);
+    }
+
+    static int RunZfi019NlMemoryDiagnostic(string[] args)
+    {
+        try
+        {
+            EnsureRuntimeDirectories();
+            var values = ParseCliKeyValueArgs(args);
+            string businessArea = FirstNonEmpty(
+                First(values, "businessArea", "businessarea", "gsber") ?? "",
+                "2800");
+            string period = FirstNonEmpty(
+                First(values, "period", "startDate", "dateFrom") ?? "",
+                "2026.04.27");
+            string weekEnd = FirstNonEmpty(
+                First(values, "weekEnd", "endDate", "dateTo") ?? "",
+                "2026.05.03");
+            string plants = FirstNonEmpty(
+                First(values, "plants", "werks", "plant") ?? "",
+                "");
+
+            var p = ApplyLocalConfig(new SapRunParams
+            {
+                TCode = "ZFI057",
+                Script = "diagnostic",
+                BusinessAreas = businessArea,
+                BusinessArea = businessArea,
+                Plants = plants,
+                Plant = FirstCsvValue(plants),
+                Period = period,
+                WeekEnd = weekEnd,
+                RunStrategy = "diagnostic",
+                RunId = $"DIAG-ZFI019NL-{DateTime.Now:yyyyMMddHHmmss}"
+            });
+
+            var fetch = ExecuteZfi057Step1Memory(p, businessArea, NormalizeStringArray(plants));
+            var aggregate = new RunResultRequest { Status = fetch.Result.Status, Message = fetch.Result.Message };
+            AddStepResult(aggregate, "diagnostic ZFI019NL memory", fetch.Result);
+            AddZfi057MaterialAuditFile(
+                aggregate,
+                p,
+                1,
+                businessArea,
+                NormalizeStringArray(plants),
+                "ZFI019NL_MEMORY",
+                Array.Empty<string>(),
+                fetch.Materials,
+                fetch.Materials,
+                fetch.FetchResult.FinalRows);
+
+            Console.WriteLine("ZFI019NL memory diagnostic");
+            Console.WriteLine($"status={fetch.Result.Status}");
+            Console.WriteLine($"message={fetch.Result.Message}");
+            Console.WriteLine($"businessArea={businessArea}");
+            Console.WriteLine($"period={period}");
+            Console.WriteLine($"weekEnd={weekEnd}");
+            Console.WriteLine($"method={fetch.FetchResult.ActualMethod}");
+            Console.WriteLine($"rawLines={fetch.FetchResult.RawLines.Count}");
+            Console.WriteLine($"headers={fetch.FetchResult.Headers.Count}");
+            Console.WriteLine($"alvRows={fetch.FetchResult.AlvRows.Count}");
+            Console.WriteLine($"finalRows={fetch.FetchResult.FinalRows.Count}");
+            Console.WriteLine($"materialCount={fetch.Materials.Length}");
+            Console.WriteLine($"materialSample={FormatSample(fetch.Materials, 20)}");
+            Console.WriteLine($"materialHash={HashForLog(string.Join(",", fetch.Materials))}");
+            foreach (var file in aggregate.Files)
+                Console.WriteLine($"file={file.Path}");
+            Console.WriteLine("logs:");
+            foreach (var line in aggregate.Logs)
+                Console.WriteLine($"{FirstNonEmpty(line.Level, "INFO")}: {line.Message}");
+
+            string diagnosticLog = WriteZfi019NlDiagnosticLog(p, businessArea, period, weekEnd, fetch, aggregate);
+            Console.WriteLine($"diagnosticLog={diagnosticLog}");
+
+            return IsSuccessResult(fetch.Result) && fetch.Materials.Length > 0 ? 0 : 2;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"ZFI019NL memory diagnostic failed: {ex.Message}");
+            Log($"ZFI019NL memory diagnostic failed: {ex}");
+            return 1;
+        }
+    }
+
+    static NameValueCollection ParseCliKeyValueArgs(string[] args)
+    {
+        var result = new NameValueCollection();
+        for (int i = 0; i < args.Length; i++)
+        {
+            string raw = args[i] ?? "";
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+
+            string token = raw.Trim();
+            string key;
+            string value;
+            int equals = token.IndexOf('=');
+            if (equals > 0)
+            {
+                key = token[..equals];
+                value = token[(equals + 1)..];
+            }
+            else
+            {
+                key = token;
+                value = i + 1 < args.Length && !(args[i + 1] ?? "").StartsWith("-", StringComparison.Ordinal)
+                    ? args[++i]
+                    : "true";
+            }
+
+            key = key.TrimStart('-', '/').Trim();
+            if (key.Length > 0)
+                result[key] = value.Trim();
+        }
+
+        return result;
+    }
+
+    static string WriteZfi019NlDiagnosticLog(
+        SapRunParams p,
+        string businessArea,
+        string period,
+        string weekEnd,
+        Zfi057Step1MaterialFetch fetch,
+        RunResultRequest aggregate)
+    {
+        string directory = Path.Combine(OutputDirectory, "zfi057");
+        Directory.CreateDirectory(directory);
+        string path = Path.Combine(directory, $"{SafeFileNamePart(FirstNonEmpty(p.RunId, DateTime.Now.ToString("yyyyMMddHHmmss")))}_diagnostic.log");
+        var lines = new List<string>
+        {
+            "ZFI019NL memory diagnostic",
+            $"runId={p.RunId}",
+            $"status={fetch.Result.Status}",
+            $"message={fetch.Result.Message}",
+            $"businessArea={businessArea}",
+            $"period={period}",
+            $"weekEnd={weekEnd}",
+            $"method={fetch.FetchResult.ActualMethod}",
+            $"rawLines={fetch.FetchResult.RawLines.Count}",
+            $"headers={fetch.FetchResult.Headers.Count}",
+            $"headerList={string.Join("|", fetch.FetchResult.Headers)}",
+            $"rawHeaderLine={Truncate(fetch.FetchResult.RawLines.FirstOrDefault(line => line.StartsWith("HEADER=", StringComparison.OrdinalIgnoreCase)) ?? "", 2000)}",
+            $"rawRowLine1={Truncate(FindLogicalSapLine(fetch.FetchResult.RawLines, "ROW="), 2000)}",
+            $"alvRows={fetch.FetchResult.AlvRows.Count}",
+            $"finalRows={fetch.FetchResult.FinalRows.Count}",
+            $"materialCount={fetch.Materials.Length}",
+            $"materialSample={FormatSample(fetch.Materials, 20)}",
+            $"materialHash={HashForLog(string.Join(",", fetch.Materials))}",
+            $"options={fetch.FetchResult.Options}",
+            "",
+            "logs:"
+        };
+        lines.AddRange(aggregate.Logs.Select(line => $"{FirstNonEmpty(line.Level, "INFO")}: {line.Message}"));
+        File.WriteAllLines(path, lines, new UTF8Encoding(false));
+        return path;
+    }
+
+    static string FindLogicalSapLine(IEnumerable<string> rawLines, string prefix)
+    {
+        StringBuilder? buffer = null;
+        foreach (var raw in rawLines)
+        {
+            string line = raw ?? "";
+            string marker = line.Trim();
+            if (marker.Equals("LONG_BEGIN", StringComparison.OrdinalIgnoreCase))
+            {
+                buffer = new StringBuilder();
+                continue;
+            }
+
+            if (marker.StartsWith("LONG_PART=", StringComparison.OrdinalIgnoreCase))
+            {
+                buffer ??= new StringBuilder();
+                buffer.Append(line.TrimStart()["LONG_PART=".Length..]);
+                continue;
+            }
+
+            if (marker.Equals("LONG_END", StringComparison.OrdinalIgnoreCase))
+            {
+                string logical = buffer?.ToString() ?? "";
+                buffer = null;
+                if (logical.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                    return logical;
+                continue;
+            }
+
+            if (buffer == null && line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                return line;
+        }
+
+        return "";
     }
 
     static NameValueCollection ParseUri(string raw)
@@ -5274,6 +5474,7 @@ WHERE run_id=$runId;
 
         var scopes = ResolveZfi057WorkflowScopes(p);
         AddWorkflowLog(aggregate, "workflow", $"ZFI057 auto workflow start; scopeCount={scopes.Count}; period={p.Period}; weekEnd={p.WeekEnd}");
+        AddWorkflowLog(aggregate, "workflow", $"raw input: businessAreas={p.BusinessAreas}; plants={p.Plants}; factoryGroup={p.FactoryGroup}; runStrategy={p.RunStrategy}");
         if (scopes.Count == 0)
             return FailZfi057Workflow(aggregate, "ZFI057 workflow requires businessAreas or plants that can resolve to business areas.", started);
 
@@ -5288,31 +5489,23 @@ WHERE run_id=$runId;
             if (string.IsNullOrWhiteSpace(area))
                 return FailZfi057Workflow(aggregate, $"ZFI057 workflow scope #{scopeIndex} has no business area.", started);
 
-            var step1 = CloneSapRunParams(p);
-            step1.TCode = "ZFI019NL";
-            step1.Script = "ZFI019NL.vbs";
-            step1.BusinessAreas = area;
-            step1.BusinessArea = area;
-            step1.Plants = string.Join(",", plants.Where(x => !string.IsNullOrWhiteSpace(x)));
-            step1.Plant = FirstCsvValue(step1.Plants);
-            step1.Materials = "";
-            step1.RunStrategy = "workflow-step";
-            step1.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 900);
+            AddWorkflowLog(aggregate, "step 1", $"query: method=NCo REPORT_SUBMIT/MEMORY_EXPORT; report=ZFI019NL; businessArea={area}; plants={string.Join(",", plants.Where(x => !string.IsNullOrWhiteSpace(x)))}; period={p.Period}; weekEnd={p.WeekEnd}");
+            var step1Fetch = ExecuteZfi057Step1Memory(p, area, plants);
+            AddStepResult(aggregate, "step 1 ZFI019NL memory", step1Fetch.Result);
+            if (!IsSuccessResult(step1Fetch.Result))
+                return FailZfi057Workflow(aggregate, $"ZFI057 workflow stopped at step 1 memory fetch for businessArea={area}: {step1Fetch.Result.Message}", started);
 
-            AddWorkflowLog(aggregate, "step 1", $"run ZFI019NL to collect materials; businessArea={area}; period={p.Period}; weekEnd={p.WeekEnd}");
-            var step1Result = LaunchSapGuiAndExecute(step1);
-            AddStepResult(aggregate, "step 1 ZFI019NL", step1Result);
-            if (!IsSuccessResult(step1Result))
-                return FailZfi057Workflow(aggregate, $"ZFI057 workflow stopped at step 1 for businessArea={area}: {step1Result.Message}", started);
-
-            string materials = FirstNonEmpty(p.Materials, ExtractMaterialsFromResult(step1Result));
-            string[] materialItems = NormalizeStringArray(materials);
-            AddWorkflowLog(aggregate, "step 1", $"materialCount={materialItems.Length}");
+            string[] requestMaterialItems = NormalizeStringArray(p.Materials);
+            string[] upstreamMaterialItems = step1Fetch.Materials;
+            string materialSource = "ZFI019NL_MEMORY";
+            string[] materialItems = upstreamMaterialItems;
+            AddWorkflowLog(aggregate, "step 1", $"materials: selectedSource={materialSource}; selectedCount={materialItems.Length}; selectedSample={FormatSample(materialItems, 8)}; selectedHash={HashForLog(string.Join(",", materialItems))}; requestCount={requestMaterialItems.Length}; requestMaterialsIgnored=true; upstreamCount={upstreamMaterialItems.Length}; upstreamSample={FormatSample(upstreamMaterialItems, 8)}; upstreamHash={HashForLog(string.Join(",", upstreamMaterialItems))}");
+            AddZfi057MaterialAuditFile(aggregate, p, scopeIndex, area, plants, materialSource, requestMaterialItems, upstreamMaterialItems, materialItems, step1Fetch.FetchResult.FinalRows);
             if (materialItems.Length == 0)
             {
                 return FailZfi057Workflow(aggregate,
-                    "ZFI057 workflow stopped after ZFI019NL: no material list was returned. " +
-                    "The ZFI019NL script must output MATERIAL=... or MATERIALS_CSV=... before ZFI057 can run.",
+                    "ZFI057 workflow stopped after ZFI019NL memory fetch: no material list was returned. " +
+                    "Step 1 uses SAP NCo REPORT_SUBMIT/MEMORY_EXPORT only; it does not run ZFI019NL.vbs.",
                     started);
             }
 
@@ -5331,7 +5524,7 @@ WHERE run_id=$runId;
                 step2.RunStrategy = "workflow-step";
                 step2.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 1800);
 
-                AddWorkflowLog(aggregate, "step 2", $"run ZFI057; businessArea={area}; plant={FirstNonEmpty(plant, "(script-mapped)")}; materialCount={materialItems.Length}; attempt={plantIndex}/{plants.Length}");
+                AddWorkflowLog(aggregate, "step 2", $"query: script={step2.Script}; tcode={step2.TCode}; businessArea={area}; plant={FirstNonEmpty(plant, "(script-mapped)")}; period={p.Period}; weekEnd={p.WeekEnd}; materialCount={materialItems.Length}; materialSample={FormatSample(materialItems, 8)}; materialHash={HashForLog(string.Join(",", materialItems))}; attempt={plantIndex}/{plants.Length}; timeoutSeconds={step2.TimeoutSeconds}");
                 var step2Result = LaunchSapGuiAndExecute(step2);
                 AddStepResult(aggregate, "step 2 ZFI057", step2Result);
                 if (!IsSuccessResult(step2Result))
@@ -5349,7 +5542,7 @@ WHERE run_id=$runId;
             step3.RunStrategy = "workflow-step";
             step3.TimeoutSeconds = Math.Max(900, Math.Min(p.TimeoutSeconds.GetValueOrDefault(900), 1800));
 
-            AddWorkflowLog(aggregate, "step 3", $"run ZCO020 verification; businessArea={area}; period={p.Period}; weekEnd={p.WeekEnd}");
+            AddWorkflowLog(aggregate, "step 3", $"query: script={step3.Script}; tcode={step3.TCode}; businessArea={area}; plants={step3.Plants}; period={p.Period}; weekEnd={p.WeekEnd}; timeoutSeconds={step3.TimeoutSeconds}");
             var step3Result = LaunchSapGuiAndExecute(step3);
             AddStepResult(aggregate, "step 3 ZCO020", step3Result);
             if (!IsSuccessResult(step3Result))
@@ -5360,6 +5553,66 @@ WHERE run_id=$runId;
         aggregate.Message = "ZFI057 auto workflow completed: ZFI019NL -> ZFI057 -> ZCO020";
         aggregate.DurationMs = EnsureDuration(0, started);
         return aggregate;
+    }
+
+    static Zfi057Step1MaterialFetch ExecuteZfi057Step1Memory(SapRunParams p, string businessArea, string[] plants)
+    {
+        var started = DateTime.UtcNow;
+        var result = new RunResultRequest
+        {
+            Status = "failed",
+            Message = "ZFI019NL memory fetch failed"
+        };
+
+        SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
+        var request = BuildZfi019NlMemoryRequest(p, businessArea, plants);
+        result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch destination: {connectionConfig.SafeSummary()}" });
+        result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch selections: S_BUDAT={GetSelectionSummary(request, "S_BUDAT")}; S_GSBER={GetSelectionSummary(request, "S_GSBER")}; splitWerks={FormatSample(request.SplitWerks, 8)}; memoryId={request.MemoryId}; memoryName={request.MemoryName}; splitTable={request.SplitTable}; splitBukrs={request.SplitBukrs}" });
+
+        Zfi019NlFetchResult fetchResult;
+        try
+        {
+            fetchResult = new Zfi019NlMemoryFetcher().Fetch(connectionConfig, request);
+        }
+        catch (Exception ex)
+        {
+            fetchResult = new Zfi019NlFetchResult
+            {
+                Subrc = 8,
+                Message = $"ZFI019NL memory fetch threw: {ex.Message}",
+                ActualMethod = "MEMORY_EXPORT"
+            };
+        }
+
+        string[] materials = fetchResult.FinalRows
+            .Select(row => row.TryGetValue(Zfi019NlMemoryFetcher.FinalMaterialColumn, out string? value) ? value : "")
+            .Select(v => v.Trim())
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        result.Status = fetchResult.Success ? "success" : "failed";
+        result.Message = fetchResult.Success
+            ? $"ZFI019NL memory fetch returned {materials.Length} material(s)."
+            : FirstNonEmpty(fetchResult.Message, "ZFI019NL memory fetch failed.");
+        result.DurationMs = EnsureDuration(0, started);
+        result.SapStatusType = fetchResult.Success ? "S" : "E";
+        result.SapStatusText = fetchResult.Message;
+        result.Logs.Add(new RunLogLine { Level = fetchResult.Success ? "INFO" : "ERROR", Message = $"ZFI019NL memory fetch result: success={fetchResult.Success}; subrc={fetchResult.Subrc}; method={fetchResult.ActualMethod}; message={Truncate(fetchResult.Message, 360)}" });
+        result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch options={fetchResult.Options}" });
+        result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch counts: rawLines={fetchResult.RawLines.Count}; headers={fetchResult.Headers.Count}; alvRows={fetchResult.AlvRows.Count}; finalRows={fetchResult.FinalRows.Count}; splitMaterials={fetchResult.SplitMaterialCount}" });
+        result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch headerSample={Truncate(string.Join("|", fetchResult.Headers), 1200)}" });
+        result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch materials: count={materials.Length}; sample={FormatSample(materials, 8)}; hash={HashForLog(string.Join(",", materials))}" });
+
+        foreach (var sourceGroup in fetchResult.FinalRows
+            .Select(row => row.TryGetValue(Zfi019NlMemoryFetcher.FinalSourceColumn, out string? source) ? FirstNonEmpty(source, "-") : "-")
+            .GroupBy(source => source, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(group => group.Key))
+        {
+            result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch source: {sourceGroup.Key} count={sourceGroup.Count()}" });
+        }
+
+        return new Zfi057Step1MaterialFetch(result, materials, fetchResult);
     }
 
     static RunResultRequest FailZfi057Workflow(RunResultRequest aggregate, string message, DateTime started)
@@ -5383,6 +5636,7 @@ WHERE run_id=$runId;
 
     static void AddStepResult(RunResultRequest aggregate, string step, RunResultRequest result)
     {
+        AddWorkflowLog(aggregate, step, $"result: status={result.Status}; durationMs={result.DurationMs}; message={Truncate(result.Message, 240)}; sapStatusType={result.SapStatusType}; sapStatusText={Truncate(result.SapStatusText, 240)}");
         foreach (var line in result.Logs)
         {
             aggregate.Logs.Add(new RunLogLine
@@ -5400,6 +5654,265 @@ WHERE run_id=$runId;
             aggregate.SapStatusType = result.SapStatusType;
         if (!string.IsNullOrWhiteSpace(result.SapStatusText))
             aggregate.SapStatusText = result.SapStatusText;
+    }
+
+    static string FormatSample(IEnumerable<string> values, int maxItems)
+    {
+        var items = values
+            .Select(v => FirstNonEmpty(v, "").Trim())
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .Take(Math.Max(1, maxItems))
+            .ToArray();
+        return items.Length == 0 ? "-" : string.Join(",", items);
+    }
+
+    static string HashForLog(string value)
+    {
+        byte[] bytes = SHA256.HashData(Encoding.UTF8.GetBytes(value ?? ""));
+        return Convert.ToHexString(bytes).Substring(0, 12);
+    }
+
+    static Zfi019NlFetchRequest BuildZfi019NlMemoryRequest(SapRunParams p, string businessArea, string[] plants)
+    {
+        DateTime defaultStart = StartOfWeek(DateTime.Today).AddDays(-7);
+        DateTime defaultEnd = defaultStart.AddDays(6);
+        DateTime start = ParseFlexibleDateOrDefault(p.Period, defaultStart);
+        DateTime end = ParseFlexibleDateOrDefault(p.WeekEnd, defaultEnd);
+        if (end < start)
+            (start, end) = (end, start);
+
+        var config = LoadZfi019NlMemoryConfig();
+        var request = new Zfi019NlFetchRequest
+        {
+            Report = FirstNonEmpty(config.Report, "ZFI019NL"),
+            Variant = config.Variant,
+            MemoryId = FirstNonEmpty(config.MemoryId, "%ZFI019NA%"),
+            MemoryName = FirstNonEmpty(config.MemoryName, "GT_ALV"),
+            SpoolDevice = FirstNonEmpty(config.SpoolDevice, "LP01"),
+            WaitSeconds = config.WaitSeconds > 0 ? config.WaitSeconds : 60,
+            SplitTable = FirstNonEmpty(config.SplitTable, "ZFI_SPLIT"),
+            SplitBukrs = FirstNonEmpty(config.SplitBukrs, "2030"),
+            DongtaiBusinessAreas = config.DongtaiBusinessAreas.ToList(),
+            SplitWerks = plants
+                .Select(v => FirstNonEmpty(v, "").Trim())
+                .Where(v => !string.IsNullOrWhiteSpace(v))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList()
+        };
+        request.BusinessAreas.Add(businessArea);
+        request.Conditions.Add(new Zfi019NlSelection
+        {
+            Selname = "S_BUDAT",
+            Sign = "I",
+            Option = "BT",
+            Low = start.ToString("yyyyMMdd", CultureInfo.InvariantCulture),
+            High = end.ToString("yyyyMMdd", CultureInfo.InvariantCulture)
+        });
+        request.Conditions.Add(new Zfi019NlSelection
+        {
+            Selname = "S_GSBER",
+            Sign = "I",
+            Option = "EQ",
+            Low = businessArea
+        });
+        return request;
+    }
+
+    static SapNcoConnectionConfig BuildSapNcoConnectionConfig(SapRunParams p)
+    {
+        SapNcoLocalConfig config = LoadSapNcoLocalConfig();
+        string systemId = FirstNonEmpty(config.SystemId, p.System);
+        string ipAddress = FirstNonEmpty(config.IpAddress, config.AppServerHost, config.Ashost);
+        string systemNumber = NormalizeSapSystemNumber(FirstNonEmpty(config.SystemNumber, config.SysNr, p.SysNr));
+        string router = FirstNonEmpty(config.Router, config.SapRouter);
+
+        if (string.IsNullOrWhiteSpace(ipAddress) || string.IsNullOrWhiteSpace(systemNumber) || string.IsNullOrWhiteSpace(systemId))
+        {
+            foreach (var entry in ReadSapLogonEntries())
+            {
+                if (!SapLogonEntryMatches(entry, p.System) &&
+                    !SapLogonEntryMatches(entry, config.ConnectionName) &&
+                    !SapLogonEntryMatches(entry, config.SystemId))
+                    continue;
+
+                ipAddress = FirstNonEmpty(ipAddress, entry.Server);
+                systemNumber = NormalizeSapSystemNumber(FirstNonEmpty(systemNumber, entry.SystemNumber));
+                systemId = FirstNonEmpty(systemId, entry.SystemId, entry.Description);
+                router = FirstNonEmpty(router, entry.Router);
+                break;
+            }
+        }
+
+        return new SapNcoConnectionConfig
+        {
+            ConnectionName = FirstNonEmpty(config.ConnectionName, config.Name, p.System, "SapWebLauncher"),
+            SystemId = systemId,
+            IpAddress = ipAddress,
+            SystemNumber = systemNumber,
+            Client = FirstNonEmpty(config.Client, p.Client),
+            User = FirstNonEmpty(config.User, p.User),
+            Password = FirstNonEmpty(config.Password, p.Password),
+            Language = FirstNonEmpty(config.Language, config.Lang, p.Language, "ZH"),
+            Router = router
+        };
+    }
+
+    static SapNcoLocalConfig LoadSapNcoLocalConfig()
+    {
+        using JsonDocument? document = LoadLocalConfigDocument();
+        JsonElement? sapNco = TryGetObject(document?.RootElement, "sapNco") ??
+                              TryGetObject(document?.RootElement, "nco") ??
+                              TryGetObject(document?.RootElement, "sapDestination");
+
+        if (!sapNco.HasValue)
+            return new SapNcoLocalConfig();
+
+        var config = new SapNcoLocalConfig
+        {
+            ConnectionName = FirstNonEmpty(GetConfigString(sapNco, "connectionName"), GetConfigString(sapNco, "destinationName")),
+            Name = GetConfigString(sapNco, "name"),
+            SystemId = FirstNonEmpty(GetConfigString(sapNco, "systemId"), GetConfigString(sapNco, "sysId"), GetConfigString(sapNco, "sid")),
+            IpAddress = FirstNonEmpty(GetConfigString(sapNco, "ipAddress"), GetConfigString(sapNco, "server")),
+            AppServerHost = GetConfigString(sapNco, "appServerHost"),
+            Ashost = GetConfigString(sapNco, "ashost"),
+            SystemNumber = FirstNonEmpty(GetConfigString(sapNco, "systemNumber"), GetConfigString(sapNco, "instanceNumber")),
+            SysNr = GetConfigString(sapNco, "sysNr"),
+            Client = GetConfigString(sapNco, "client"),
+            User = GetConfigString(sapNco, "user"),
+            Password = FirstNonEmpty(GetConfigString(sapNco, "password"), GetConfigString(sapNco, "passwd")),
+            Language = GetConfigString(sapNco, "language"),
+            Lang = GetConfigString(sapNco, "lang"),
+            Router = GetConfigString(sapNco, "router"),
+            SapRouter = GetConfigString(sapNco, "sapRouter")
+        };
+
+        string protectedPassword = FirstNonEmpty(
+            GetConfigString(sapNco, "passwordProtected"),
+            GetConfigString(sapNco, "passwdProtected"));
+        if (!string.IsNullOrWhiteSpace(protectedPassword))
+            config.Password = FirstNonEmpty(UnprotectSecretIfPresent(protectedPassword), config.Password);
+
+        return config;
+    }
+
+    static Zfi019NlMemoryLocalConfig LoadZfi019NlMemoryConfig()
+    {
+        using JsonDocument? document = LoadLocalConfigDocument();
+        JsonElement? root = document?.RootElement;
+        JsonElement? zfi057 = TryGetObject(root, "zfi057Workflow");
+        JsonElement? zfi019nl = TryGetObject(zfi057, "zfi019nlMemory") ??
+                                TryGetObject(root, "zfi019nlMemory");
+
+        if (!zfi019nl.HasValue)
+            return new Zfi019NlMemoryLocalConfig();
+
+        return new Zfi019NlMemoryLocalConfig
+        {
+            Report = GetConfigString(zfi019nl, "report"),
+            Variant = GetConfigString(zfi019nl, "variant"),
+            MemoryId = GetConfigString(zfi019nl, "memoryId"),
+            MemoryName = GetConfigString(zfi019nl, "memoryName"),
+            SpoolDevice = GetConfigString(zfi019nl, "spoolDevice"),
+            WaitSeconds = GetConfigInt(zfi019nl, "waitSeconds", 60),
+            SplitTable = GetConfigString(zfi019nl, "splitTable"),
+            SplitBukrs = GetConfigString(zfi019nl, "splitBukrs"),
+            DongtaiBusinessAreas = NormalizeStringArray(FirstNonEmpty(
+                GetConfigString(zfi019nl, "dongtaiBusinessAreas"),
+                GetConfigString(zfi019nl, "specialBusinessAreas")))
+        };
+    }
+
+    static string GetSelectionSummary(Zfi019NlFetchRequest request, string selname)
+    {
+        var items = request.Conditions
+            .Where(c => c.Selname.Equals(selname, StringComparison.OrdinalIgnoreCase))
+            .Select(c => $"{c.Sign}:{c.Option}:{c.Low}:{c.High}")
+            .ToArray();
+        return items.Length == 0 ? "-" : string.Join(",", items);
+    }
+
+    static int GetConfigInt(JsonElement? item, string property, int defaultValue)
+    {
+        return item.HasValue ? GetJsonInt(item.Value, property, defaultValue) : defaultValue;
+    }
+
+    static void AddZfi057MaterialAuditFile(
+        RunResultRequest aggregate,
+        SapRunParams p,
+        int scopeIndex,
+        string businessArea,
+        string[] plants,
+        string selectedSource,
+        string[] requestMaterials,
+        string[] upstreamMaterials,
+        string[] selectedMaterials,
+        IReadOnlyList<Dictionary<string, string>> sourceRows)
+    {
+        try
+        {
+            string directory = Path.Combine(OutputDirectory, "zfi057");
+            Directory.CreateDirectory(directory);
+            string runPart = SafeFileNamePart(FirstNonEmpty(p.RunId, DateTime.Now.ToString("yyyyMMddHHmmss")));
+            string areaPart = SafeFileNamePart(FirstNonEmpty(businessArea, "scope"));
+            string path = Path.Combine(directory, $"{runPart}_scope{scopeIndex}_{areaPart}_materials.csv");
+            var lines = new List<string>
+            {
+                "section,key,value",
+                $"meta,runId,{CsvCell(FirstNonEmpty(p.RunId, "-"))}",
+                $"meta,scopeIndex,{scopeIndex}",
+                $"meta,businessArea,{CsvCell(businessArea)}",
+                $"meta,plants,{CsvCell(string.Join(",", plants.Where(x => !string.IsNullOrWhiteSpace(x))))}",
+                $"meta,period,{CsvCell(p.Period)}",
+                $"meta,weekEnd,{CsvCell(p.WeekEnd)}",
+                $"meta,selectedSource,{CsvCell(selectedSource)}",
+                $"summary,requestCount,{requestMaterials.Length}",
+                $"summary,upstreamCount,{upstreamMaterials.Length}",
+                $"summary,selectedCount,{selectedMaterials.Length}",
+                $"summary,selectedHash,{CsvCell(HashForLog(string.Join(",", selectedMaterials)))}",
+                "",
+                "source,index,material"
+            };
+
+            AppendMaterialRows(lines, "selected", selectedMaterials);
+            AppendMaterialRows(lines, "upstream", upstreamMaterials);
+            AppendMaterialRows(lines, "request", requestMaterials);
+            if (sourceRows.Count > 0)
+            {
+                lines.Add("");
+                lines.Add("material,source");
+                foreach (var row in sourceRows)
+                {
+                    row.TryGetValue(Zfi019NlMemoryFetcher.FinalMaterialColumn, out string? material);
+                    row.TryGetValue(Zfi019NlMemoryFetcher.FinalSourceColumn, out string? source);
+                    lines.Add($"{CsvCell(material ?? "")},{CsvCell(source ?? "")}");
+                }
+            }
+            File.WriteAllLines(path, lines, new UTF8Encoding(false));
+            aggregate.Files.Add(BuildRunFile(path));
+            AddWorkflowLog(aggregate, "step 1", $"material audit file={path}");
+        }
+        catch (Exception ex)
+        {
+            AddWorkflowLog(aggregate, "step 1", $"material audit file failed: {ex.Message}");
+        }
+    }
+
+    static void AppendMaterialRows(List<string> lines, string source, string[] materials)
+    {
+        for (int i = 0; i < materials.Length; i++)
+            lines.Add($"{CsvCell(source)},{i + 1},{CsvCell(materials[i])}");
+    }
+
+    static string SafeFileNamePart(string value)
+    {
+        string part = Regex.Replace(FirstNonEmpty(value, "-"), @"[^A-Za-z0-9_.-]+", "_").Trim('_', '.');
+        return string.IsNullOrWhiteSpace(part) ? "na" : part;
+    }
+
+    static string CsvCell(string value)
+    {
+        string text = value ?? "";
+        return "\"" + text.Replace("\"", "\"\"") + "\"";
     }
 
     static string ExtractMaterialsFromResult(RunResultRequest result)
@@ -9315,6 +9828,97 @@ WScript.Quit 0
         }
 
         {
+            var aggregate = new RunResultRequest();
+            var p = new SapRunParams
+            {
+                RunId = "RUN-SELFTEST-ZFI057-AUDIT",
+                Period = "2026.06.29",
+                WeekEnd = "2026.07.05"
+            };
+            AddZfi057MaterialAuditFile(
+                aggregate,
+                p,
+                1,
+                "2800",
+                new[] { "1022", "6041" },
+                "ZFI019NL",
+                Array.Empty<string>(),
+                new[] { "MAT001", "MAT002" },
+                new[] { "MAT001", "MAT002" },
+                new[]
+                {
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [Zfi019NlMemoryFetcher.FinalMaterialColumn] = "MAT001",
+                        [Zfi019NlMemoryFetcher.FinalSourceColumn] = "ZFI019NL"
+                    }
+                });
+
+            string path = aggregate.Files.FirstOrDefault()?.Path ?? "";
+            bool exists = File.Exists(path);
+            string text = exists ? File.ReadAllText(path, Encoding.UTF8) : "";
+            bool hasHash = text.Contains("selectedHash", StringComparison.OrdinalIgnoreCase);
+            bool hasSelected = text.Contains("\"selected\",1,\"MAT001\"", StringComparison.OrdinalIgnoreCase);
+            bool hasUpstream = text.Contains("\"upstream\",2,\"MAT002\"", StringComparison.OrdinalIgnoreCase);
+            bool ok = exists && aggregate.Files.Count == 1 && hasHash && hasSelected && hasUpstream;
+            Check("ZFI057 material audit file", ok, $"exists={exists}, files={aggregate.Files.Count}, hash={hasHash}, selected={hasSelected}, upstream={hasUpstream}, file={path}");
+            try { if (exists) File.Delete(path); } catch { }
+        }
+
+        {
+            var request = BuildZfi019NlMemoryRequest(new SapRunParams
+            {
+                Period = "2026.04.27",
+                WeekEnd = "2026.05.03"
+            }, "2800", new[] { "1022", "6041" });
+            bool ok = GetSelectionSummary(request, "S_BUDAT").Equals("I:BT:20260427:20260503", StringComparison.OrdinalIgnoreCase) &&
+                      GetSelectionSummary(request, "S_GSBER").Equals("I:EQ:2800:", StringComparison.OrdinalIgnoreCase) &&
+                      request.MemoryId.Equals("%ZFI019NA%", StringComparison.OrdinalIgnoreCase) &&
+                      request.MemoryName.Equals("GT_ALV", StringComparison.OrdinalIgnoreCase) &&
+                      request.SplitWerks.SequenceEqual(new[] { "1022", "6041" }, StringComparer.OrdinalIgnoreCase);
+            Check("ZFI057 step1 memory request", ok, $"S_BUDAT={GetSelectionSummary(request, "S_BUDAT")}, S_GSBER={GetSelectionSummary(request, "S_GSBER")}, splitWerks={string.Join(",", request.SplitWerks)}");
+        }
+
+        {
+            string ini = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_saplogon_nco_{Guid.NewGuid():N}.ini");
+            File.WriteAllText(ini, """
+[Server]
+Item1=10.0.40.212
+[Database]
+Item1=10
+[MSSysName]
+Item1=TD1
+[Description]
+Item1=test888
+""", Encoding.ASCII);
+            try
+            {
+                var entries = ReadSapLogonEntries(new[] { ini });
+                var p = new SapRunParams
+                {
+                    System = "test888",
+                    Client = "888",
+                    User = "IT049",
+                    Password = "SECRET",
+                    Language = "ZH",
+                    SysNr = "10000000000000000000000"
+                };
+                var matched = entries.FirstOrDefault(e => SapLogonEntryMatches(e, p.System));
+                string ipAddress = FirstNonEmpty(matched?.Server ?? "");
+                string systemNumber = NormalizeSapSystemNumber(FirstNonEmpty(matched?.SystemNumber ?? "", p.SysNr));
+                string systemId = FirstNonEmpty(matched?.SystemId ?? "", p.System);
+                bool ok = ipAddress.Equals("10.0.40.212", StringComparison.OrdinalIgnoreCase) &&
+                          systemNumber.Equals("10", StringComparison.OrdinalIgnoreCase) &&
+                          systemId.Equals("TD1", StringComparison.OrdinalIgnoreCase);
+                Check("SAP Logon supplies NCo target", ok, $"ipAddress={ipAddress}, systemNumber={systemNumber}, systemId={systemId}");
+            }
+            finally
+            {
+                try { File.Delete(ini); } catch { }
+            }
+        }
+
+        {
             var request = new CreateRunRequest
             {
                 TransactionCode = "ZFI080",
@@ -9880,6 +10484,8 @@ record BatchRunPlan(string TCode, string ParamKey, string SingleParamKey, string
 
 record Zfi057WorkflowScope(string BusinessArea, string[] Plants);
 
+record Zfi057Step1MaterialFetch(RunResultRequest Result, string[] Materials, Zfi019NlFetchResult FetchResult);
+
 record DingTalkParamGroup(string Label, string[] Keys, bool SplitValues);
 
 record DingTalkInputLine(string Label, List<string> Values)
@@ -9897,6 +10503,38 @@ class SapLocalConfig
     public string? Language { get; set; }
     public string? SysNr { get; set; }
     public string? MultiLogonPolicy { get; set; }
+}
+
+class SapNcoLocalConfig
+{
+    public string ConnectionName { get; set; } = "";
+    public string Name { get; set; } = "";
+    public string SystemId { get; set; } = "";
+    public string IpAddress { get; set; } = "";
+    public string AppServerHost { get; set; } = "";
+    public string Ashost { get; set; } = "";
+    public string SystemNumber { get; set; } = "";
+    public string SysNr { get; set; } = "";
+    public string Client { get; set; } = "";
+    public string User { get; set; } = "";
+    public string Password { get; set; } = "";
+    public string Language { get; set; } = "";
+    public string Lang { get; set; } = "";
+    public string Router { get; set; } = "";
+    public string SapRouter { get; set; } = "";
+}
+
+class Zfi019NlMemoryLocalConfig
+{
+    public string Report { get; set; } = "";
+    public string Variant { get; set; } = "";
+    public string MemoryId { get; set; } = "";
+    public string MemoryName { get; set; } = "";
+    public string SpoolDevice { get; set; } = "";
+    public int WaitSeconds { get; set; }
+    public string SplitTable { get; set; } = "";
+    public string SplitBukrs { get; set; } = "";
+    public string[] DongtaiBusinessAreas { get; set; } = Array.Empty<string>();
 }
 
 readonly record struct SapSessionProbeResult(bool Ready, bool HasSapGui, bool HasBlockingSapGui, bool HasPendingLoginDialog, string Details);

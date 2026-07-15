@@ -21,8 +21,8 @@
 | 本机 API | `http://127.0.0.1:8080` | SapWebLauncher 默认只监听本机。 |
 | 对外 URL | `http://10.0.41.158:6174/rpa/` | 给用户访问的链接，网关和防火墙另行确认。 |
 | SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` | 在固定 Windows 执行账号下生成。 |
-| 钉钉真实配置 | `D:\RPA\config.local.json` | 只保存在服务器本机，不提交 Git。 |
-| 钉钉模板 | `D:\RPA\config.local.example.json` | 只能作为字段说明。 |
+| 本机真实配置 | `D:\RPA\config.local.json` | 包含钉钉、SAP NCo、ZFI057 memory fetch 等真实配置，只保存在服务器本机，不提交 Git。 |
+| 本机配置模板 | `D:\RPA\config.local.example.json` | 只能作为字段说明。 |
 
 ## 3. 运行目录结构
 
@@ -39,6 +39,12 @@ D:\RPA\
   启动脚本\start_sap_rpa_services.cmd
   启动脚本\check_sap_rpa_services.cmd
   bin\SapWebLauncher.exe
+  bin\sapnco.dll
+  bin\sapnco_utils.dll
+  bin\ijwhost.dll
+  bin\cpc4n.dll
+  bin\System.Configuration.ConfigurationManager.dll
+  依赖\SapNco\
   transactions\*.vbs
   transactions\transaction-config.json
   data\sap-rpa-config.db
@@ -169,11 +175,30 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 
 ```json
 {
+  "multiLogonPolicy": "takeover",
   "dingTalkOpenApi": {
     "baseUrl": "https://你的钉钉OpenAPI网关根地址/",
     "appKey": "你的真实AppKey",
     "appSecret": "你的真实AppSecret",
     "agentId": "你的真实AgentId"
+  },
+  "sapNco": {
+    "connectionName": "test888",
+    "ipAddress": "10.0.40.212",
+    "systemNumber": "10",
+    "systemId": "TD1",
+    "router": ""
+  },
+  "zfi057Workflow": {
+    "zfi019nlMemory": {
+      "report": "ZFI019NL",
+      "memoryId": "%ZFI019NA%",
+      "memoryName": "GT_ALV",
+      "spoolDevice": "LP01",
+      "waitSeconds": 60,
+      "splitTable": "ZFI_SPLIT",
+      "splitBukrs": "2030"
+    }
   }
 }
 ```
@@ -196,6 +221,31 @@ sap dingtalk openapi skipped: missing baseUrl/appKey/appSecret/agentId config
 ```text
 sap dingtalk openapi sent: userid=...
 ```
+
+## 6.1 配置 SAP NCo / ZFI019NL memory fetch
+
+`ZFI057` 产值拆分入口后台第一步不运行 `ZFI019NL.vbs`，而是通过 SAP NCo 调用 `ZFI_SAP_API_GATEWAY` 的 `REPORT_SUBMIT/MEMORY_EXPORT`，从 `ZFI019NL` memory 输出读取物料集合。上线前必须确认：
+
+| 项目 | 要求 |
+| --- | --- |
+| NCo 依赖源 | `D:\RPA\依赖\SapNco\sapnco.dll`、`sapnco_utils.dll`、`ijwhost.dll`、`cpc4n.dll` |
+| 运行目录 DLL | `D:\RPA\bin\` 必须包含上述四个 DLL，以及 `System.Configuration.ConfigurationManager.dll`、`System.Security.Permissions.dll` |
+| 本机配置 | `D:\RPA\config.local.json` 必须包含 `sapNco` 和 `zfi057Workflow.zfi019nlMemory` |
+| SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` 仍由 `04_配置SAP登录信息.bat` 在固定 Windows 执行账号下生成 |
+
+单独验收命令：
+
+```powershell
+$out = "D:\RPA\logs\zfi019nl-memory-test.out.log"
+$err = "D:\RPA\logs\zfi019nl-memory-test.err.log"
+Start-Process -FilePath "D:\RPA\bin\SapWebLauncher.exe" `
+  -ArgumentList "--test-zfi019nl-memory --businessArea 2800 --period 2026.04.27 --weekEnd 2026.05.03" `
+  -WorkingDirectory "D:\RPA" -Wait -PassThru `
+  -RedirectStandardOutput $out -RedirectStandardError $err
+Get-Content $out
+```
+
+成功标准：输出包含 `status=success`、`method=MEMORY_EXPORT`、`S_BUDAT=I:BT:20260427:20260503`、`S_GSBER=I:EQ:2800:`、`materialCount` 大于 0，并生成 `D:\RPA\outputs\zfi057\DIAG-ZFI019NL-*_scope1_2800_materials.csv`。
 
 ## 7. 初始化数据库
 
@@ -244,12 +294,13 @@ Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 
 1. 打开 `http://10.0.41.158:6174/rpa/`。
 2. 运行 `D:\RPA\启动脚本\check_sap_rpa_services.cmd`，确认 SAP GUI COM 两个 ProgID 均为 `True`，四个 URL 均为 `200 OK`。脚本对 HTTPS 使用 `curl.exe --ssl-no-revoke`，只跳过内网 CRL/OCSP 吊销查询，不跳过证书链和域名校验。
-3. 提交一次受控事务码任务。
-4. 确认 `runs` 有记录，`run_logs` 或 `run_result_logs` 有日志。
-5. 确认 VBS 从 `D:\RPA\transactions` 执行，并写回标准结果。
-6. 已登录 SAP GUI 时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
-7. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
-8. 页面/API 不返回 SAP 密码、钉钉 `appSecret`、token。
+3. 单独运行 `--test-zfi019nl-memory --businessArea 2800 --period 2026.04.27 --weekEnd 2026.05.03`，确认 ZFI057 第一步能通过 NCo/MEMORY_EXPORT 拿到 ZFI019NL 物料集合。
+4. 提交一次受控事务码任务。
+5. 确认 `runs` 有记录，`run_logs` 或 `run_result_logs` 有日志。
+6. 确认 VBS 从 `D:\RPA\transactions` 执行，并写回标准结果。
+7. 已登录 SAP GUI 时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
+8. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
+9. 页面/API 不返回 SAP 密码、钉钉 `appSecret`、token。
 
 ## 10. 常见漏项
 
@@ -263,6 +314,7 @@ Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 8. 健康检查通过，但真实任务没有写数据库、没有跑 VBS 或没有发钉钉。
 9. 整包拷贝 `D:\RPA` 时把测试机 `config.local.json`、SQLite、证书或 SAP DPAPI 登录配置覆盖到生产机。
 10. 内网服务器访问不到证书吊销服务器时，PowerShell `Invoke-WebRequest` 可能报 TLS 通道错误；验收以 `check_sap_rpa_services.cmd` 的 GET 检查和浏览器证书结果为准。
+11. ZFI057 第一步只看 health，没有单独跑 `--test-zfi019nl-memory` 确认 NCo/MEMORY_EXPORT 能按业务范围和日期拿到物料集合。
 
 ## 11. 生成上线包
 

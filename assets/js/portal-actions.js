@@ -26,6 +26,24 @@
         localStorage.setItem("portalUseDefaultNotifyUser", state.form.useDefaultNotifyUser ? "1" : "0");
         render();
       });
+      const useCustomZfi057Week = document.getElementById("useCustomZfi057Week");
+      if (useCustomZfi057Week) useCustomZfi057Week.addEventListener("change", () => {
+        state.form.useCustomZfi057Week = useCustomZfi057Week.checked;
+        localStorage.setItem("portalUseCustomZfi057Week", state.form.useCustomZfi057Week ? "1" : "0");
+        render();
+      });
+      const customZfi057WeekStart = document.getElementById("customZfi057WeekStart");
+      if (customZfi057WeekStart) customZfi057WeekStart.addEventListener("change", () => {
+        state.form.customZfi057WeekStart = customZfi057WeekStart.value;
+        localStorage.setItem("portalCustomZfi057WeekStart", customZfi057WeekStart.value);
+        render();
+      });
+      const customZfi057WeekEnd = document.getElementById("customZfi057WeekEnd");
+      if (customZfi057WeekEnd) customZfi057WeekEnd.addEventListener("change", () => {
+        state.form.customZfi057WeekEnd = customZfi057WeekEnd.value;
+        localStorage.setItem("portalCustomZfi057WeekEnd", customZfi057WeekEnd.value);
+        render();
+      });
       const scheduleTCode = document.getElementById("scheduleTCode");
       if (scheduleTCode) scheduleTCode.addEventListener("change", () => updateScheduleTCode(scheduleTCode.value));
       const scheduleFactoryGroup = document.getElementById("scheduleFactoryGroup");
@@ -117,7 +135,7 @@
       if (action === "remove-schedule-plant") return removeSchedulePlant(el.dataset.plant || "");
       if (action === "reset-schedule-plants") {
         const tCode = readInputValue("scheduleTCode");
-        return setSchedulePlantInput(getRuleRangeKind(getTCode(tCode)) === "dateRange" ? [] : getDefaultPlantsForTCode(tCode, readInputValue("scheduleFactoryGroup")));
+        return setSchedulePlantInput(getRuleRangeKind(getTCode(tCode)) === "dateRange" ? [] : getDefaultRunRangeForTCode(tCode, readInputValue("scheduleFactoryGroup")));
       }
       if (action === "test-robot") return testRobot(el.dataset.id || "");
       if (action === "toast-edit") return toast("编辑弹窗后续接入后台保存", "info");
@@ -136,7 +154,7 @@
           name: task.name,
           tCode: task.tCode,
           factoryGroup: task.factoryGroup || getTCode(task.tCode)?.defaultPlantGroup || factoryGroups[0]?.id || "",
-          plants: toArray(task.plants),
+          plants: getScheduleRangeValuesForTask(task),
           execTime: task.time || "08:00",
           frequency: scheduleFrequencyCode(task.frequencyCode || task.frequency),
           notifyStart: task.notifyStart !== false,
@@ -155,7 +173,7 @@
           name: defaultScheduleName(tCode),
           tCode,
           factoryGroup: defaultGroup,
-          plants: getDefaultPlantsForTCode(tCode, defaultGroup),
+          plants: getRuleRangeKind(getTCode(tCode)) === "dateRange" ? [] : getDefaultRunRangeForTCode(tCode, defaultGroup),
           execTime: state.scheduleForm.execTime || "08:00",
           frequency: state.scheduleForm.frequency || "weekly",
           notifyStart: true,
@@ -169,6 +187,16 @@
       }
       state.scheduleForm.plants = normalizeRulePlantList(state.scheduleForm.plants);
       state.modal = "schedule";
+    }
+
+    function getScheduleRangeValuesForTask(task) {
+      const rangeKind = getRuleRangeKind(getTCode(task?.tCode || ""));
+      if (rangeKind === "dateRange") return [];
+      if (rangeKind === "businessArea") {
+        const areas = toArray(task?.businessAreas);
+        return areas.length ? areas : toArray(task?.plants);
+      }
+      return toArray(task?.plants);
     }
 
     async function saveScheduleFromModal() {
@@ -315,11 +343,12 @@
       return normalizeRulePlantList(input ? input.value : state.scheduleForm.plants);
     }
 
-    function renderSchedulePlantChips(plantsValue) {
+    function renderSchedulePlantChips(plantsValue, rangeKind = getRuleRangeKind(getTCode(state.scheduleForm.tCode))) {
       const plantsList = normalizeRulePlantList(plantsValue);
+      const label = rangeKind === "businessArea" ? "业务范围" : "工厂";
       return plantsList.length
-        ? plantsList.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-schedule-plant" data-plant="${esc(code)}" aria-label="删除工厂 ${esc(code)}" title="删除工厂 ${esc(code)}">X</button></span>`).join("")
-        : `<span class="table-hint">未配置工厂</span>`;
+        ? plantsList.map(code => `<span class="area-chip editable">${esc(code)}<button type="button" class="chip-x" data-action="remove-schedule-plant" data-plant="${esc(code)}" aria-label="删除${label} ${esc(code)}" title="删除${label} ${esc(code)}">X</button></span>`).join("")
+        : `<span class="table-hint">未配置${label}</span>`;
     }
 
     function setSchedulePlantInput(plantsValue) {
@@ -327,10 +356,11 @@
       const chips = document.getElementById("schedulePlantChips");
       const areaChips = document.getElementById("scheduleBusinessAreaChips");
       const plantsList = normalizeRulePlantList(plantsValue);
+      const rangeKind = getRuleRangeKind(getTCode(state.scheduleForm.tCode));
       state.scheduleForm.plants = plantsList;
       if (input) input.value = plantsList.join(",");
       if (chips) {
-        chips.innerHTML = renderSchedulePlantChips(plantsList);
+        chips.innerHTML = renderSchedulePlantChips(plantsList, rangeKind);
         chips.querySelectorAll("[data-action='remove-schedule-plant']").forEach(btn => btn.addEventListener("click", () => removeSchedulePlant(btn.dataset.plant || "")));
       }
       if (areaChips) {
@@ -341,7 +371,8 @@
     function addSchedulePlant() {
       const input = document.getElementById("schedulePlantAdd");
       const code = normalizeRulePlantCode(input?.value || "");
-      if (!code) return toast("请输入工厂代码", "warn");
+      const rangeKind = getRuleRangeKind(getTCode(state.scheduleForm.tCode));
+      if (!code) return toast(rangeKind === "businessArea" ? "请输入业务范围代码" : "请输入工厂代码", "warn");
       setSchedulePlantInput([...getSchedulePlantInput(), code]);
       if (input) input.value = "";
     }
@@ -816,7 +847,8 @@
       const isBusinessAreaRange = rangeMeta.isBusinessArea;
       const isDateRange = rangeMeta.isDateRange;
       const selectedRange = getRunRangeForTCode(state.form.tCode, state.form.plants, state.form.factoryGroup);
-      const dateRange = getLastFullWeekDateRange();
+      const isZfi057ServerWeek = state.form.tCode === "ZFI057" && state.form.useCustomZfi057Week === false;
+      const dateRange = isZfi057ServerWeek ? { period: "", weekEnd: "" } : getExecutionDateRangeForTCode(state.form.tCode);
       const selectedPlants = isBusinessAreaRange || isDateRange ? [] : selectedRange;
       const businessAreas = isDateRange
         ? []
@@ -839,6 +871,7 @@
         businessAreasCsv: businessAreas.join(","),
         period: dateRange.period,
         weekEnd: dateRange.weekEnd,
+        dateRangeSource: isZfi057ServerWeek ? "server" : "page",
         rangeKind: isDateRange ? "dateRange" : (isBusinessAreaRange ? "businessArea" : "plant"),
         runStrategy: state.form.tCode === "ZFI057" ? "auto3step" : "",
         rangeLabel,

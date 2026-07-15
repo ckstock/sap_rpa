@@ -19,6 +19,7 @@
     }
 
     const savedUseDefaultNotifyUser = getLocalValue("portalUseDefaultNotifyUser");
+    const savedUseCustomZfi057Week = getLocalValue("portalUseCustomZfi057Week");
     const isEmbeddedPortal = (() => {
       try {
         return window.self !== window.top;
@@ -62,6 +63,9 @@
         plants: ["1022", "1024", "1032", "6041"],
         notify: true,
         useDefaultNotifyUser: savedUseDefaultNotifyUser === null ? true : savedUseDefaultNotifyUser !== "0",
+        useCustomZfi057Week: savedUseCustomZfi057Week === null ? true : savedUseCustomZfi057Week !== "0",
+        customZfi057WeekStart: getLocalValue("portalCustomZfi057WeekStart") || "",
+        customZfi057WeekEnd: getLocalValue("portalCustomZfi057WeekEnd") || "",
         remark: ""
       },
       steps: [

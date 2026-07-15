@@ -443,12 +443,12 @@
         <table>
           <thead><tr><th>事务码</th><th>当前自动化状态</th><th>实际 SAP 入参</th><th>运行日志追溯</th></tr></thead>
           <tbody>
-            <tr><td><code>ZFI057</code></td><td>工作台只展示这一个产值拆分入口；后端识别 <code>runStrategy=auto3step</code> 或默认 <code>ZFI057</code> 队列任务后，按业务范围顺序执行 <code>ZFI019NL → ZFI057 → ZCO020</code>。</td><td>页面/API 只需要提供工厂、业务范围和日期范围。第一步 <code>ZFI019NL.vbs</code> 从 ALV Grid 输出 <code>MATERIAL=...</code> / <code>MATERIALS_CSV=...</code>；第二步 <code>ZFI057.vbs</code> 写入 <code>S_WERKS</code>、<code>S_KADKY-LOW/HIGH</code>、<code>S_MTART-LOW</code>、<code>S_KADAT-LOW/HIGH</code>、<code>S_MATNR</code> 多选；第三步执行 <code>ZCO020.vbs</code> 验证。</td><td>后端 run 日志按 <code>[step 1]</code>、<code>[step 2]</code>、<code>[step 3]</code> 记录每个业务范围、工厂、日期范围、物料数量和 VBS 输出。缺少物料时 workflow 停在第一步并失败，不再要求用户手工传 <code>materials</code>，也不会静默按全物料运行。</td></tr>
+            <tr><td><code>ZFI057</code></td><td>工作台只展示这一个产值拆分入口；后端识别 <code>runStrategy=auto3step</code> 或默认 <code>ZFI057</code> 队列任务后，按业务范围顺序执行 <code>ZFI019NL → ZFI057 → ZCO020</code>。</td><td>执行页显示和编辑的是“业务范围”，不是工厂。页面/API 提供业务范围和日期范围；当前联调默认勾选“指定测试周”，按页面选择的开始/截止日期传 <code>period/weekEnd</code>。取消勾选后前端不传日期，由后端按服务器系统日期计算上一完整周，作为正式上线口径。第一步不运行 <code>ZFI019NL.vbs</code>，而是后端通过 SAP NCo 调用 <code>ZFI_SAP_API_GATEWAY</code> 的 <code>REPORT_SUBMIT/MEMORY_EXPORT</code>，按 <code>S_BUDAT</code>、<code>S_GSBER</code> 和 <code>zfi057Workflow.zfi019nlMemory</code> 配置从 <code>ZFI019NL</code> memory 输出取物料集合；第二步 <code>ZFI057.vbs</code> 写入 <code>S_WERKS</code>、<code>S_KADKY-LOW/HIGH</code>、<code>S_MTART-LOW</code>、<code>S_KADAT-LOW/HIGH</code>、<code>S_MATNR</code> 多选；第三步执行 <code>ZCO020.vbs</code> 验证。</td><td>后端 run 日志按 <code>[workflow]</code>、<code>[scope]</code>、<code>[step 1]</code>、<code>[step 2]</code>、<code>[step 3]</code> 记录原始入参、业务范围/工厂映射、每步 query、脚本结果摘要和 VBS 输出。步骤一物料日志同时记录 <code>method=MEMORY_EXPORT</code>、<code>S_BUDAT</code>、<code>S_GSBER</code>、<code>rawLines</code>、<code>alvRows</code>、<code>finalRows</code>、<code>selectedSource</code>、<code>selectedCount</code>、<code>selectedSample</code>、<code>selectedHash</code>；全量物料清单写入 <code>D:\RPA\outputs\zfi057\*_materials.csv</code> 并挂到运行记录文件列表，用于逐项确认最终传给步骤二的物料集合。缺少物料时 workflow 停在第一步并失败，不再要求用户手工传 <code>materials</code>，也不会静默按全物料运行。</td></tr>
             <tr><td><code>ZCO020</code></td><td>保留后端事务配置和 <code>D:\RPA\transactions\ZCO020.vbs</code>，但不在工作台作为独立卡片展示。</td><td>作为 <code>ZFI057</code> workflow 第三步内部调用，写入 <code>S_BUDAT-LOW/HIGH</code> 与 <code>S_GSBER-LOW</code>，执行后按 <code>ZBZ1 = zpp063</code> 过滤、全选并保存/导出。</td><td>VBS 标准输出会记录业务范围、日期范围、过滤字段和保存动作。当前 SM37 <code>jobname=ZFI057</code> 复核仅记录提醒，尚未自动化重跑；如 ZCO020 结果异常，需人工检查 SAP 后台作业状态。</td></tr>
           </tbody>
         </table>
       </div>
-      <div class="warning-box"><strong>当前边界：</strong><code>ZFI019NL</code> 的 ALV Grid 物料输出已经接入 workflow；<code>ZFI_SPLIT</code> 自定义表的完整后端取数仍依赖 SAP NCo/RFC 能力，当前主程序项目未引用 <code>SAP.Middleware.Connector.dll</code>。上线验证 ZFI057 时，如果第一步未输出物料，workflow 会失败并在日志中写明原因。</div>
+      <div class="warning-box"><strong>当前边界：</strong><code>ZFI057</code> workflow 的第一步已经接入 SAP NCo/RFC，不再依赖 <code>ZFI019NL.vbs</code>。运行目录必须包含 <code>sapnco.dll</code>、<code>sapnco_utils.dll</code>、<code>ijwhost.dll</code>、<code>cpc4n.dll</code> 和 <code>System.Configuration.ConfigurationManager.dll</code>，且 <code>D:\RPA\config.local.json</code> 必须配置 <code>sapNco</code> 与 <code>zfi057Workflow.zfi019nlMemory</code>。上线验证 ZFI057 时，如果第一步未输出物料，workflow 会失败并在日志中写明原因；可用 <code>D:\RPA\bin\SapWebLauncher.exe --test-zfi019nl-memory --businessArea 2800 --period 2026.04.27 --weekEnd 2026.05.03</code> 单独验证步骤一。</div>
       <h3 id="entry-installer">本机启动与安装入口</h3>
       <p>管理员部署或排错时以 <code>上线安装包\上线安装文档清单.md</code> 和 <code>上线安装包\最终上线部署步骤\README_V2_Windows_Server_上线部署.md</code> 为准。当前服务器的 Git 源码目录是 <code>D:\RPA\RpaProject</code>，实际运行根目录是 <code>D:\RPA</code>；运行进程读取 <code>D:\RPA\bin</code>、<code>D:\RPA\assets</code>、<code>D:\RPA\transactions</code> 和 <code>D:\RPA\data</code>。只在源码目录 <code>git pull</code> 或修改代码不会自动让线上生效。</p>
       <div class="table-wrap">
@@ -594,7 +594,7 @@
           <tbody>
             <tr><td>任务 ID/名称</td><td>新建时自动生成或由用户填写，用于列表和审计。</td></tr>
             <tr><td>事务码</td><td>从已启用事务码配置中选择。</td></tr>
-            <tr><td>业务范围/工厂</td><td>根据事务码规则和业务范围自动计算工厂。</td></tr>
+            <tr><td>业务范围/工厂</td><td>根据事务码规则显示对应范围。<code>ZFI057</code>、<code>ZFI019NL</code>、<code>ZCO020</code> 在定时任务中编辑和保存业务范围代码；普通工厂型事务仍编辑工厂代码。定时任务不使用执行页“指定测试周”，触发时由后端按服务器系统日期计算正式上一完整周。</td></tr>
             <tr><td>执行时间/频率</td><td>用于后续调度器决定何时创建 run。</td></tr>
             <tr><td>状态</td><td>继续表示定时任务是否启用或停用，仍由编辑弹窗的启用复选框控制，不和设置人混用。</td></tr>
             <tr><td>设置人</td><td>列表新增独立“设置人”列，优先显示 <code>updatedBy/updated_by</code>，没有更新人时显示 <code>createdBy/created_by</code>。该列只用于审计展示，不改变数据库状态字段。</td></tr>

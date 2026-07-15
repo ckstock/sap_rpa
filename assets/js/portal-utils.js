@@ -26,6 +26,32 @@
       return `${year}.${month}.${day}`;
     }
 
+    function sapDateToInputValue(value) {
+      const text = String(value || "").trim();
+      const match = text.match(/^(\d{4})[.-](\d{1,2})[.-](\d{1,2})$/);
+      if (!match) return "";
+      return `${match[1]}-${match[2].padStart(2, "0")}-${match[3].padStart(2, "0")}`;
+    }
+
+    function inputDateToSapDate(value) {
+      const input = sapDateToInputValue(value);
+      return input ? input.replace(/-/g, ".") : "";
+    }
+
+    function normalizeZfi057WeekOverride() {
+      const fallback = getLastFullWeekDateRange();
+      const period = inputDateToSapDate(state.form.customZfi057WeekStart) || fallback.period;
+      const weekEnd = inputDateToSapDate(state.form.customZfi057WeekEnd) || fallback.weekEnd;
+      return period <= weekEnd ? { period, weekEnd } : { period: weekEnd, weekEnd: period };
+    }
+
+    function getExecutionDateRangeForTCode(tCode) {
+      if (String(tCode || "").toUpperCase() === "ZFI057" && state.form.useCustomZfi057Week !== false) {
+        return normalizeZfi057WeekOverride();
+      }
+      return getLastFullWeekDateRange();
+    }
+
     function getLastFullWeekDateRange(baseDate = new Date()) {
       const today = new Date(baseDate.getFullYear(), baseDate.getMonth(), baseDate.getDate());
       const day = today.getDay() || 7;

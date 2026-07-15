@@ -74,7 +74,7 @@
       const code = String(item.code || item.tcode || item.tCode || item.transactionCode || "").trim().toUpperCase();
       const base = getTCode(code) || {};
       const params = getDisplayParamsForTransaction({ ...base, code, params: item.paramsList || item.params || base.params });
-      const isBusinessAreaRange = code === "ZFI019NL" || (params.includes("businessAreas") && !params.includes("plants"));
+      const isBusinessAreaRange = code === "ZFI019NL" || code === "ZFI057" || code === "ZCO020" || (params.includes("businessAreas") && !params.includes("plants"));
       const isDateRange = code === "ZFIR034" || (params.includes("period") && params.includes("weekEnd") && !params.includes("plants") && !params.includes("businessAreas"));
       const sourcePlants = toArray(item.plants || item.defaultPlants || item.allowedPlants || item.plantCodes || item.fixedPlants || item.fixedPlantCodes);
       const sourceFixedPlants = toArray(item.fixedPlants || item.fixedPlantCodes || item.plants || item.defaultPlants || item.allowedPlants || item.plantCodes);
@@ -131,6 +131,7 @@
         } catch (_) { }
       }
       const isDateRange = getRuleRangeKind(getTCode(tCode)) === "dateRange";
+      const isBusinessAreaRange = getRuleRangeKind(getTCode(tCode)) === "businessArea";
       const hasExplicitPlants = item.plants !== undefined || item.plantCodes !== undefined || item.factoryCodes !== undefined ||
         item.plantsCsv !== undefined || item.plantCodesCsv !== undefined || item.factoryCodesCsv !== undefined ||
         params.plants !== undefined || params.plantCodes !== undefined || params.factoryCodes !== undefined ||
@@ -139,7 +140,12 @@
         item.plantsCsv ?? item.plantCodesCsv ?? item.factoryCodesCsv ??
         params.plants ?? params.plantCodes ?? params.factoryCodes ??
         params.plantsCsv ?? params.plantCodesCsv ?? params.factoryCodesCsv);
-      const plantsForTask = isDateRange ? [] : (hasExplicitPlants ? plantsValue : getDefaultPlantsForTCode(tCode, factoryGroup));
+      const businessAreasValue = toArray(item.businessAreas || item.businessAreaCodes || params.businessAreas);
+      const plantsForTask = isDateRange
+        ? []
+        : isBusinessAreaRange
+          ? (businessAreasValue.length ? businessAreasValue : (hasExplicitPlants ? plantsValue : getDefaultRunRangeForTCode(tCode, factoryGroup)))
+          : (hasExplicitPlants ? plantsValue : getDefaultPlantsForTCode(tCode, factoryGroup));
       const enabled = boolValue(item.enabled ?? item.isActive, true);
       return {
         id: String(item.id || item.taskId || item.scheduleId || "").trim(),
@@ -148,9 +154,9 @@
         factoryGroup,
         factoryGroupName: item.factoryGroupName || item.plantGroupName || "",
         plants: plantsForTask,
-        businessAreas: isDateRange ? [] : toArray(item.businessAreas || item.businessAreaCodes || params.businessAreas),
+        businessAreas: isDateRange ? [] : (isBusinessAreaRange ? plantsForTask : businessAreasValue),
         params,
-        rangeKind: isDateRange ? "dateRange" : "",
+        rangeKind: isDateRange ? "dateRange" : (isBusinessAreaRange ? "businessArea" : ""),
         dateRange: isDateRange ? { period: params.period || "", weekEnd: params.weekEnd || "" } : null,
         time: item.time || item.execTime || item.runAt || item.startTime || "08:00",
         frequency: formatScheduleFrequency(item.frequency || item.frequencyText || item.scheduleType || item.cronLabel || "weekly"),

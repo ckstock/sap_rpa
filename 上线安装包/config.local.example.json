@@ -5,5 +5,24 @@
     "appKey": "你的真实AppKey",
     "appSecret": "你的真实AppSecret",
     "agentId": "你的真实AgentId"
+  },
+  "sapNco": {
+    "connectionName": "test888",
+    "ipAddress": "10.0.40.212",
+    "systemNumber": "10",
+    "systemId": "TD1",
+    "router": ""
+  },
+  "zfi057Workflow": {
+    "zfi019nlMemory": {
+      "report": "ZFI019NL",
+      "memoryId": "%ZFI019NA%",
+      "memoryName": "GT_ALV",
+      "spoolDevice": "LP01",
+      "waitSeconds": 60,
+      "splitTable": "ZFI_SPLIT",
+      "splitBukrs": "2030",
+      "dongtaiBusinessAreas": ["0162", "7700", "7800", "7600", "1070", "0500", "7900"]
+    }
   }
 }
