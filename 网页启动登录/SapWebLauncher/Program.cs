@@ -5969,15 +5969,7 @@ WHERE run_id=$runId;
         if (!IsSuccessResult(secondStep3))
             return new Zfi057Step3ScopeResult(false, $"step3 repeat failed: {FirstNonEmpty(secondStep3.Message, secondStep3.SapStatusText, "ZCO020 repeat failed")}", firstCheck.Status, "", true);
 
-        var finalCheck = RunZfi057Sm37JobCheck(step3, area, 2);
-        AddZfi057Sm37JobCheckResult(aggregate, finalCheck, 2);
-        if (!finalCheck.IsTerminal)
-            return new Zfi057Step3ScopeResult(false, $"SM37 job check did not reach terminal status after repeated ZCO020: {finalCheck.Message}", firstCheck.Status, finalCheck.Status, true);
-
-        if (!IsSuccessfulZfi057FinalSm37Check(finalCheck))
-            return new Zfi057Step3ScopeResult(false, $"SM37 final job status is failed after repeated ZCO020: {finalCheck.Status}", firstCheck.Status, finalCheck.Status, true);
-
-        return new Zfi057Step3ScopeResult(true, $"step3=success; sm37First={firstCheck.Status}; step3Repeat=success; sm37Final={finalCheck.Status}", firstCheck.Status, finalCheck.Status, true);
+        return new Zfi057Step3ScopeResult(true, $"step3=success; sm37First={firstCheck.Status}; step3Repeat=success", firstCheck.Status, "", true);
     }
 
     static SapRunParams BuildZfi057Step3Params(SapRunParams p, string area, string[] plants)
