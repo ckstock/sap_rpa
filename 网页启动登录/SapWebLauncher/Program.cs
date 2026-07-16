@@ -34,9 +34,9 @@ static class Program
     // Temporary default until DingTalk scan login writes the real user id into runs.ding_talk_user_id.
     private const string DefaultDingTalkId = "11464769";
     private const int NotificationWorkerTimeoutSeconds = 12;
-    private const string Zfi057Sm37JobName = "ZFI057";
-    private const int Zfi057Sm37PollAttempts = 24;
-    private const int Zfi057Sm37PollIntervalSeconds = 10;
+    private const string Zfi057TbtcoJobName = "ZFI057";
+    private const int Zfi057TbtcoPollTimeoutSeconds = 600;
+    private const int Zfi057TbtcoPollIntervalSeconds = 10;
     private static readonly string ExeDirectory = AppContext.BaseDirectory;
     private static readonly string LocalConfigDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -4462,6 +4462,19 @@ WHERE run_id=$runId;
         return value.ToString("yyyy.MM.dd", CultureInfo.InvariantCulture);
     }
 
+    static string FormatNullableSapJobTime(DateTime? value)
+    {
+        return value.HasValue ? value.Value.ToString("yyyyMMdd HHmmss", CultureInfo.InvariantCulture) : "-";
+    }
+
+    static string MaskForLog(string value)
+    {
+        value = FirstNonEmpty(value, "").Trim();
+        if (value.Length == 0) return "-";
+        if (value.Length <= 2) return "***";
+        return value[..1] + "***" + value[^1..];
+    }
+
     static string GetParamValue(Dictionary<string, string> values, string key)
     {
         return values.TryGetValue(key, out string? value) ? value ?? "" : "";
@@ -5959,17 +5972,18 @@ WHERE run_id=$runId;
         if (!IsSuccessResult(firstStep3))
             return new Zfi057Step3ScopeResult(false, $"step3 first run failed: {FirstNonEmpty(firstStep3.Message, firstStep3.SapStatusText, "ZCO020 failed")}", "", "", false);
 
-        var firstCheck = RunZfi057Sm37JobCheck(step3, area, 1);
-        AddZfi057Sm37JobCheckResult(aggregate, firstCheck, 1);
-        if (!ShouldRepeatZfi057Step3AfterSm37Check(firstCheck))
-            return new Zfi057Step3ScopeResult(false, $"SM37 job check did not reach terminal status after first ZCO020: {firstCheck.Message}", firstCheck.Status, "", false);
+        var firstStep3CompletedUtc = DateTime.UtcNow;
+        var firstCheck = RunZfi057TbtcoJobCheck(step3, area, 1, firstStep3CompletedUtc);
+        AddZfi057TbtcoJobCheckResult(aggregate, firstCheck, 1);
+        if (!ShouldRepeatZfi057Step3AfterTbtcoCheck(firstCheck))
+            return new Zfi057Step3ScopeResult(false, $"TBTCO job check did not reach terminal status after first ZCO020: {firstCheck.Message}", firstCheck.Status, "", false);
 
-        AddWorkflowLog(aggregate, "step 3", $"SM37 job {Zfi057Sm37JobName} reached terminal status after first ZCO020; status={firstCheck.Status}; rerun ZCO020 for scope closure");
+        AddWorkflowLog(aggregate, "step 3", $"TBTCO job {Zfi057TbtcoJobName} reached terminal status after first ZCO020; status={firstCheck.Status}; rerun ZCO020 for scope closure");
         var secondStep3 = ExecuteZfi057Step3Attempt(aggregate, step3, area, 2, 2);
         if (!IsSuccessResult(secondStep3))
             return new Zfi057Step3ScopeResult(false, $"step3 repeat failed: {FirstNonEmpty(secondStep3.Message, secondStep3.SapStatusText, "ZCO020 repeat failed")}", firstCheck.Status, "", true);
 
-        return new Zfi057Step3ScopeResult(true, $"step3=success; sm37First={firstCheck.Status}; step3Repeat=success", firstCheck.Status, "", true);
+        return new Zfi057Step3ScopeResult(true, $"step3=success; tbtcoFirst={firstCheck.Status}; step3Repeat=success", firstCheck.Status, "", true);
     }
 
     static SapRunParams BuildZfi057Step3Params(SapRunParams p, string area, string[] plants)
@@ -5989,458 +6003,126 @@ WHERE run_id=$runId;
 
     static RunResultRequest ExecuteZfi057Step3Attempt(RunResultRequest aggregate, SapRunParams step3, string area, int attempt, int totalAttempts)
     {
-        AddWorkflowLog(aggregate, "step 3", $"query: attempt={attempt}/{totalAttempts}; script={step3.Script}; tcode={step3.TCode}; businessArea={area}; plants={step3.Plants}; period={step3.Period}; weekEnd={step3.WeekEnd}; timeoutSeconds={step3.TimeoutSeconds}; followUpJob={Zfi057Sm37JobName}");
+        AddWorkflowLog(aggregate, "step 3", $"query: attempt={attempt}/{totalAttempts}; script={step3.Script}; tcode={step3.TCode}; businessArea={area}; plants={step3.Plants}; period={step3.Period}; weekEnd={step3.WeekEnd}; timeoutSeconds={step3.TimeoutSeconds}; followUpJob={Zfi057TbtcoJobName}");
         var result = LaunchSapGuiAndExecute(step3);
         AddStepResult(aggregate, attempt == 1 ? "step 3 ZCO020" : "step 3 ZCO020 repeat", result);
         return result;
     }
 
-    static void AddZfi057Sm37JobCheckResult(RunResultRequest aggregate, Zfi057Sm37JobCheckResult check, int attempt)
+    static void AddZfi057TbtcoJobCheckResult(RunResultRequest aggregate, Zfi057TbtcoJobCheckResult check, int attempt)
     {
-        AddStepResult(aggregate, $"step 3 SM37 {Zfi057Sm37JobName} check #{attempt}", check.RawResult, propagateSapStatus: false);
+        AddStepResult(aggregate, $"step 3 TBTCO {Zfi057TbtcoJobName} check #{attempt}", check.RawResult, propagateSapStatus: false);
         aggregate.Logs.Add(new RunLogLine
         {
             Level = check.IsTerminal ? (check.IsFailure ? "WARN" : "INFO") : "ERROR",
-            Message = $"[step 3] SM37 job check #{attempt}: status={check.Status}; category={check.Category}; terminal={check.IsTerminal}; failed={check.IsFailure}; message={Truncate(check.Message, 360)}"
+            Message = $"[step 3] TBTCO job check #{attempt}: status={check.Status}; category={check.Category}; terminal={check.IsTerminal}; failed={check.IsFailure}; message={Truncate(check.Message, 360)}"
         });
     }
 
-    static Zfi057Sm37JobCheckResult RunZfi057Sm37JobCheck(SapRunParams p, string businessArea, int attempt)
+    static Zfi057TbtcoJobCheckResult RunZfi057TbtcoJobCheck(SapRunParams p, string businessArea, int attempt, DateTime firstZco020CompletedUtc)
     {
         var started = DateTime.UtcNow;
-        string dateFrom = DateTime.Today.AddDays(-1).ToString("yyyy.MM.dd", CultureInfo.InvariantCulture);
-        string dateTo = DateTime.Today.AddDays(1).ToString("yyyy.MM.dd", CultureInfo.InvariantCulture);
-        string script = BuildZfi057Sm37JobCheckScript(Zfi057Sm37JobName, FirstNonEmpty(p.User, "*"), businessArea, dateFrom, dateTo);
-        int timeoutSeconds = (Zfi057Sm37PollAttempts * Zfi057Sm37PollIntervalSeconds) + 45;
-        var raw = ExecuteInlineVbsScript($"zfi057-sm37-{attempt}", script, timeoutSeconds, started);
-        return ParseZfi057Sm37JobCheckResult(raw, attempt);
-    }
-
-    static RunResultRequest ExecuteInlineVbsScript(string label, string script, int timeoutSeconds, DateTime started)
-    {
-        string safeLabel = SafeFileNamePart(label);
-        string tmpFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_{safeLabel}_{Guid.NewGuid():N}.vbs");
-        bool keepTempFile = false;
-        try
+        var raw = new RunResultRequest
         {
-            File.WriteAllText(tmpFile, script, Encoding.Unicode);
-            Log($"execute inline VBS: {label}, file={tmpFile}");
+            Status = "failed",
+            Message = "TBTCO job check did not reach terminal status"
+        };
 
-            var psi = new ProcessStartInfo(ResolveCscriptPath(), $"//T:{timeoutSeconds} //nologo \"{tmpFile}\"")
+        SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
+        string jobUser = ResolveZfi057TbtcoJobUser(p, connectionConfig);
+        var lowerUtc = firstZco020CompletedUtc.AddMinutes(-1);
+        var deadlineUtc = started.AddSeconds(Zfi057TbtcoPollTimeoutSeconds);
+        var poller = new SapJobStatusFetcher();
+        string lastStatus = "";
+        string lastCategory = "unknown";
+        string lastMessage = "";
+        int poll = 0;
+
+        raw.Logs.Add(new RunLogLine { Level = "INFO", Message = $"TBTCO job check destination: {connectionConfig.SafeSummary()}" });
+        raw.Logs.Add(new RunLogLine { Level = "INFO", Message = $"TBTCO job check scope: jobName={Zfi057TbtcoJobName}; user={MaskForLog(jobUser)}; businessArea={businessArea}; lower={lowerUtc.ToLocalTime():yyyyMMdd HHmmss}; timeoutSeconds={Zfi057TbtcoPollTimeoutSeconds}; intervalSeconds={Zfi057TbtcoPollIntervalSeconds}" });
+        if (!string.IsNullOrWhiteSpace(p.User) &&
+            !string.IsNullOrWhiteSpace(connectionConfig.User) &&
+            !p.User.Trim().Equals(connectionConfig.User.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            raw.Logs.Add(new RunLogLine { Level = "WARN", Message = $"TBTCO job owner uses SAP GUI user {MaskForLog(p.User)}, while NCo connection user is {MaskForLog(connectionConfig.User)}" });
+        }
+
+        while (DateTime.UtcNow <= deadlineUtc)
+        {
+            poll++;
+            var upperUtc = DateTime.UtcNow.AddMinutes(1);
+            var query = new SapJobStatusQuery
             {
-                UseShellExecute = false,
-                CreateNoWindow = true,
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
+                JobName = Zfi057TbtcoJobName,
+                JobUser = jobUser,
+                LowerUtc = lowerUtc,
+                UpperUtc = upperUtc
             };
+            var result = poller.FetchLatest(connectionConfig, query);
+            raw.Logs.Add(new RunLogLine { Level = "INFO", Message = $"TBTCO poll #{poll}: sql={result.SqlSummary}" });
+            raw.Logs.Add(new RunLogLine { Level = "INFO", Message = $"TBTCO poll #{poll}: options={string.Join(" | ", result.Options)}; rawRows={result.Rows.Count}; message={Truncate(result.Message, 360)}" });
 
-            using var proc = Process.Start(psi);
-            if (proc == null)
-                return FailedRunResult($"failed to start cscript.exe for {label}", started);
-
-            var stdoutTask = proc.StandardOutput.ReadToEndAsync();
-            var stderrTask = proc.StandardError.ReadToEndAsync();
-            if (!proc.WaitForExit(TimeSpan.FromSeconds(timeoutSeconds + 5)))
+            if (!result.Success)
             {
-                keepTempFile = true;
-                try { proc.Kill(entireProcessTree: true); } catch { }
-                var timedOut = FailedRunResult($"{label} timed out after {timeoutSeconds}s; temp script retained: {tmpFile}", started);
-                timedOut.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"inline VBS timeout; temp script retained: {tmpFile}" });
-                return timedOut;
+                raw.Message = result.Message;
+                raw.DurationMs = EnsureDuration(0, started);
+                raw.SapStatusType = "E";
+                raw.SapStatusText = result.Message;
+                return new Zfi057TbtcoJobCheckResult(false, false, false, "query_failed", "unknown", result.Message, raw);
             }
 
-            string stdout = stdoutTask.GetAwaiter().GetResult();
-            string stderr = stderrTask.GetAwaiter().GetResult();
-            if (!string.IsNullOrWhiteSpace(stdout))
-                Log($"inline VBS output: {stdout.Trim()}");
-            if (!string.IsNullOrWhiteSpace(stderr))
-                Log($"inline VBS stderr: {stderr.Trim()}");
-
-            var result = BuildRunResultFromVbs(stdout, stderr, proc.ExitCode, started);
-            if (!IsSuccessResult(result))
+            if (result.Latest != null)
             {
-                keepTempFile = true;
-                result.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"inline VBS failed; temp script retained: {tmpFile}" });
+                lastStatus = SapJobStatusFetcher.DescribeTbtcoStatus(result.Latest.Status);
+                lastCategory = SapJobStatusFetcher.NormalizeTbtcoStatusCategory(result.Latest.Status);
+                lastMessage = result.Message;
+                raw.Logs.Add(new RunLogLine
+                {
+                    Level = "INFO",
+                    Message = $"TBTCO latest: job={result.Latest.JobName}/{result.Latest.JobCount}; user={MaskForLog(result.Latest.User)}; status={lastStatus}; category={lastCategory}; start={FormatNullableSapJobTime(result.Latest.EffectiveStartLocal)}; end={FormatNullableSapJobTime(result.Latest.EndLocal)}"
+                });
+
+                if (SapJobStatusFetcher.IsTbtcoTerminalStatus(result.Latest.Status))
+                {
+                    bool failed = SapJobStatusFetcher.IsTbtcoFailureStatus(result.Latest.Status);
+                    raw.Status = "success";
+                    raw.Message = $"TBTCO job ended after first ZCO020: {lastMessage}";
+                    raw.SapStatusType = failed ? "W" : "S";
+                    raw.SapStatusText = raw.Message;
+                    raw.DurationMs = EnsureDuration(0, started);
+                    return new Zfi057TbtcoJobCheckResult(true, true, failed, lastStatus, lastCategory, raw.Message, raw);
+                }
+            }
+            else
+            {
+                lastStatus = "not_found";
+                lastCategory = "not_found";
+                lastMessage = result.Message;
             }
 
-            return result;
+            if (DateTime.UtcNow.AddSeconds(Zfi057TbtcoPollIntervalSeconds) > deadlineUtc)
+                break;
+
+            Thread.Sleep(TimeSpan.FromSeconds(Zfi057TbtcoPollIntervalSeconds));
         }
-        catch (Exception ex)
-        {
-            keepTempFile = true;
-            return FailedRunResult($"{label} failed: {ex.Message}; temp script retained: {tmpFile}", started);
-        }
-        finally
-        {
-            if (!keepTempFile)
-            {
-                try { if (File.Exists(tmpFile)) File.Delete(tmpFile); } catch { }
-            }
-        }
+
+        string timeoutMessage = $"TBTCO job {Zfi057TbtcoJobName} did not reach terminal status within {Zfi057TbtcoPollTimeoutSeconds}s after first ZCO020; lastStatus={lastStatus}; lastMessage={lastMessage}";
+        raw.Status = "failed";
+        raw.Message = timeoutMessage;
+        raw.SapStatusType = "E";
+        raw.SapStatusText = timeoutMessage;
+        raw.DurationMs = EnsureDuration(0, started);
+        return new Zfi057TbtcoJobCheckResult(false, false, false, lastStatus, lastCategory, timeoutMessage, raw);
     }
 
-    static Zfi057Sm37JobCheckResult ParseZfi057Sm37JobCheckResult(RunResultRequest raw, int attempt)
-    {
-        string status = FirstNonEmpty(
-            ReadRunOutputValue(raw, "JOB_STATUS"),
-            ReadRunOutputValue(raw, "STATUS_TEXT"),
-            raw.SapStatusText,
-            raw.Message);
-        string category = FirstNonEmpty(ReadRunOutputValue(raw, "JOB_STATUS_CATEGORY"), NormalizeZfi057Sm37StatusCategory(status));
-        bool terminal = IsZfi057Sm37TerminalCategory(category);
-        bool failed = IsZfi057Sm37FailureCategory(category) || IsZfi057Sm37FailureStatus(status);
-        string message = FirstNonEmpty(
-            ReadRunOutputValue(raw, "JOB_STATUS_DETAIL"),
-            raw.Message,
-            $"SM37 check #{attempt}: status={status}; category={category}");
-        return new Zfi057Sm37JobCheckResult(IsSuccessResult(raw), terminal, failed, status, category, message, raw);
-    }
-
-    static string ReadRunOutputValue(RunResultRequest result, string key)
-    {
-        foreach (var line in result.Logs)
-        {
-            if (TryReadOutputKey(line.Message ?? "", key, out string value))
-                return value;
-        }
-
-        return "";
-    }
-
-    static bool ShouldRepeatZfi057Step3AfterSm37Check(Zfi057Sm37JobCheckResult check)
+    static bool ShouldRepeatZfi057Step3AfterTbtcoCheck(Zfi057TbtcoJobCheckResult check)
     {
         return check.Success && check.IsTerminal;
     }
 
-    static bool IsSuccessfulZfi057FinalSm37Check(Zfi057Sm37JobCheckResult check)
+    static string ResolveZfi057TbtcoJobUser(SapRunParams p, SapNcoConnectionConfig connectionConfig)
     {
-        return check.Success && check.IsTerminal && !check.IsFailure;
-    }
-
-    static bool IsZfi057Sm37TerminalCategory(string category)
-    {
-        string value = FirstNonEmpty(category, "").Trim().ToLowerInvariant();
-        return value.Equals("terminal_success", StringComparison.OrdinalIgnoreCase) ||
-               value.Equals("terminal_failed", StringComparison.OrdinalIgnoreCase);
-    }
-
-    static bool IsZfi057Sm37FailureCategory(string category)
-    {
-        return FirstNonEmpty(category, "").Trim().Equals("terminal_failed", StringComparison.OrdinalIgnoreCase);
-    }
-
-    static bool IsZfi057Sm37FailureStatus(string status)
-    {
-        string value = FirstNonEmpty(status, "").Trim().ToLowerInvariant();
-        string compact = Regex.Replace(value, @"\s+", "");
-        return compact.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
-               compact.Contains("failure", StringComparison.OrdinalIgnoreCase) ||
-               compact.Contains("abort", StringComparison.OrdinalIgnoreCase) ||
-               compact.Contains("cancel", StringComparison.OrdinalIgnoreCase) ||
-               compact.Contains("失败", StringComparison.OrdinalIgnoreCase) ||
-               compact.Contains("取消", StringComparison.OrdinalIgnoreCase) ||
-               compact.Contains("终止", StringComparison.OrdinalIgnoreCase) ||
-               compact.Contains("中止", StringComparison.OrdinalIgnoreCase);
-    }
-
-    static string NormalizeZfi057Sm37StatusCategory(string status)
-    {
-        string value = FirstNonEmpty(status, "").Trim().ToLowerInvariant();
-        string compact = Regex.Replace(value, @"\s+", "");
-        if (compact.Contains("未完成", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("notcompleted", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("notfinished", StringComparison.OrdinalIgnoreCase))
-        {
-            return "running";
-        }
-
-        if (compact.Contains("finished", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("completed", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("success", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("done", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("已完成", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("完成", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("正常结束", StringComparison.OrdinalIgnoreCase))
-        {
-            return "terminal_success";
-        }
-
-        if (IsZfi057Sm37FailureStatus(compact))
-            return "terminal_failed";
-
-        if (compact.Contains("running", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("active", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("ready", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("released", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("scheduled", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("运行", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("活动", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("就绪", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("释放", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("计划", StringComparison.OrdinalIgnoreCase))
-        {
-            return "running";
-        }
-
-        if (compact.Contains("notfound", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("nojobs", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("找不到", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("没有作业", StringComparison.OrdinalIgnoreCase) ||
-            compact.Contains("无作业", StringComparison.OrdinalIgnoreCase))
-        {
-            return "not_found";
-        }
-
-        return string.IsNullOrWhiteSpace(compact) ? "unknown" : "unknown";
-    }
-
-    static string BuildZfi057Sm37JobCheckScript(string jobName, string jobUser, string businessArea, string dateFrom, string dateTo)
-    {
-        return """
-Option Explicit
-On Error Resume Next
-
-Dim jobName, jobUser, businessArea, dateFromValue, dateToValue, maxAttempts, pollIntervalMs
-jobName = "{JOB_NAME}"
-jobUser = "{JOB_USER}"
-businessArea = "{BUSINESS_AREA}"
-dateFromValue = "{DATE_FROM}"
-dateToValue = "{DATE_TO}"
-maxAttempts = {MAX_ATTEMPTS}
-pollIntervalMs = {POLL_INTERVAL_MS}
-
-Sub Fail(message, code)
-  WScript.Echo "ERROR=" & message
-  WScript.Quit code
-End Sub
-
-Sub WaitReady(timeoutMs)
-  Dim waited
-  waited = 0
-  Do While waited < timeoutMs
-    Err.Clear
-    If session.Busy = False Then Exit Do
-    WScript.Sleep 250
-    waited = waited + 250
-  Loop
-End Sub
-
-Function ContainsAny(text, values)
-  Dim item
-  ContainsAny = False
-  For Each item In values
-    If InStr(1, text, CStr(item), vbTextCompare) > 0 Then
-      ContainsAny = True
-      Exit Function
-    End If
-  Next
-End Function
-
-Function NormalizeJobStatusCategory(text)
-  Dim compact
-  compact = LCase(CStr(text))
-  compact = Replace(compact, " ", "")
-  compact = Replace(compact, vbTab, "")
-
-  If ContainsAny(compact, Array("未完成", "notcompleted", "notfinished")) Then
-    NormalizeJobStatusCategory = "running"
-  ElseIf ContainsAny(compact, Array("finished", "completed", "success", "done", "已完成", "完成", "正常结束")) Then
-    NormalizeJobStatusCategory = "terminal_success"
-  ElseIf ContainsAny(compact, Array("failed", "failure", "abort", "aborted", "cancel", "cancelled", "canceled", "失败", "取消", "终止", "中止")) Then
-    NormalizeJobStatusCategory = "terminal_failed"
-  ElseIf ContainsAny(compact, Array("running", "active", "ready", "released", "scheduled", "运行", "活动", "就绪", "释放", "计划")) Then
-    NormalizeJobStatusCategory = "running"
-  ElseIf ContainsAny(compact, Array("notfound", "nojobs", "找不到", "没有作业", "无作业")) Then
-    NormalizeJobStatusCategory = "not_found"
-  Else
-    NormalizeJobStatusCategory = "unknown"
-  End If
-End Function
-
-Function SafeText(id)
-  Err.Clear
-  SafeText = ""
-  SafeText = CStr(session.findById(id).Text)
-  If Err.Number <> 0 Then SafeText = ""
-End Function
-
-Function SetTextFirst(ids, value)
-  Dim id
-  SetTextFirst = False
-  For Each id In ids
-    Err.Clear
-    session.findById(CStr(id)).Text = value
-    If Err.Number = 0 Then
-      SetTextFirst = True
-      Exit Function
-    End If
-  Next
-End Function
-
-Function SetCheckboxFirst(ids, value)
-  Dim id
-  SetCheckboxFirst = False
-  For Each id In ids
-    Err.Clear
-    session.findById(CStr(id)).Selected = value
-    If Err.Number = 0 Then SetCheckboxFirst = True
-  Next
-End Function
-
-Function FindGrid(root)
-  On Error Resume Next
-  If root Is Nothing Then
-    Set FindGrid = Nothing
-    Exit Function
-  End If
-
-  Dim typ
-  typ = ""
-  Err.Clear
-  typ = CStr(root.Type)
-  If Err.Number = 0 And InStr(1, typ, "GuiGridView", vbTextCompare) > 0 Then
-    Set FindGrid = root
-    Exit Function
-  End If
-
-  Dim count, i, child, found
-  count = 0
-  Err.Clear
-  count = root.Children.Count
-  If Err.Number <> 0 Then
-    Set FindGrid = Nothing
-    Exit Function
-  End If
-
-  For i = 0 To count - 1
-    Set child = root.Children(CInt(i))
-    Set found = FindGrid(child)
-    If Not found Is Nothing Then
-      Set FindGrid = found
-      Exit Function
-    End If
-  Next
-
-  Set FindGrid = Nothing
-End Function
-
-Function TryGridCell(grid, row, columns)
-  Dim col, value
-  TryGridCell = ""
-  For Each col In columns
-    Err.Clear
-    value = grid.GetCellValue(CInt(row), CStr(col))
-    If Err.Number = 0 Then
-      value = Trim(CStr(value))
-      If value <> "" Then
-        TryGridCell = value
-        Exit Function
-      End If
-    End If
-  Next
-End Function
-
-Function ReadSm37Status(ByRef detail)
-  Dim sbar, usr, grid, rowCount, row, maxRow, job, status
-  sbar = SafeText("wnd[0]/sbar")
-  detail = "businessArea=" & businessArea & ";sbar=" & sbar
-  ReadSm37Status = sbar
-
-  Err.Clear
-  Set usr = session.findById("wnd[0]/usr")
-  If Err.Number <> 0 Then Exit Function
-
-  Set grid = FindGrid(usr)
-  If grid Is Nothing Then Exit Function
-
-  Err.Clear
-  rowCount = grid.RowCount
-  If Err.Number <> 0 Then Exit Function
-  detail = detail & ";rowCount=" & rowCount
-  If rowCount <= 0 Then
-    ReadSm37Status = "no jobs found"
-    Exit Function
-  End If
-
-  maxRow = rowCount - 1
-  If maxRow > 24 Then maxRow = 24
-  For row = 0 To maxRow
-    job = TryGridCell(grid, row, Array("JOBNAME", "JOB_NAME", "BTCJOB", "TBTCO-JOBNAME"))
-    status = TryGridCell(grid, row, Array("STATUS", "STTXT", "STATUSTEXT", "STATUS_TEXT", "JOBSTATUS", "STATE", "TBTCO-STATUS"))
-    If job <> "" And InStr(1, job, jobName, vbTextCompare) > 0 Then
-      detail = detail & ";row=" & row & ";job=" & job
-      If status <> "" Then
-        ReadSm37Status = status
-        Exit Function
-      End If
-    End If
-  Next
-End Function
-
-Sub QuerySm37()
-  Err.Clear
-  session.findById("wnd[0]/tbar[0]/okcd").Text = "/nSM37"
-  session.findById("wnd[0]").sendVKey 0
-  If Err.Number <> 0 Then Fail "failed to open SM37 - " & Err.Description, 3
-  WaitReady 10000
-
-  If Not SetTextFirst(Array("wnd[0]/usr/txtBTCH2170-JOBNAME", "wnd[0]/usr/ctxtBTCH2170-JOBNAME"), jobName) Then Fail "SM37 job name field not found; cannot verify job " & jobName, 6
-  If Not SetTextFirst(Array("wnd[0]/usr/txtBTCH2170-USERNAME", "wnd[0]/usr/ctxtBTCH2170-USERNAME"), jobUser) Then Fail "SM37 user field not found; cannot verify job " & jobName, 6
-  If Not SetTextFirst(Array("wnd[0]/usr/ctxtBTCH2170-FROM_DATE", "wnd[0]/usr/ctxtBTCH2170-SDLSTRTDT-LOW"), dateFromValue) Then Fail "SM37 from-date field not found; cannot verify job " & jobName, 6
-  If Not SetTextFirst(Array("wnd[0]/usr/ctxtBTCH2170-TO_DATE", "wnd[0]/usr/ctxtBTCH2170-SDLSTRTDT-HIGH"), dateToValue) Then Fail "SM37 to-date field not found; cannot verify job " & jobName, 6
-  If Not SetCheckboxFirst(Array("wnd[0]/usr/chkBTCH2170-SCHEDUL", "wnd[0]/usr/chkBTCH2170-PRELIM"), True) Then WScript.Echo "WARN: SM37 scheduled status checkbox not found"
-  If Not SetCheckboxFirst(Array("wnd[0]/usr/chkBTCH2170-READY"), True) Then WScript.Echo "WARN: SM37 ready status checkbox not found"
-  If Not SetCheckboxFirst(Array("wnd[0]/usr/chkBTCH2170-RUNNING"), True) Then WScript.Echo "WARN: SM37 running status checkbox not found"
-  If Not SetCheckboxFirst(Array("wnd[0]/usr/chkBTCH2170-FINISHED"), True) Then WScript.Echo "WARN: SM37 finished status checkbox not found"
-  If Not SetCheckboxFirst(Array("wnd[0]/usr/chkBTCH2170-ABORTED", "wnd[0]/usr/chkBTCH2170-CANCELLED"), True) Then WScript.Echo "WARN: SM37 aborted status checkbox not found"
-
-  Err.Clear
-  session.findById("wnd[0]/tbar[1]/btn[8]").press
-  If Err.Number <> 0 Then Fail "failed to execute SM37 query - " & Err.Description, 4
-  WaitReady 30000
-End Sub
-
-Dim SapGuiAuto, application, connection, session, c, s
-Set SapGuiAuto = GetObject("SAPGUI")
-If Err.Number <> 0 Then Fail "SAP GUI scripting engine is not available", 1
-Set application = SapGuiAuto.GetScriptingEngine
-If Err.Number <> 0 Then Fail "SAP GUI scripting engine cannot be opened", 1
-
-Set session = Nothing
-For c = 0 To application.Children.Count - 1
-  Set connection = application.Children(CInt(c))
-  For s = 0 To connection.Children.Count - 1
-    Set session = connection.Children(CInt(s))
-    If Not session Is Nothing Then Exit For
-  Next
-  If Not session Is Nothing Then Exit For
-Next
-If session Is Nothing Then Fail "no SAP GUI scripting session found for SM37 check", 2
-
-WScript.Echo "INFO: SM37 check start jobName=" & jobName & "; user=" & jobUser & "; businessArea=" & businessArea & "; date=" & dateFromValue & ".." & dateToValue
-
-Dim attempt, status, category, detail
-For attempt = 1 To maxAttempts
-  QuerySm37
-  detail = ""
-  status = ReadSm37Status(detail)
-  category = NormalizeJobStatusCategory(status & " " & detail)
-  WScript.Echo "JOB_CHECK_ATTEMPT=" & attempt
-  WScript.Echo "JOB_STATUS=" & status
-  WScript.Echo "JOB_STATUS_DETAIL=" & detail
-  WScript.Echo "JOB_STATUS_CATEGORY=" & category
-  If category = "terminal_success" Or category = "terminal_failed" Then WScript.Quit 0
-  If attempt < maxAttempts Then WScript.Sleep pollIntervalMs
-Next
-
-Fail "SM37 job " & jobName & " did not reach terminal status; lastStatus=" & status & "; category=" & category, 5
-""".Replace("{JOB_NAME}", VbsEscape(jobName))
-            .Replace("{JOB_USER}", VbsEscape(FirstNonEmpty(jobUser, "*")))
-            .Replace("{BUSINESS_AREA}", VbsEscape(businessArea))
-            .Replace("{DATE_FROM}", VbsEscape(dateFrom))
-            .Replace("{DATE_TO}", VbsEscape(dateTo))
-            .Replace("{MAX_ATTEMPTS}", Zfi057Sm37PollAttempts.ToString(CultureInfo.InvariantCulture))
-            .Replace("{POLL_INTERVAL_MS}", (Zfi057Sm37PollIntervalSeconds * 1000).ToString(CultureInfo.InvariantCulture));
+        return FirstNonEmpty(p.User, connectionConfig.User);
     }
 
     static string FormatSample(IEnumerable<string> values, int maxItems)
@@ -10931,50 +10613,69 @@ WScript.Quit 0
         }
 
         {
-            var completed = new Zfi057Sm37JobCheckResult(
+            var completed = new Zfi057TbtcoJobCheckResult(
                 true,
-                IsZfi057Sm37TerminalCategory(NormalizeZfi057Sm37StatusCategory("\u5DF2\u5B8C\u6210")),
-                IsZfi057Sm37FailureStatus("\u5DF2\u5B8C\u6210"),
-                "\u5DF2\u5B8C\u6210",
-                NormalizeZfi057Sm37StatusCategory("\u5DF2\u5B8C\u6210"),
+                SapJobStatusFetcher.IsTbtcoTerminalStatus("F"),
+                SapJobStatusFetcher.IsTbtcoFailureStatus("F"),
+                SapJobStatusFetcher.DescribeTbtcoStatus("F"),
+                SapJobStatusFetcher.NormalizeTbtcoStatusCategory("F"),
                 "",
                 new RunResultRequest { Status = "success" });
-            var failedCheck = new Zfi057Sm37JobCheckResult(
+            var failedCheck = new Zfi057TbtcoJobCheckResult(
                 true,
-                IsZfi057Sm37TerminalCategory(NormalizeZfi057Sm37StatusCategory("\u53D6\u6D88")),
-                IsZfi057Sm37FailureStatus("\u53D6\u6D88"),
-                "\u53D6\u6D88",
-                NormalizeZfi057Sm37StatusCategory("\u53D6\u6D88"),
+                SapJobStatusFetcher.IsTbtcoTerminalStatus("A"),
+                SapJobStatusFetcher.IsTbtcoFailureStatus("A"),
+                SapJobStatusFetcher.DescribeTbtcoStatus("A"),
+                SapJobStatusFetcher.NormalizeTbtcoStatusCategory("A"),
                 "",
                 new RunResultRequest { Status = "success" });
-            var running = new Zfi057Sm37JobCheckResult(
+            var running = new Zfi057TbtcoJobCheckResult(
                 true,
-                IsZfi057Sm37TerminalCategory(NormalizeZfi057Sm37StatusCategory("Running")),
-                IsZfi057Sm37FailureStatus("Running"),
-                "Running",
-                NormalizeZfi057Sm37StatusCategory("Running"),
+                SapJobStatusFetcher.IsTbtcoTerminalStatus("R"),
+                SapJobStatusFetcher.IsTbtcoFailureStatus("R"),
+                SapJobStatusFetcher.DescribeTbtcoStatus("R"),
+                SapJobStatusFetcher.NormalizeTbtcoStatusCategory("R"),
                 "",
                 new RunResultRequest { Status = "success" });
             bool ok = completed.Category.Equals("terminal_success", StringComparison.OrdinalIgnoreCase) &&
                       failedCheck.Category.Equals("terminal_failed", StringComparison.OrdinalIgnoreCase) &&
                       running.Category.Equals("running", StringComparison.OrdinalIgnoreCase) &&
-                      NormalizeZfi057Sm37StatusCategory("\u672A\u5B8C\u6210").Equals("running", StringComparison.OrdinalIgnoreCase) &&
-                      ShouldRepeatZfi057Step3AfterSm37Check(completed) &&
-                      ShouldRepeatZfi057Step3AfterSm37Check(failedCheck) &&
-                      !ShouldRepeatZfi057Step3AfterSm37Check(running) &&
-                      IsSuccessfulZfi057FinalSm37Check(completed) &&
-                      !IsSuccessfulZfi057FinalSm37Check(failedCheck);
-            Check("ZFI057 SM37 status drives step3 repeat", ok, $"completed={completed.Category}, failed={failedCheck.Category}, running={running.Category}");
+                      ShouldRepeatZfi057Step3AfterTbtcoCheck(completed) &&
+                      ShouldRepeatZfi057Step3AfterTbtcoCheck(failedCheck) &&
+                      !ShouldRepeatZfi057Step3AfterTbtcoCheck(running);
+            Check("ZFI057 TBTCO status drives step3 repeat", ok, $"completed={completed.Category}, failed={failedCheck.Category}, running={running.Category}");
         }
 
         {
-            string sm37Script = BuildZfi057Sm37JobCheckScript("ZFI057", "IT049", "2800", "2026.07.15", "2026.07.16");
-            bool ok = sm37Script.Contains("SM37 job name field not found", StringComparison.OrdinalIgnoreCase) &&
-                      sm37Script.Contains("SM37 user field not found", StringComparison.OrdinalIgnoreCase) &&
-                      sm37Script.Contains("SM37 from-date field not found", StringComparison.OrdinalIgnoreCase) &&
-                      sm37Script.Contains("job <> \"\" And InStr", StringComparison.OrdinalIgnoreCase) &&
-                      !sm37Script.Contains("If job = \"\" Or InStr", StringComparison.OrdinalIgnoreCase);
-            Check("ZFI057 SM37 script requires query fields and matching job", ok, Truncate(sm37Script, 220));
+            var query = new SapJobStatusQuery
+            {
+                JobName = "ZFI057",
+                JobUser = "IT049",
+                LowerUtc = new DateTime(2026, 7, 15, 10, 28, 39, DateTimeKind.Local).ToUniversalTime(),
+                UpperUtc = new DateTime(2026, 7, 15, 10, 29, 39, DateTimeKind.Local).ToUniversalTime()
+            };
+            string sql = SapJobStatusFetcher.BuildTbtcoSqlSummary(query);
+            var options = SapJobStatusFetcher.BuildTbtcoWhereOptions(query);
+            bool ok = sql.Contains("FROM TBTCO", StringComparison.OrdinalIgnoreCase) &&
+                      sql.Contains("JOBNAME = 'ZFI057'", StringComparison.OrdinalIgnoreCase) &&
+                      sql.Contains("SDLUNAME = 'IT049'", StringComparison.OrdinalIgnoreCase) &&
+                      options.Any(x => x.Contains("SDLSTRTTM >=", StringComparison.OrdinalIgnoreCase)) &&
+                      options.Any(x => x.Contains("SDLSTRTTM <=", StringComparison.OrdinalIgnoreCase)) &&
+                      options.All(x => x.Length <= 72) &&
+                      sql.Contains("SDLSTRTTM <= '102939'", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 TBTCO query constrains job user and time window", ok, $"{sql}; options={string.Join("|", options)}");
+        }
+
+        {
+            string guiUser = ResolveZfi057TbtcoJobUser(
+                new SapRunParams { User = "GUI_USER" },
+                new SapNcoConnectionConfig { User = "NCO_USER" });
+            string fallbackUser = ResolveZfi057TbtcoJobUser(
+                new SapRunParams(),
+                new SapNcoConnectionConfig { User = "NCO_USER" });
+            bool ok = guiUser.Equals("GUI_USER", StringComparison.OrdinalIgnoreCase) &&
+                      fallbackUser.Equals("NCO_USER", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 TBTCO job owner prefers SAP GUI user", ok, $"guiUser={guiUser}; fallbackUser={fallbackUser}");
         }
 
         {
@@ -11791,7 +11492,7 @@ record Zfi057Step2DateWindow(int Index, string KadkyLow, string KadkyHigh, strin
 
 record Zfi057Step3ScopeResult(bool Success, string Message, string FirstJobStatus, string FinalJobStatus, bool Repeated);
 
-record Zfi057Sm37JobCheckResult(bool Success, bool IsTerminal, bool IsFailure, string Status, string Category, string Message, RunResultRequest RawResult);
+record Zfi057TbtcoJobCheckResult(bool Success, bool IsTerminal, bool IsFailure, string Status, string Category, string Message, RunResultRequest RawResult);
 
 record DingTalkParamGroup(string Label, string[] Keys, bool SplitValues);
 

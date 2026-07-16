@@ -87,6 +87,312 @@ internal sealed class Zfi019NlFetchResult
     public int SplitMaterialCount { get; init; }
 }
 
+internal sealed class SapJobStatusQuery
+{
+    public string JobName { get; init; } = "";
+    public string JobUser { get; init; } = "";
+    public DateTime LowerUtc { get; init; }
+    public DateTime UpperUtc { get; init; }
+}
+
+internal sealed class SapJobStatusResult
+{
+    public bool Success { get; init; }
+    public string Message { get; init; } = "";
+    public string SqlSummary { get; init; } = "";
+    public List<string> Options { get; init; } = new();
+    public List<SapJobStatusRow> Rows { get; init; } = new();
+    public SapJobStatusRow? Latest { get; init; }
+}
+
+internal sealed class SapJobStatusRow
+{
+    public string JobName { get; init; } = "";
+    public string JobCount { get; init; } = "";
+    public string User { get; init; } = "";
+    public string Status { get; init; } = "";
+    public string ScheduledDate { get; init; } = "";
+    public string ScheduledTime { get; init; } = "";
+    public string StartDate { get; init; } = "";
+    public string StartTime { get; init; } = "";
+    public string EndDate { get; init; } = "";
+    public string EndTime { get; init; } = "";
+    public DateTime? EffectiveStartLocal { get; init; }
+    public DateTime? EndLocal { get; init; }
+}
+
+internal sealed class SapJobStatusFetcher
+{
+    private static readonly string[] TbtcoFields =
+    {
+        "JOBNAME", "JOBCOUNT", "SDLUNAME", "STATUS", "SDLSTRTDT", "SDLSTRTTM", "STRTDATE", "STRTTIME", "ENDDATE", "ENDTIME"
+    };
+
+    public SapJobStatusResult FetchLatest(SapNcoConnectionConfig connectionConfig, SapJobStatusQuery query)
+    {
+        ArgumentNullException.ThrowIfNull(connectionConfig);
+        ArgumentNullException.ThrowIfNull(query);
+
+        if (!connectionConfig.IsComplete(out string configError))
+            return new SapJobStatusResult { Success = false, Message = configError, SqlSummary = BuildTbtcoSqlSummary(query), Options = BuildTbtcoWhereOptions(query) };
+
+        try
+        {
+            var destination = SapRpaNcoDestinationProvider.GetDestination(connectionConfig);
+            var function = destination.Repository.CreateFunction("RFC_READ_TABLE");
+            function.SetValue("QUERY_TABLE", "TBTCO");
+            function.SetValue("DELIMITER", "|");
+            function.SetValue("ROWCOUNT", 0);
+
+            var optionsText = BuildTbtcoWhereOptions(query);
+            var options = function.GetTable("OPTIONS");
+            foreach (string option in optionsText)
+                AppendRfcReadOption(options, option);
+
+            var fields = function.GetTable("FIELDS");
+            foreach (string field in TbtcoFields)
+            {
+                fields.Append();
+                fields.SetValue("FIELDNAME", field);
+            }
+
+            function.Invoke(destination);
+
+            var data = function.GetTable("DATA");
+            var layout = ReadRfcReadTableLayout(fields);
+            var rows = new List<SapJobStatusRow>();
+            for (var i = 0; i < data.RowCount; i++)
+            {
+                data.CurrentIndex = i;
+                rows.Add(ParseTbtcoRow(SplitRfcReadTableRow(data.GetString("WA"), layout)));
+            }
+
+            DateTime lowerLocal = query.LowerUtc.ToLocalTime();
+            DateTime upperLocal = query.UpperUtc.ToLocalTime();
+            string user = Normalize(query.JobUser);
+            string job = Normalize(query.JobName);
+            var filtered = rows
+                .Where(row => Normalize(row.JobName).Equals(job, StringComparison.OrdinalIgnoreCase))
+                .Where(row => string.IsNullOrWhiteSpace(user) || Normalize(row.User).Equals(user, StringComparison.OrdinalIgnoreCase))
+                .Where(row => row.EffectiveStartLocal.HasValue &&
+                              row.EffectiveStartLocal.Value >= lowerLocal &&
+                              row.EffectiveStartLocal.Value <= upperLocal)
+                .OrderByDescending(row => row.EffectiveStartLocal ?? DateTime.MinValue)
+                .ThenByDescending(row => row.JobCount, StringComparer.OrdinalIgnoreCase)
+                .FirstOrDefault();
+
+            string message = filtered == null
+                ? $"No TBTCO job matched window; rawRows={rows.Count}; lower={FormatSapLocal(lowerLocal)}; upper={FormatSapLocal(upperLocal)}"
+                : $"Latest TBTCO job {filtered.JobName}/{filtered.JobCount} status={filtered.Status}; category={NormalizeTbtcoStatusCategory(filtered.Status)}; start={FormatNullableLocal(filtered.EffectiveStartLocal)}; end={FormatNullableLocal(filtered.EndLocal)}";
+
+            return new SapJobStatusResult
+            {
+                Success = true,
+                Message = message,
+                SqlSummary = BuildTbtcoSqlSummary(query),
+                Options = optionsText,
+                Rows = rows,
+                Latest = filtered
+            };
+        }
+        catch (Exception ex)
+        {
+            return new SapJobStatusResult
+            {
+                Success = false,
+                Message = $"TBTCO RFC_READ_TABLE failed: {ExceptionChain(ex)}",
+                SqlSummary = BuildTbtcoSqlSummary(query),
+                Options = BuildTbtcoWhereOptions(query)
+            };
+        }
+    }
+
+    public static List<string> BuildTbtcoWhereOptions(SapJobStatusQuery query)
+    {
+        var lowerLocal = query.LowerUtc.ToLocalTime();
+        var upperLocal = query.UpperUtc.ToLocalTime();
+        string lowerDate = lowerLocal.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+        string lowerTime = lowerLocal.ToString("HHmmss", CultureInfo.InvariantCulture);
+        string upperDate = upperLocal.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+        string upperTime = upperLocal.ToString("HHmmss", CultureInfo.InvariantCulture);
+        var options = new List<string>
+        {
+            $"JOBNAME = '{EscapeSqlLiteral(FirstNonEmpty(query.JobName, "ZFI057").Trim().ToUpperInvariant())}'"
+        };
+        if (!string.IsNullOrWhiteSpace(query.JobUser))
+            options.Add($"AND SDLUNAME = '{EscapeSqlLiteral(query.JobUser.Trim().ToUpperInvariant())}'");
+        options.Add($"AND ( SDLSTRTDT > '{lowerDate}'");
+        options.Add($"OR ( SDLSTRTDT = '{lowerDate}' AND SDLSTRTTM >= '{lowerTime}' ) )");
+        options.Add($"AND ( SDLSTRTDT < '{upperDate}'");
+        options.Add($"OR ( SDLSTRTDT = '{upperDate}' AND SDLSTRTTM <= '{upperTime}' ) )");
+        return options;
+    }
+
+    public static string BuildTbtcoSqlSummary(SapJobStatusQuery query)
+    {
+        var lowerLocal = query.LowerUtc.ToLocalTime();
+        var upperLocal = query.UpperUtc.ToLocalTime();
+        string lowerDate = lowerLocal.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+        string lowerTime = lowerLocal.ToString("HHmmss", CultureInfo.InvariantCulture);
+        string upperDate = upperLocal.ToString("yyyyMMdd", CultureInfo.InvariantCulture);
+        string upperTime = upperLocal.ToString("HHmmss", CultureInfo.InvariantCulture);
+        string userPredicate = string.IsNullOrWhiteSpace(query.JobUser)
+            ? ""
+            : $" AND SDLUNAME = '{EscapeSqlLiteral(query.JobUser.Trim().ToUpperInvariant())}'";
+        return "SELECT JOBNAME, JOBCOUNT, SDLUNAME, STATUS, SDLSTRTDT, SDLSTRTTM, STRTDATE, STRTTIME, ENDDATE, ENDTIME " +
+               "FROM TBTCO " +
+               $"WHERE JOBNAME = '{EscapeSqlLiteral(FirstNonEmpty(query.JobName, "ZFI057").Trim().ToUpperInvariant())}'{userPredicate} " +
+               $"AND (SDLSTRTDT > '{lowerDate}' OR (SDLSTRTDT = '{lowerDate}' AND SDLSTRTTM >= '{lowerTime}')) " +
+               $"AND (SDLSTRTDT < '{upperDate}' OR (SDLSTRTDT = '{upperDate}' AND SDLSTRTTM <= '{upperTime}')) " +
+               $"-- post-filter effective start between {FormatSapLocal(lowerLocal)} and {FormatSapLocal(upperLocal)}; latest row wins";
+    }
+
+    public static string NormalizeTbtcoStatusCategory(string status)
+    {
+        string value = Normalize(status);
+        return value switch
+        {
+            "F" => "terminal_success",
+            "A" or "C" => "terminal_failed",
+            "R" or "Y" or "S" or "P" => "running",
+            "" => "unknown",
+            _ => "unknown"
+        };
+    }
+
+    public static bool IsTbtcoTerminalStatus(string status)
+    {
+        string category = NormalizeTbtcoStatusCategory(status);
+        return category.Equals("terminal_success", StringComparison.OrdinalIgnoreCase) ||
+               category.Equals("terminal_failed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    public static bool IsTbtcoFailureStatus(string status)
+        => NormalizeTbtcoStatusCategory(status).Equals("terminal_failed", StringComparison.OrdinalIgnoreCase);
+
+    public static string DescribeTbtcoStatus(string status)
+    {
+        string value = Normalize(status);
+        return value switch
+        {
+            "F" => "F(finished)",
+            "A" => "A(cancelled)",
+            "C" => "C(cancelled/completed)",
+            "R" => "R(active)",
+            "Y" => "Y(ready)",
+            "S" => "S(released)",
+            "P" => "P(scheduled)",
+            "" => "unknown",
+            _ => value
+        };
+    }
+
+    private static SapJobStatusRow ParseTbtcoRow(Dictionary<string, string> values)
+    {
+        values.TryGetValue("JOBNAME", out string? jobName);
+        values.TryGetValue("JOBCOUNT", out string? jobCount);
+        values.TryGetValue("SDLUNAME", out string? user);
+        values.TryGetValue("STATUS", out string? status);
+        values.TryGetValue("SDLSTRTDT", out string? scheduledDate);
+        values.TryGetValue("SDLSTRTTM", out string? scheduledTime);
+        values.TryGetValue("STRTDATE", out string? startDate);
+        values.TryGetValue("STRTTIME", out string? startTime);
+        values.TryGetValue("ENDDATE", out string? endDate);
+        values.TryGetValue("ENDTIME", out string? endTime);
+        DateTime? actualStart = TryParseSapLocalDateTime(startDate, startTime);
+        DateTime? scheduledStart = TryParseSapLocalDateTime(scheduledDate, scheduledTime);
+        return new SapJobStatusRow
+        {
+            JobName = jobName?.Trim() ?? "",
+            JobCount = jobCount?.Trim() ?? "",
+            User = user?.Trim() ?? "",
+            Status = status?.Trim() ?? "",
+            ScheduledDate = scheduledDate?.Trim() ?? "",
+            ScheduledTime = scheduledTime?.Trim() ?? "",
+            StartDate = startDate?.Trim() ?? "",
+            StartTime = startTime?.Trim() ?? "",
+            EndDate = endDate?.Trim() ?? "",
+            EndTime = endTime?.Trim() ?? "",
+            EffectiveStartLocal = actualStart ?? scheduledStart,
+            EndLocal = TryParseSapLocalDateTime(endDate, endTime)
+        };
+    }
+
+    private static DateTime? TryParseSapLocalDateTime(string? dateValue, string? timeValue)
+    {
+        string date = DigitsOnly(dateValue);
+        if (date.Length != 8 || date == "00000000") return null;
+        string time = DigitsOnly(timeValue);
+        if (time.Length == 0) time = "000000";
+        if (time.Length > 6) time = time[^6..];
+        time = time.PadLeft(6, '0');
+        return DateTime.TryParseExact(date + time, "yyyyMMddHHmmss", CultureInfo.InvariantCulture, DateTimeStyles.None, out var result)
+            ? result
+            : null;
+    }
+
+    private static string DigitsOnly(string? value) => new((value ?? "").Where(char.IsDigit).ToArray());
+
+    private static void AppendRfcReadOption(IRfcTable options, string text)
+    {
+        if (text.Length > 72) throw new ArgumentException($"RFC_READ_TABLE option is too long: {text}");
+        options.Append();
+        options.SetValue("TEXT", text);
+    }
+
+    private static List<(string Name, int Offset, int Length)> ReadRfcReadTableLayout(IRfcTable fields)
+    {
+        var result = new List<(string Name, int Offset, int Length)>();
+        for (var i = 0; i < fields.RowCount; i++)
+        {
+            fields.CurrentIndex = i;
+            result.Add((fields.GetString("FIELDNAME").Trim().ToUpperInvariant(), fields.GetInt("OFFSET"), fields.GetInt("LENGTH")));
+        }
+        return result;
+    }
+
+    private static Dictionary<string, string> SplitRfcReadTableRow(string row, IReadOnlyList<(string Name, int Offset, int Length)> layout)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var field in layout)
+        {
+            if (field.Offset >= row.Length)
+            {
+                result[field.Name] = "";
+                continue;
+            }
+
+            var length = Math.Min(field.Length, row.Length - field.Offset);
+            result[field.Name] = row.Substring(field.Offset, length).Trim();
+        }
+        return result;
+    }
+
+    private static string Normalize(string? value) => (value ?? "").Trim().ToUpperInvariant();
+
+    private static string EscapeSqlLiteral(string value) => value.Replace("'", "''");
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (string? value in values)
+            if (!string.IsNullOrWhiteSpace(value))
+                return value;
+        return "";
+    }
+
+    private static string FormatSapLocal(DateTime value) => value.ToString("yyyyMMdd HHmmss", CultureInfo.InvariantCulture);
+
+    private static string FormatNullableLocal(DateTime? value) => value.HasValue ? FormatSapLocal(value.Value) : "-";
+
+    private static string ExceptionChain(Exception ex)
+    {
+        var parts = new List<string>();
+        for (Exception? current = ex; current != null; current = current.InnerException)
+            parts.Add($"{current.GetType().Name}: {current.Message}");
+        return string.Join(" -> ", parts);
+    }
+}
+
 internal sealed class Zfi019NlMemoryFetcher
 {
     public const string FinalMaterialColumn = "入库料号";
