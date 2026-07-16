@@ -98,6 +98,27 @@ Function NormalizeListText(value)
    NormalizeListText = result
 End Function
 
+Function LoadMaterialSource(value)
+   Dim source, path, fso, stream
+   source = Trim(CStr(value))
+   If LCase(Left(source, 6)) <> "@file:" Then
+      LoadMaterialSource = source
+      Exit Function
+   End If
+
+   path = Mid(source, 7)
+   Err.Clear
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If Err.Number <> 0 Then Fail "create filesystem object for material file failed - " & Err.Description, 5
+   If Not fso.FileExists(path) Then Fail "material file not found - " & path, 5
+
+   Set stream = fso.OpenTextFile(path, 1, False, True)
+   If Err.Number <> 0 Then Fail "read material file failed - " & Err.Description, 5
+   LoadMaterialSource = stream.ReadAll
+   stream.Close
+   Err.Clear
+End Function
+
 Function ResolveMaterialText()
    Dim source
    source = materialsCsv
@@ -105,6 +126,7 @@ Function ResolveMaterialText()
    If Trim(source) = "" And LooksLikeMaterialField(field2Name) Then source = field2Value
    If Trim(source) = "" And field1Name = "" And Trim(field1Value) <> "" Then source = field1Value
    If Trim(source) = "" And field2Name = "" And Trim(field2Value) <> "" Then source = field2Value
+   source = LoadMaterialSource(source)
    ResolveMaterialText = NormalizeListText(source)
 End Function
 
@@ -270,14 +292,113 @@ Sub PressButton(id, label, timeoutMs)
 End Sub
 
 Sub SetClipboardText(value)
-   Dim html
+   Dim fso, shell, tempFolder, dataFile, scriptFile, dataStream, scriptStream
+   Dim psScript, command, proc, stdout, stderr, verifiedLineCount
    Err.Clear
-   Set html = CreateObject("htmlfile")
-   html.ParentWindow.ClipboardData.SetData "text", CStr(value)
-   If Err.Number <> 0 Then Fail "set clipboard material list failed - " & Err.Description, 8
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If Err.Number <> 0 Then Fail "create filesystem object for clipboard failed - " & Err.Description, 8
+   Err.Clear
+   Set shell = CreateObject("WScript.Shell")
+   If Err.Number <> 0 Then Fail "create shell object for clipboard failed - " & Err.Description, 8
+   Err.Clear
+   tempFolder = shell.ExpandEnvironmentStrings("%TEMP%")
+   dataFile = fso.BuildPath(tempFolder, fso.GetTempName())
+   scriptFile = fso.BuildPath(tempFolder, fso.GetTempName() & ".ps1")
+
+   Set dataStream = fso.OpenTextFile(dataFile, 2, True, True)
+   dataStream.Write CStr(value)
+   dataStream.Close
+   If Err.Number <> 0 Then
+      CleanupClipboardTemp fso, dataFile, scriptFile
+      Fail "write clipboard material temp file failed - " & Err.Description, 8
+   End If
+   Err.Clear
+
+   psScript = "param([string]$Path)" & vbCrLf & _
+      "Add-Type -AssemblyName System.Windows.Forms" & vbCrLf & _
+      "$text = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::Unicode)" & vbCrLf & _
+      "[System.Windows.Forms.Clipboard]::SetText($text, [System.Windows.Forms.TextDataFormat]::UnicodeText)" & vbCrLf & _
+      "Start-Sleep -Milliseconds 200" & vbCrLf & _
+      "$actual = [System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::UnicodeText)" & vbCrLf & _
+      "if ($actual -ne $text) {" & vbCrLf & _
+      "  [Console]::Error.WriteLine(('clipboard verify failed; expectedLength={0}; actualLength={1}' -f $text.Length, $actual.Length))" & vbCrLf & _
+      "  exit 2" & vbCrLf & _
+      "}" & vbCrLf & _
+      "$lineCount = (($actual -split ""`r?`n"") | Where-Object { $_.Trim().Length -gt 0 }).Count" & vbCrLf & _
+      "[Console]::Out.WriteLine(('clipboard verified length={0}; lines={1}' -f $text.Length, $lineCount))" & vbCrLf
+   Set scriptStream = fso.OpenTextFile(scriptFile, 2, True, False)
+   scriptStream.Write psScript
+   scriptStream.Close
+   If Err.Number <> 0 Then
+      CleanupClipboardTemp fso, dataFile, scriptFile
+      Fail "write clipboard helper script failed - " & Err.Description, 8
+   End If
+   Err.Clear
+
+   command = "powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File " & ShellQuote(scriptFile) & " " & ShellQuote(dataFile)
+   Set proc = shell.Exec(command)
+   If Err.Number <> 0 Then
+      CleanupClipboardTemp fso, dataFile, scriptFile
+      Fail "start clipboard helper failed - " & Err.Description, 8
+   End If
+   Err.Clear
+   Do While proc.Status = 0
+      WScript.Sleep 100
+   Loop
+   stdout = Trim(proc.StdOut.ReadAll)
+   stderr = Trim(proc.StdErr.ReadAll)
+   If stdout <> "" Then WScript.Echo "INFO: " & stdout
+   If proc.ExitCode <> 0 Then
+      If stderr = "" Then stderr = "exit code " & proc.ExitCode
+      CleanupClipboardTemp fso, dataFile, scriptFile
+      Fail "set clipboard material list failed - " & stderr, 8
+   End If
+   verifiedLineCount = ClipboardVerifiedLineCount(stdout)
+   If verifiedLineCount <> CLng(materialCount) Then
+      CleanupClipboardTemp fso, dataFile, scriptFile
+      Fail "set clipboard material list failed - clipboard line count does not match materialCount=" & materialCount & "; " & stdout, 8
+   End If
+
+   CleanupClipboardTemp fso, dataFile, scriptFile
    WScript.Echo "INFO: material clipboard prepared count=" & materialCount
    Err.Clear
 End Sub
+
+Function ClipboardVerifiedLineCount(value)
+   Dim marker, pos, i, ch, digits
+   marker = "lines="
+   pos = InStr(CStr(value), marker)
+   If pos <= 0 Then
+      ClipboardVerifiedLineCount = -1
+      Exit Function
+   End If
+   pos = pos + Len(marker)
+   digits = ""
+   For i = pos To Len(CStr(value))
+      ch = Mid(CStr(value), i, 1)
+      If ch >= "0" And ch <= "9" Then
+         digits = digits & ch
+      Else
+         Exit For
+      End If
+   Next
+   If digits = "" Then
+      ClipboardVerifiedLineCount = -1
+   Else
+      ClipboardVerifiedLineCount = CLng(digits)
+   End If
+End Function
+
+Sub CleanupClipboardTemp(fso, dataFile, scriptFile)
+   Err.Clear
+   If fso.FileExists(dataFile) Then fso.DeleteFile dataFile, True
+   If fso.FileExists(scriptFile) Then fso.DeleteFile scriptFile, True
+   Err.Clear
+End Sub
+
+Function ShellQuote(value)
+   ShellQuote = """" & Replace(CStr(value), """", """""") & """"
+End Function
 
 Sub OpenTransaction()
    Err.Clear

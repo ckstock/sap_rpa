@@ -9100,7 +9100,7 @@ WScript.Quit 4
         try
         {
             File.WriteAllText(takeoverFile, takeoverScript, Encoding.Default);
-            var psi = new ProcessStartInfo("cscript.exe", $"//T:12 //nologo \"{takeoverFile}\"")
+            var psi = new ProcessStartInfo(ResolveCscriptPath(), $"//T:12 //nologo \"{takeoverFile}\"")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -9283,7 +9283,7 @@ WScript.Quit 0
         try
         {
             File.WriteAllText(probeFile, probeScript, Encoding.Default);
-            var psi = new ProcessStartInfo("cscript.exe", $"//T:8 //nologo \"{probeFile}\"")
+            var psi = new ProcessStartInfo(ResolveCscriptPath(), $"//T:8 //nologo \"{probeFile}\"")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -9373,7 +9373,7 @@ WScript.Quit 0
         try
         {
             File.WriteAllText(probeFile, probeScript, Encoding.Default);
-            var psi = new ProcessStartInfo("cscript.exe", $"//T:8 //nologo \"{probeFile}\"")
+            var psi = new ProcessStartInfo(ResolveCscriptPath(), $"//T:8 //nologo \"{probeFile}\"")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -9411,6 +9411,16 @@ WScript.Quit 0
     static string EscapeArg(string value)
     {
         return value.Replace("\"", "");
+    }
+
+    static string ResolveCscriptPath()
+    {
+        string systemPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cscript.exe");
+        if (File.Exists(systemPath))
+            return systemPath;
+
+        string windowsPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "cscript.exe");
+        return File.Exists(windowsPath) ? windowsPath : "cscript.exe";
     }
 
     static string? FindSapshcut()
@@ -9485,6 +9495,21 @@ WScript.Quit 0
             Log($"script fixedPlants metadata used because request plants are empty: {effectivePlants}");
         }
 
+        string materialPlaceholder = p.Materials;
+        string? materialTempFile = null;
+        if (p.TCode.Equals("ZFI057", StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(p.Materials))
+        {
+            string[] materialItems = NormalizeStringArray(p.Materials);
+            if (materialItems.Length > 0)
+            {
+                materialTempFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_{p.TCode}_{Guid.NewGuid():N}_materials.txt");
+                File.WriteAllText(materialTempFile, string.Join(Environment.NewLine, materialItems), Encoding.Unicode);
+                materialPlaceholder = "@file:" + materialTempFile;
+                Log($"ZFI057 material list externalized for VBS: file={materialTempFile}, count={materialItems.Length}");
+            }
+        }
+
         string vbsScript = template
             .Replace("{OK_CODE}", VbsEscape(p.TCode))
             .Replace("{SAP_SYSTEM}", VbsEscape(StrictSapSessionMatching ? p.System : ""))
@@ -9497,7 +9522,7 @@ WScript.Quit 0
             .Replace("{FIELD2_VALUE}", VbsEscape(p.Field2Value))
             .Replace("{PLANTS}", VbsEscape(effectivePlants))
             .Replace("{BUSINESS_AREAS}", VbsEscape(p.BusinessAreas))
-            .Replace("{MATERIALS}", VbsEscape(p.Materials))
+            .Replace("{MATERIALS}", VbsEscape(materialPlaceholder))
             .Replace("{FACTORY_GROUP}", VbsEscape(p.FactoryGroup))
             .Replace("{RUN_STRATEGY}", VbsEscape(p.RunStrategy))
             .Replace("{PERIOD}", VbsEscape(p.Period))
@@ -9515,7 +9540,7 @@ WScript.Quit 0
             Log($"执行 VBS: {tmpFile}, tcode={p.TCode}, script={p.Script}, plants={effectivePlants}");
 
             int timeoutSeconds = ResolveVbsTimeoutSeconds(p, effectivePlants);
-            var psi = new ProcessStartInfo("cscript.exe", $"//T:{timeoutSeconds} //nologo \"{tmpFile}\"")
+            var psi = new ProcessStartInfo(ResolveCscriptPath(), $"//T:{timeoutSeconds} //nologo \"{tmpFile}\"")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -9627,6 +9652,8 @@ WScript.Quit 0
             {
                 if (!keepTempFile && File.Exists(tmpFile))
                     File.Delete(tmpFile);
+                if (!keepTempFile && materialTempFile != null && File.Exists(materialTempFile))
+                    File.Delete(materialTempFile);
             }
             catch { }
         }
@@ -9744,7 +9771,7 @@ WScript.Quit 0
         try
         {
             File.WriteAllText(cleanupFile, cleanupScript, Encoding.Default);
-            var psi = new ProcessStartInfo("cscript.exe", $"//T:12 //nologo \"{cleanupFile}\"")
+            var psi = new ProcessStartInfo(ResolveCscriptPath(), $"//T:12 //nologo \"{cleanupFile}\"")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
