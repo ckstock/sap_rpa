@@ -315,7 +315,7 @@ static class Program
                 Array.Empty<string>(),
                 fetch.Materials,
                 fetch.Materials,
-                fetch.FetchResult.FinalRows);
+                fetch.FetchResult.SplitRows);
 
             Console.WriteLine("ZFI019NL memory diagnostic");
             Console.WriteLine($"status={fetch.Result.Status}");
@@ -5500,7 +5500,7 @@ WHERE run_id=$runId;
             string materialSource = "ZFI019NL_MEMORY";
             string[] materialItems = upstreamMaterialItems;
             AddWorkflowLog(aggregate, "step 1", $"materials: selectedSource={materialSource}; selectedCount={materialItems.Length}; selectedSample={FormatSample(materialItems, 8)}; selectedHash={HashForLog(string.Join(",", materialItems))}; requestCount={requestMaterialItems.Length}; requestMaterialsIgnored=true; upstreamCount={upstreamMaterialItems.Length}; upstreamSample={FormatSample(upstreamMaterialItems, 8)}; upstreamHash={HashForLog(string.Join(",", upstreamMaterialItems))}");
-            AddZfi057MaterialAuditFile(aggregate, p, scopeIndex, area, plants, materialSource, requestMaterialItems, upstreamMaterialItems, materialItems, step1Fetch.FetchResult.FinalRows);
+            AddZfi057MaterialAuditFile(aggregate, p, scopeIndex, area, plants, materialSource, requestMaterialItems, upstreamMaterialItems, materialItems, step1Fetch.FetchResult.SplitRows);
             if (materialItems.Length == 0)
             {
                 return FailZfi057Workflow(aggregate,
@@ -5603,6 +5603,12 @@ WHERE run_id=$runId;
         result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch counts: rawLines={fetchResult.RawLines.Count}; headers={fetchResult.Headers.Count}; alvRows={fetchResult.AlvRows.Count}; finalRows={fetchResult.FinalRows.Count}; splitMaterials={fetchResult.SplitMaterialCount}" });
         result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch headerSample={Truncate(string.Join("|", fetchResult.Headers), 1200)}" });
         result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch materials: count={materials.Length}; sample={FormatSample(materials, 8)}; hash={HashForLog(string.Join(",", materials))}" });
+        string[] splitMaterials = fetchResult.SplitRows
+            .Select(row => row.TryGetValue(Zfi019NlMemoryFetcher.FinalMaterialColumn, out string? value) ? value : "")
+            .Select(v => v.Trim())
+            .Where(v => !string.IsNullOrWhiteSpace(v))
+            .ToArray();
+        result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch custom table materials: count={splitMaterials.Length}; sample={FormatSample(splitMaterials, 8)}; hash={HashForLog(string.Join(",", splitMaterials))}" });
 
         foreach (var sourceGroup in fetchResult.FinalRows
             .Select(row => row.TryGetValue(Zfi019NlMemoryFetcher.FinalSourceColumn, out string? source) ? FirstNonEmpty(source, "-") : "-")
@@ -5869,6 +5875,7 @@ WHERE run_id=$runId;
                 $"summary,upstreamCount,{upstreamMaterials.Length}",
                 $"summary,selectedCount,{selectedMaterials.Length}",
                 $"summary,selectedHash,{CsvCell(HashForLog(string.Join(",", selectedMaterials)))}",
+                $"summary,customTableCount,{sourceRows.Count}",
                 "",
                 "source,index,material"
             };
@@ -9849,8 +9856,8 @@ WScript.Quit 0
                 {
                     new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                     {
-                        [Zfi019NlMemoryFetcher.FinalMaterialColumn] = "MAT001",
-                        [Zfi019NlMemoryFetcher.FinalSourceColumn] = "ZFI019NL"
+                        [Zfi019NlMemoryFetcher.FinalMaterialColumn] = "MAT_SPLIT",
+                        [Zfi019NlMemoryFetcher.FinalSourceColumn] = "ZFI_SPLIT(BUKRS=2030,WERKS=1022)"
                     }
                 });
 
@@ -9860,8 +9867,11 @@ WScript.Quit 0
             bool hasHash = text.Contains("selectedHash", StringComparison.OrdinalIgnoreCase);
             bool hasSelected = text.Contains("\"selected\",1,\"MAT001\"", StringComparison.OrdinalIgnoreCase);
             bool hasUpstream = text.Contains("\"upstream\",2,\"MAT002\"", StringComparison.OrdinalIgnoreCase);
-            bool ok = exists && aggregate.Files.Count == 1 && hasHash && hasSelected && hasUpstream;
-            Check("ZFI057 material audit file", ok, $"exists={exists}, files={aggregate.Files.Count}, hash={hasHash}, selected={hasSelected}, upstream={hasUpstream}, file={path}");
+            bool hasCustomCount = text.Contains("summary,customTableCount,1", StringComparison.OrdinalIgnoreCase);
+            bool hasCustomSource = text.Contains("\"MAT_SPLIT\",\"ZFI_SPLIT(BUKRS=2030,WERKS=1022)\"", StringComparison.OrdinalIgnoreCase);
+            bool noReportSourceInMaterialSource = !text.Contains("\"MAT001\",\"ZFI019NL\"", StringComparison.OrdinalIgnoreCase);
+            bool ok = exists && aggregate.Files.Count == 1 && hasHash && hasSelected && hasUpstream && hasCustomCount && hasCustomSource && noReportSourceInMaterialSource;
+            Check("ZFI057 material audit file", ok, $"exists={exists}, files={aggregate.Files.Count}, hash={hasHash}, selected={hasSelected}, upstream={hasUpstream}, customCount={hasCustomCount}, customSource={hasCustomSource}, onlyCustomSource={noReportSourceInMaterialSource}, file={path}");
             try { if (exists) File.Delete(path); } catch { }
         }
 

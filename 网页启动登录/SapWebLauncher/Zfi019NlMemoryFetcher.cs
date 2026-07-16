@@ -83,6 +83,7 @@ internal sealed class Zfi019NlFetchResult
     public List<string> Headers { get; init; } = new();
     public List<Dictionary<string, string>> AlvRows { get; init; } = new();
     public List<Dictionary<string, string>> FinalRows { get; init; } = new();
+    public List<Dictionary<string, string>> SplitRows { get; init; } = new();
     public int SplitMaterialCount { get; init; }
 }
 
@@ -198,8 +199,8 @@ internal sealed class Zfi019NlMemoryFetcher
             }
 
             var finalRows = processed.FinalRows;
-            int beforeSplit = finalRows.Count;
-            var split = AppendDongtaiSplitMaterials(destination, request, table, finalRows);
+            var splitRows = new List<Dictionary<string, string>>();
+            var split = AppendDongtaiSplitMaterials(destination, request, table, finalRows, splitRows);
             if (!split.Success)
             {
                 return new Zfi019NlFetchResult
@@ -212,7 +213,8 @@ internal sealed class Zfi019NlMemoryFetcher
                     Headers = table.Headers,
                     AlvRows = processed.AlvRows,
                     FinalRows = finalRows,
-                    SplitMaterialCount = Math.Max(0, finalRows.Count - beforeSplit)
+                    SplitRows = splitRows,
+                    SplitMaterialCount = splitRows.Count
                 };
             }
 
@@ -228,7 +230,8 @@ internal sealed class Zfi019NlMemoryFetcher
                 Headers = table.Headers,
                 AlvRows = processed.AlvRows,
                 FinalRows = finalRows,
-                SplitMaterialCount = Math.Max(0, finalRows.Count - beforeSplit)
+                SplitRows = splitRows,
+                SplitMaterialCount = splitRows.Count
             };
         }
         catch (Exception ex)
@@ -409,7 +412,8 @@ internal sealed class Zfi019NlMemoryFetcher
         RfcDestination destination,
         Zfi019NlFetchRequest request,
         (List<string> Headers, List<string[]> Rows, List<string> Warnings) table,
-        List<Dictionary<string, string>> finalRows)
+        List<Dictionary<string, string>> finalRows,
+        List<Dictionary<string, string>> splitRows)
     {
         if (!ShouldReadDongtaiSplit(request, table)) return (true, "");
 
@@ -464,7 +468,11 @@ internal sealed class Zfi019NlMemoryFetcher
                         var matnr = values.TryGetValue("MATNR", out var value) ? value : "";
                         var rowWerks = values.TryGetValue("WERKS", out var rowWerkValue) ? rowWerkValue : werks;
                         var source = $"{tableName}(BUKRS={bukrs},WERKS={rowWerks})";
-                        if (AddFinalMaterial(finalRows, matnr, source)) added++;
+                        if (AddFinalMaterial(splitRows, matnr, source))
+                        {
+                            AddFinalMaterial(finalRows, matnr, source);
+                            added++;
+                        }
                     }
                 }
             }
