@@ -302,7 +302,8 @@ static class Program
                 RunId = $"DIAG-ZFI019NL-{DateTime.Now:yyyyMMddHHmmss}"
             });
 
-            var fetch = ExecuteZfi057Step1Memory(p, businessArea, NormalizeStringArray(plants));
+            string[] diagnosticPlants = ResolveZfi057DiagnosticPlants(p, businessArea, plants);
+            var fetch = ExecuteZfi057Step1Memory(p, businessArea, diagnosticPlants);
             var aggregate = new RunResultRequest { Status = fetch.Result.Status, Message = fetch.Result.Message };
             AddStepResult(aggregate, "diagnostic ZFI019NL memory", fetch.Result);
             AddZfi057MaterialAuditFile(
@@ -310,7 +311,7 @@ static class Program
                 p,
                 1,
                 businessArea,
-                NormalizeStringArray(plants),
+                diagnosticPlants,
                 "ZFI019NL_MEMORY",
                 Array.Empty<string>(),
                 fetch.Materials,
@@ -329,15 +330,14 @@ static class Program
             Console.WriteLine($"alvRows={fetch.FetchResult.AlvRows.Count}");
             Console.WriteLine($"finalRows={fetch.FetchResult.FinalRows.Count}");
             Console.WriteLine($"materialCount={fetch.Materials.Length}");
-            Console.WriteLine($"materialSample={FormatSample(fetch.Materials, 20)}");
-            Console.WriteLine($"materialHash={HashForLog(string.Join(",", fetch.Materials))}");
+            Console.WriteLine("materials=omitted");
             foreach (var file in aggregate.Files)
                 Console.WriteLine($"file={file.Path}");
             Console.WriteLine("logs:");
-            foreach (var line in aggregate.Logs)
+            foreach (var line in SanitizeZfi057DiagnosticLogs(aggregate.Logs))
                 Console.WriteLine($"{FirstNonEmpty(line.Level, "INFO")}: {line.Message}");
 
-            string diagnosticLog = WriteZfi019NlDiagnosticLog(p, businessArea, period, weekEnd, fetch, aggregate);
+            string diagnosticLog = WriteZfi019NlDiagnosticLog(p, businessArea, diagnosticPlants, period, weekEnd, fetch, aggregate);
             Console.WriteLine($"diagnosticLog={diagnosticLog}");
 
             return IsSuccessResult(fetch.Result) && fetch.Materials.Length > 0 ? 0 : 2;
@@ -387,6 +387,7 @@ static class Program
     static string WriteZfi019NlDiagnosticLog(
         SapRunParams p,
         string businessArea,
+        string[] plants,
         string period,
         string weekEnd,
         Zfi057Step1MaterialFetch fetch,
@@ -413,15 +414,149 @@ static class Program
             $"alvRows={fetch.FetchResult.AlvRows.Count}",
             $"finalRows={fetch.FetchResult.FinalRows.Count}",
             $"materialCount={fetch.Materials.Length}",
-            $"materialSample={FormatSample(fetch.Materials, 20)}",
-            $"materialHash={HashForLog(string.Join(",", fetch.Materials))}",
+            "materials=omitted",
             $"options={fetch.FetchResult.Options}",
             "",
-            "logs:"
+            "step2Inputs:"
         };
-        lines.AddRange(aggregate.Logs.Select(line => $"{FirstNonEmpty(line.Level, "INFO")}: {line.Message}"));
+
+        string[] step2Plants = plants.Length > 0 ? plants : new[] { "" };
+        for (int i = 0; i < step2Plants.Length; i++)
+        {
+            var step2 = CloneSapRunParams(p);
+            step2.TCode = "ZFI057";
+            step2.Script = "ZFI057.vbs";
+            step2.BusinessAreas = businessArea;
+            step2.BusinessArea = businessArea;
+            step2.Plants = step2Plants[i];
+            step2.Plant = step2Plants[i];
+            step2.Materials = "";
+            step2.RunStrategy = "workflow-step";
+            step2.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 1800);
+            lines.Add(BuildZfi057Step2InputSummary(step2, businessArea, step2Plants[i], i + 1, step2Plants.Length, fetch.Materials.Length));
+        }
+
+        lines.AddRange(new[]
+        {
+            "",
+            "logs:"
+        });
+        lines.AddRange(SanitizeZfi057DiagnosticLogs(aggregate.Logs).Select(line => $"{FirstNonEmpty(line.Level, "INFO")}: {line.Message}"));
         File.WriteAllLines(path, lines, new UTF8Encoding(false));
         return path;
+    }
+
+    static IEnumerable<RunLogLine> SanitizeZfi057DiagnosticLogs(IEnumerable<RunLogLine> logs)
+    {
+        foreach (var line in logs)
+        {
+            string message = line.Message ?? "";
+            if (message.Contains("memory fetch materials:", StringComparison.OrdinalIgnoreCase))
+            {
+                yield return new RunLogLine
+                {
+                    Level = FirstNonEmpty(line.Level, "INFO"),
+                    Message = RedactMaterialSampleAndHash(message),
+                    CreatedAt = line.CreatedAt
+                };
+                continue;
+            }
+
+            yield return line;
+        }
+    }
+
+    static string RedactMaterialSampleAndHash(string message)
+    {
+        string result = Regex.Replace(message, @";\s*sample=[^;]*", "; sample=omitted", RegexOptions.IgnoreCase);
+        result = Regex.Replace(result, @";\s*hash=[^;]*", "; hash=omitted", RegexOptions.IgnoreCase);
+        return result;
+    }
+
+    static string[] ResolveZfi057DiagnosticPlants(SapRunParams p, string businessArea, string plants)
+    {
+        string[] explicitPlants = NormalizeStringArray(plants);
+        if (explicitPlants.Length > 0)
+            return explicitPlants;
+
+        var scopeParams = CloneSapRunParams(p);
+        scopeParams.BusinessAreas = businessArea;
+        scopeParams.BusinessArea = businessArea;
+        scopeParams.Plants = "";
+        scopeParams.Plant = "";
+        return ResolveZfi057WorkflowScopes(scopeParams)
+            .Where(scope => scope.BusinessArea.Equals(businessArea, StringComparison.OrdinalIgnoreCase))
+            .SelectMany(scope => scope.Plants)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    static string BuildZfi057Step2InputSummary(SapRunParams step2, string businessArea, string plant, int attemptIndex, int attemptTotal, int materialCount)
+    {
+        var windows = ResolveZfi057Step2DateWindows(step2.Period, step2.WeekEnd);
+        var config = LoadZfi019NlMemoryConfig();
+        string plantText = FirstNonEmpty(plant, "(script-mapped)");
+        var parts = new List<string>
+        {
+            $"step2Input attempt={attemptIndex}/{Math.Max(1, attemptTotal)}",
+            $"script={FirstNonEmpty(step2.Script, "ZFI057.vbs")}",
+            $"tcode={FirstNonEmpty(step2.TCode, "ZFI057")}",
+            $"businessArea={businessArea}",
+            $"plant={plantText}",
+            $"ZTSD001.GSBER={businessArea}",
+            $"ZTSD001.WERKS={plantText}",
+            $"S_WERKS-LOW={plantText}",
+            "S_MTART-LOW=*",
+            $"period={step2.Period}",
+            $"weekEnd={step2.WeekEnd}",
+            $"windowCount={windows.Count}",
+            $"materialCount={materialCount}",
+            "materials=omitted",
+            $"timeoutSeconds={step2.TimeoutSeconds.GetValueOrDefault(0)}",
+            $"ZFI_SPLIT.table={FirstNonEmpty(config.SplitTable, "ZFI_SPLIT")}",
+            $"ZFI_SPLIT.BUKRS={FirstNonEmpty(config.SplitBukrs, "2030")}",
+            "ZFI_SPLIT.fields=BUKRS,WERKS,MATNR,BEGDA,ENDDA,MTART"
+        };
+
+        foreach (var window in windows)
+        {
+            parts.Add($"window{window.Index}.S_KADKY-LOW={window.KadkyLow}");
+            parts.Add($"window{window.Index}.S_KADKY-HIGH={window.KadkyHigh}");
+            parts.Add($"window{window.Index}.S_KADAT-LOW={window.KadatLow}");
+            parts.Add($"window{window.Index}.S_KADAT-HIGH={window.KadatHigh}");
+            parts.Add($"window{window.Index}.ZFI_SPLIT.WERKS={plantText}");
+            parts.Add($"window{window.Index}.ZFI_SPLIT.BEGDA<={window.KadkyHigh}");
+            parts.Add($"window{window.Index}.ZFI_SPLIT.ENDDA>={window.KadkyLow}");
+        }
+
+        return string.Join("; ", parts);
+    }
+
+    static List<Zfi057Step2DateWindow> ResolveZfi057Step2DateWindows(string period, string weekEnd)
+    {
+        DateTime defaultStart = StartOfWeek(DateTime.Today).AddDays(-7);
+        DateTime defaultEnd = defaultStart.AddDays(6);
+        DateTime start = ParseFlexibleDateOrDefault(period, defaultStart);
+        DateTime end = ParseFlexibleDateOrDefault(weekEnd, defaultEnd);
+        DateTime firstOfStartMonth = new(start.Year, start.Month, 1);
+        DateTime firstOfEndMonth = new(end.Year, end.Month, 1);
+
+        if (start.Year == end.Year && start.Month == end.Month)
+        {
+            return new List<Zfi057Step2DateWindow>
+            {
+                new(1, FormatSapDate(firstOfStartMonth), FormatSapDate(end), FormatSapDate(firstOfStartMonth), FormatSapDate(end))
+            };
+        }
+
+        DateTime previousMonthOfStart = start.AddMonths(-1);
+        DateTime previousMonthStart = new(previousMonthOfStart.Year, previousMonthOfStart.Month, 1);
+        DateTime startMonthEnd = firstOfEndMonth.AddDays(-1);
+        return new List<Zfi057Step2DateWindow>
+        {
+            new(1, FormatSapDate(previousMonthStart), FormatSapDate(startMonthEnd), FormatSapDate(previousMonthStart.AddDays(1)), FormatSapDate(startMonthEnd)),
+            new(2, FormatSapDate(firstOfEndMonth), FormatSapDate(end), FormatSapDate(firstOfEndMonth), FormatSapDate(end))
+        };
     }
 
     static string FindLogicalSapLine(IEnumerable<string> rawLines, string prefix)
@@ -5478,6 +5613,8 @@ WHERE run_id=$runId;
         if (scopes.Count == 0)
             return FailZfi057Workflow(aggregate, "ZFI057 workflow requires businessAreas or plants that can resolve to business areas.", started);
 
+        int totalStep2Success = 0;
+        int totalStep2NoDataSkipped = 0;
         int scopeIndex = 0;
         foreach (var scope in scopes)
         {
@@ -5510,6 +5647,8 @@ WHERE run_id=$runId;
             }
 
             int plantIndex = 0;
+            int scopeStep2Success = 0;
+            int scopeStep2NoDataSkipped = 0;
             foreach (string plant in plants)
             {
                 plantIndex++;
@@ -5524,11 +5663,29 @@ WHERE run_id=$runId;
                 step2.RunStrategy = "workflow-step";
                 step2.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 1800);
 
-                AddWorkflowLog(aggregate, "step 2", $"query: script={step2.Script}; tcode={step2.TCode}; businessArea={area}; plant={FirstNonEmpty(plant, "(script-mapped)")}; period={p.Period}; weekEnd={p.WeekEnd}; materialCount={materialItems.Length}; materialSample={FormatSample(materialItems, 8)}; materialHash={HashForLog(string.Join(",", materialItems))}; attempt={plantIndex}/{plants.Length}; timeoutSeconds={step2.TimeoutSeconds}");
+                AddWorkflowLog(aggregate, "step 2", $"query: {BuildZfi057Step2InputSummary(step2, area, plant, plantIndex, plants.Length, materialItems.Length)}");
                 var step2Result = LaunchSapGuiAndExecute(step2);
+                if (!IsSuccessResult(step2Result) && IsZfi057Step2NoDataResult(step2Result))
+                {
+                    scopeStep2NoDataSkipped++;
+                    totalStep2NoDataSkipped++;
+                    aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 2] skip no-data plant; businessArea={area}; plant={FirstNonEmpty(plant, "(script-mapped)")}; attempt={plantIndex}/{plants.Length}; message={Truncate(FirstNonEmpty(step2Result.Message, step2Result.SapStatusText), 240)}" });
+                    AddSkippedStepResult(aggregate, "step 2 ZFI057 skipped(no-data)", step2Result);
+                    continue;
+                }
+
                 AddStepResult(aggregate, "step 2 ZFI057", step2Result);
                 if (!IsSuccessResult(step2Result))
                     return FailZfi057Workflow(aggregate, $"ZFI057 workflow stopped at step 2 for businessArea={area}, plant={plant}: {step2Result.Message}", started);
+
+                scopeStep2Success++;
+                totalStep2Success++;
+            }
+
+            if (scopeStep2Success == 0 && scopeStep2NoDataSkipped > 0)
+            {
+                aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 3] skip ZCO020 because every ZFI057 plant had no data; businessArea={area}; skippedPlants={scopeStep2NoDataSkipped}" });
+                continue;
             }
 
             var step3 = CloneSapRunParams(p);
@@ -5550,7 +5707,9 @@ WHERE run_id=$runId;
         }
 
         aggregate.Status = "success";
-        aggregate.Message = "ZFI057 auto workflow completed: ZFI019NL -> ZFI057 -> ZCO020";
+        aggregate.Message = totalStep2NoDataSkipped > 0
+            ? $"ZFI057 auto workflow completed with no-data skips: step2Success={totalStep2Success}, step2Skipped={totalStep2NoDataSkipped}"
+            : "ZFI057 auto workflow completed: ZFI019NL -> ZFI057 -> ZCO020";
         aggregate.DurationMs = EnsureDuration(0, started);
         return aggregate;
     }
@@ -5635,12 +5794,38 @@ WHERE run_id=$runId;
         return NormalizeRunStatus(result.Status).Equals("success", StringComparison.OrdinalIgnoreCase);
     }
 
+    static bool IsZfi057Step2NoDataResult(RunResultRequest result)
+    {
+        var candidates = new List<string>
+        {
+            result.Message ?? "",
+            result.SapStatusText ?? ""
+        };
+        candidates.AddRange(result.Logs.Select(line => line.Message ?? ""));
+
+        return candidates.Any(IsZfi057NoDataText);
+    }
+
+    static bool IsZfi057NoDataText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        string value = text.Trim();
+        string compact = Regex.Replace(value, @"\s+", "");
+        return compact.Contains("没有符合条件数据", StringComparison.OrdinalIgnoreCase) ||
+               compact.Contains("没有符合条件的数据", StringComparison.OrdinalIgnoreCase) ||
+               compact.Contains("没有找到符合条件的数据", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("No data found", StringComparison.OrdinalIgnoreCase) ||
+               value.Contains("No records found", StringComparison.OrdinalIgnoreCase);
+    }
+
     static void AddWorkflowLog(RunResultRequest aggregate, string step, string message)
     {
         aggregate.Logs.Add(new RunLogLine { Level = "INFO", Message = $"[{step}] {message}" });
     }
 
-    static void AddStepResult(RunResultRequest aggregate, string step, RunResultRequest result)
+    static void AddStepResult(RunResultRequest aggregate, string step, RunResultRequest result, bool propagateSapStatus = true)
     {
         AddWorkflowLog(aggregate, step, $"result: status={result.Status}; durationMs={result.DurationMs}; message={Truncate(result.Message, 240)}; sapStatusType={result.SapStatusType}; sapStatusText={Truncate(result.SapStatusText, 240)}");
         foreach (var line in result.Logs)
@@ -5656,10 +5841,35 @@ WHERE run_id=$runId;
         foreach (var file in result.Files)
             aggregate.Files.Add(file);
 
+        if (!propagateSapStatus)
+            return;
+
         if (!string.IsNullOrWhiteSpace(result.SapStatusType))
             aggregate.SapStatusType = result.SapStatusType;
         if (!string.IsNullOrWhiteSpace(result.SapStatusText))
             aggregate.SapStatusText = result.SapStatusText;
+    }
+
+    static void AddSkippedStepResult(RunResultRequest aggregate, string step, RunResultRequest result)
+    {
+        aggregate.Logs.Add(new RunLogLine
+        {
+            Level = "WARN",
+            Message = $"[{step}] result skipped: originalStatus={result.Status}; durationMs={result.DurationMs}; message={Truncate(result.Message, 240)}; sapStatusType={result.SapStatusType}; sapStatusText={Truncate(result.SapStatusText, 240)}"
+        });
+
+        foreach (var line in result.Logs)
+        {
+            aggregate.Logs.Add(new RunLogLine
+            {
+                Level = "WARN",
+                Message = $"[{step}] original {FirstNonEmpty(line.Level, "INFO")}: {line.Message}",
+                CreatedAt = line.CreatedAt
+            });
+        }
+
+        foreach (var file in result.Files)
+            aggregate.Files.Add(file);
     }
 
     static string FormatSample(IEnumerable<string> values, int maxItems)
@@ -9890,6 +10100,74 @@ WScript.Quit 0
         }
 
         {
+            var noData = new RunResultRequest
+            {
+                Status = "failed",
+                SapStatusType = "E",
+                SapStatusText = "没有符合条件数据",
+                Message = "SAP status error after execute ZFI057 group #1 - 没有符合条件数据",
+                Logs =
+                {
+                    new RunLogLine { Level = "ERROR", Message = "SAP status error after execute ZFI057 group #1 - 没有符合条件数据" }
+                }
+            };
+            var realFailure = new RunResultRequest
+            {
+                Status = "failed",
+                SapStatusType = "E",
+                SapStatusText = "SAP GUI scripting error",
+                Message = "open transaction failed"
+            };
+            bool ok = IsZfi057Step2NoDataResult(noData) && !IsZfi057Step2NoDataResult(realFailure);
+            Check("ZFI057 step2 no-data skip detection", ok, $"noData={IsZfi057Step2NoDataResult(noData)}, realFailure={IsZfi057Step2NoDataResult(realFailure)}");
+
+            var aggregate = new RunResultRequest();
+            AddSkippedStepResult(aggregate, "step 2 ZFI057 skipped(no-data)", noData);
+            bool noErrorLogs = aggregate.Logs.All(line => !line.Level.Equals("ERROR", StringComparison.OrdinalIgnoreCase)) &&
+                               string.IsNullOrWhiteSpace(aggregate.SapStatusType) &&
+                               string.IsNullOrWhiteSpace(aggregate.SapStatusText);
+            Check("ZFI057 no-data skipped result is warning only", noErrorLogs, $"levels={string.Join(",", aggregate.Logs.Select(line => line.Level))}; sapStatusType={aggregate.SapStatusType}; sapStatusText={aggregate.SapStatusText}");
+        }
+
+        {
+            var step2 = new SapRunParams
+            {
+                TCode = "ZFI057",
+                Script = "ZFI057.vbs",
+                Period = "2026.04.27",
+                WeekEnd = "2026.05.03",
+                Materials = "MAT001,MAT002",
+                TimeoutSeconds = 1800
+            };
+            string summary = BuildZfi057Step2InputSummary(step2, "2800", "1022", 1, 2, 536);
+            bool ok = summary.Contains("S_WERKS-LOW=1022", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("S_KADKY-LOW=2026.03.01", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("S_KADKY-HIGH=2026.04.30", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("S_KADAT-LOW=2026.03.02", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("S_KADAT-HIGH=2026.04.30", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("window2.S_KADKY-LOW=2026.05.01", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("materialCount=536", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("materials=omitted", StringComparison.OrdinalIgnoreCase) &&
+                      !summary.Contains("MAT001", StringComparison.OrdinalIgnoreCase) &&
+                      !summary.Contains("MAT002", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 step2 input summary omits materials", ok, summary);
+        }
+
+        {
+            var logs = SanitizeZfi057DiagnosticLogs(new[]
+            {
+                new RunLogLine { Level = "INFO", Message = "ZFI019NL memory fetch materials: count=2; sample=MAT001,MAT002; hash=ABCDEF123456" },
+                new RunLogLine { Level = "INFO", Message = "ZFI019NL memory fetch counts: rawLines=1; finalRows=2" }
+            }).ToArray();
+            string joined = string.Join(Environment.NewLine, logs.Select(line => line.Message));
+            bool ok = joined.Contains("sample=omitted", StringComparison.OrdinalIgnoreCase) &&
+                      joined.Contains("hash=omitted", StringComparison.OrdinalIgnoreCase) &&
+                      !joined.Contains("MAT001", StringComparison.OrdinalIgnoreCase) &&
+                      !joined.Contains("ABCDEF123456", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 diagnostic log omits material samples", ok, joined);
+        }
+
+        {
             string ini = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_saplogon_nco_{Guid.NewGuid():N}.ini");
             File.WriteAllText(ini, """
 [Server]
@@ -10495,6 +10773,8 @@ record BatchRunPlan(string TCode, string ParamKey, string SingleParamKey, string
 record Zfi057WorkflowScope(string BusinessArea, string[] Plants);
 
 record Zfi057Step1MaterialFetch(RunResultRequest Result, string[] Materials, Zfi019NlFetchResult FetchResult);
+
+record Zfi057Step2DateWindow(int Index, string KadkyLow, string KadkyHigh, string KadatLow, string KadatHigh);
 
 record DingTalkParamGroup(string Label, string[] Keys, bool SplitValues);
 
