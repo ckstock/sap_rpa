@@ -7061,7 +7061,7 @@ ORDER BY 1;
             return fallbackMessage;
 
         string prefix = FormatDingTalkTitleText(run.Status);
-        string sapText = CleanDingTalkDisplayText(FirstNonEmpty(run.SapStatusText, run.Message, fallbackMessage));
+        string sapText = CleanDingTalkDisplayText(SelectDingTalkSapMessageSource(run, fallbackMessage));
         string transactionText = FormatTransactionDisplay(run);
         return string.IsNullOrWhiteSpace(sapText) || sapText.Equals(prefix, StringComparison.OrdinalIgnoreCase)
             ? $"{prefix}: {transactionText}"
@@ -7192,7 +7192,7 @@ ORDER BY 1;
 
     static string BuildFriendlySapMessage(RunRecordView run, string fallbackMessage)
     {
-        string raw = FirstNonEmpty(run.SapStatusText, run.Message, fallbackMessage, "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C");
+        string raw = SelectDingTalkSapMessageSource(run, fallbackMessage);
         string cleaned = CleanDingTalkDisplayText(raw);
         if (!string.IsNullOrWhiteSpace(cleaned))
             return cleaned;
@@ -7202,11 +7202,42 @@ ORDER BY 1;
             : "\u81EA\u52A8\u5316\u6267\u884C\u5B8C\u6210\uFF0C\u8BF7\u5728\u8FD0\u884C\u65E5\u5FD7\u67E5\u770B\u8BE6\u60C5";
     }
 
+    static string SelectDingTalkSapMessageSource(RunRecordView run, string fallbackMessage)
+    {
+        foreach (string candidate in new[] { run.SapStatusText, run.Message, fallbackMessage })
+        {
+            if (!string.IsNullOrWhiteSpace(candidate) && !IsTechnicalSapStatusText(candidate))
+                return candidate;
+        }
+
+        return run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
+            ? "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
+            : FirstNonEmpty(fallbackMessage, "\u81EA\u52A8\u5316\u6267\u884C\u5B8C\u6210\uFF0C\u8BF7\u5728\u8FD0\u884C\u65E5\u5FD7\u67E5\u770B\u8BE6\u60C5");
+    }
+
+    static bool IsTechnicalSapStatusText(string value)
+    {
+        string text = FirstNonEmpty(value, "");
+        return Regex.IsMatch(
+            text,
+            @"^\s*(OK|S)?\s*:?\s*GENERATED_MEMORY_IMPORT\b.*\bfinished\b",
+            RegexOptions.IgnoreCase);
+    }
+
     static string CleanDingTalkDisplayText(string value)
     {
         string text = FirstNonEmpty(value, "").Trim();
         if (string.IsNullOrWhiteSpace(text))
             return "";
+
+        if (IsTechnicalSapStatusText(text))
+            return "";
+
+        if (text.Contains("ZFI057 auto workflow completed with no-data skips", StringComparison.OrdinalIgnoreCase))
+            return "ZFI057 \u81EA\u52A8\u6D41\u7A0B\u5DF2\u5B8C\u6210\uFF0C\u90E8\u5206\u5DE5\u5382\u65E0\u6570\u636E\u5DF2\u8DF3\u8FC7";
+
+        if (text.Contains("ZFI057 auto workflow completed", StringComparison.OrdinalIgnoreCase))
+            return "ZFI057 \u81EA\u52A8\u6D41\u7A0B\u5DF2\u5B8C\u6210";
 
         text = Regex.Replace(text, @"[A-Za-z]:\\[^\r\n;]+", "\u672C\u673A\u4E34\u65F6\u811A\u672C");
         if (text.Contains("VBS", StringComparison.OrdinalIgnoreCase) &&
@@ -10422,6 +10453,115 @@ Item1=test888
                       !markdown.Contains("[2900]", StringComparison.OrdinalIgnoreCase) &&
                       !markdown.Contains("SHOULD_NOT_APPEAR", StringComparison.OrdinalIgnoreCase);
             Check("DingTalk inputs for ZFIR034 date range", ok, Truncate(markdown.Replace("\n", " | "), 240));
+        }
+
+        {
+            var run = new RunRecordView
+            {
+                RunId = "RUN-SELFTEST-ZFI057-DINGTALK",
+                TransactionCode = "ZFI057",
+                TransactionName = "\u4EA7\u503C\u62C6\u5206",
+                Status = "success",
+                RequestJson = "{\"transactionCode\":\"ZFI057\",\"params\":{\"businessAreas\":\"2800\",\"period\":\"2026.04.27\",\"weekEnd\":\"2026.05.03\"}}",
+                SapStatusType = "S",
+                SapStatusText = "OK: GENERATED_MEMORY_IMPORT finished, rows=1523 S_GSBER=2800;\u7279\u6B8A\u8303\u56F4\u8FC7\u6EE4=\u65E0",
+                Message = "ZFI057 auto workflow completed with no-data skips: step2Success=1, step2Skipped=1",
+                StartedAt = "2026-07-16 10:18:49",
+                FinishedAt = "2026-07-16 10:20:52",
+                DurationMs = 122903
+            };
+            string expected = "ZFI057 \u81EA\u52A8\u6D41\u7A0B\u5DF2\u5B8C\u6210\uFF0C\u90E8\u5206\u5DE5\u5382\u65E0\u6570\u636E\u5DF2\u8DF3\u8FC7";
+            string summary = BuildSapDingTalkMessage(run, run.Message);
+            string markdown = BuildSapDingTalkMarkdownContent(run, summary);
+            string plain = BuildSapDingTalkContent(run, summary);
+            bool ok = summary.Contains(expected, StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains(expected, StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains(expected, StringComparison.OrdinalIgnoreCase) &&
+                      !summary.Contains("GENERATED_MEMORY_IMPORT", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("GENERATED_MEMORY_IMPORT", StringComparison.OrdinalIgnoreCase) &&
+                      !plain.Contains("GENERATED_MEMORY_IMPORT", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("S_GSBER", StringComparison.OrdinalIgnoreCase) &&
+                      !plain.Contains("S_GSBER", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk filters technical ZFI057 memory status", ok, Truncate(markdown.Replace("\n", " | "), 240));
+        }
+
+        {
+            var run = new RunRecordView
+            {
+                RunId = "RUN-SELFTEST-ZFI057-DINGTALK-FAILED",
+                TransactionCode = "ZFI057",
+                TransactionName = "\u4EA7\u503C\u62C6\u5206",
+                Status = "failed",
+                RequestJson = "{\"transactionCode\":\"ZFI057\",\"params\":{\"businessAreas\":\"2800\",\"period\":\"2026.04.27\",\"weekEnd\":\"2026.05.03\"}}",
+                SapStatusType = "S",
+                SapStatusText = "OK: GENERATED_MEMORY_IMPORT finished, rows=1523 S_GSBER=2800",
+                Message = "ZFI057 workflow stopped: step2 failed after memory fetch",
+                StartedAt = "2026-07-16 10:18:49",
+                FinishedAt = "2026-07-16 10:20:52",
+                DurationMs = 122903
+            };
+            string summary = BuildSapDingTalkMessage(run, run.Message);
+            string markdown = BuildSapDingTalkMarkdownContent(run, summary);
+            string plain = BuildSapDingTalkContent(run, summary);
+            bool ok = summary.Contains("ZFI057 workflow stopped", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("ZFI057 workflow stopped", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("ZFI057 workflow stopped", StringComparison.OrdinalIgnoreCase) &&
+                      !summary.Contains("GENERATED_MEMORY_IMPORT", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("GENERATED_MEMORY_IMPORT", StringComparison.OrdinalIgnoreCase) &&
+                      !plain.Contains("GENERATED_MEMORY_IMPORT", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk keeps failure message after technical SAP status", ok, Truncate(markdown.Replace("\n", " | "), 240));
+        }
+
+        {
+            var run = new RunRecordView
+            {
+                RunId = "RUN-SELFTEST-ZFI057-DINGTALK-NODATA",
+                TransactionCode = "ZFI057",
+                TransactionName = "\u4EA7\u503C\u62C6\u5206",
+                Status = "failed",
+                RequestJson = "{\"transactionCode\":\"ZFI057\",\"params\":{\"businessAreas\":\"2800\",\"period\":\"2026.04.27\",\"weekEnd\":\"2026.05.03\"}}",
+                SapStatusType = "E",
+                SapStatusText = "\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u6570\u636E",
+                Message = "fallback should not replace SAP status",
+                StartedAt = "2026-07-16 10:18:49",
+                FinishedAt = "2026-07-16 10:20:52",
+                DurationMs = 122903
+            };
+            string summary = BuildSapDingTalkMessage(run, run.Message);
+            string markdown = BuildSapDingTalkMarkdownContent(run, summary);
+            string plain = BuildSapDingTalkContent(run, summary);
+            bool ok = summary.Contains("\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u6570\u636E", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u6570\u636E", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u6570\u636E", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk keeps normal SAP status text", ok, Truncate(markdown.Replace("\n", " | "), 240));
+        }
+
+        {
+            var run = new RunRecordView
+            {
+                RunId = "RUN-SELFTEST-ZFI057-DINGTALK-SUCCESS",
+                TransactionCode = "ZFI057",
+                TransactionName = "\u4EA7\u503C\u62C6\u5206",
+                Status = "success",
+                RequestJson = "{\"transactionCode\":\"ZFI057\",\"params\":{\"businessAreas\":\"2800\",\"period\":\"2026.04.27\",\"weekEnd\":\"2026.05.03\"}}",
+                SapStatusType = "S",
+                SapStatusText = "OK: GENERATED_MEMORY_IMPORT finished, rows=1523 S_GSBER=2800",
+                Message = "ZFI057 auto workflow completed: ZFI019NL -> ZFI057 -> ZCO020",
+                StartedAt = "2026-07-16 10:18:49",
+                FinishedAt = "2026-07-16 10:20:52",
+                DurationMs = 122903
+            };
+            string expected = "ZFI057 \u81EA\u52A8\u6D41\u7A0B\u5DF2\u5B8C\u6210";
+            string summary = BuildSapDingTalkMessage(run, run.Message);
+            string markdown = BuildSapDingTalkMarkdownContent(run, summary);
+            string plain = BuildSapDingTalkContent(run, summary);
+            bool ok = summary.Contains(expected, StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains(expected, StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains(expected, StringComparison.OrdinalIgnoreCase) &&
+                      !summary.Contains("GENERATED_MEMORY_IMPORT", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("GENERATED_MEMORY_IMPORT", StringComparison.OrdinalIgnoreCase) &&
+                      !plain.Contains("GENERATED_MEMORY_IMPORT", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk formats ZFI057 workflow success message", ok, Truncate(markdown.Replace("\n", " | "), 240));
         }
 
         {
