@@ -243,7 +243,6 @@ PressButton "wnd[1]/tbar[0]/btn[0]", "confirm ZBZ1 filter", 600000
 SelectAllGrid
 PressButton "wnd[0]/tbar[1]/btn[16]", "save/export selected rows", 600000
 
-WScript.Echo "INFO: SM37 jobname=ZFI057 follow-up check is not automated in this recorder-based VBS; review SAP job monitor if ZCO020 result is unexpected"
 CheckSapStatus "finish"
 WScript.Echo "INFO: transaction script executed"
 WScript.Quit 0
