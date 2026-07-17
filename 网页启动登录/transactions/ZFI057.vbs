@@ -15,6 +15,7 @@ Dim plantValue, businessAreaValue, materialText, materialCount
 Dim SapGuiAuto, application, connection, session
 Dim retries, sleepMs, statusType, statusText
 Dim runCount, i
+Dim zfi057WindowSuccessCount, zfi057WindowNoDataCount
 Dim kadkyLow(2), kadkyHigh(2), kadatLow(2), kadatHigh(2)
 
 tcode = "{OK_CODE}"
@@ -249,13 +250,32 @@ Sub WaitReady(timeoutMs)
 End Sub
 
 Sub CheckSapStatus(stage)
-   Err.Clear
-   statusType = session.findById("wnd[0]/sbar").MessageType
-   statusText = session.findById("wnd[0]/sbar").Text
+   RefreshSapStatus
    If Err.Number = 0 And Trim(CStr(statusText)) <> "" Then WScript.Echo "INFO: sap status after " & stage & " type=" & statusType & ", text=" & statusText
    If Err.Number = 0 And (statusType = "E" Or statusType = "A") Then Fail "SAP status error after " & stage & " - " & statusText, 6
    Err.Clear
 End Sub
+
+Sub RefreshSapStatus()
+   Err.Clear
+   statusType = session.findById("wnd[0]/sbar").MessageType
+   statusText = session.findById("wnd[0]/sbar").Text
+   If Err.Number <> 0 Then
+      statusType = ""
+      statusText = ""
+   End If
+   Err.Clear
+End Sub
+
+Function IsNoDataStatusText(value)
+   Dim compact
+   compact = Replace(CStr(value), " ", "")
+   compact = Replace(compact, vbTab, "")
+   compact = Replace(compact, ChrW(12288), "")
+   IsNoDataStatusText = (InStr(1, compact, "没有符合条件数据", vbTextCompare) > 0 Or _
+                         InStr(1, compact, "沒有符合條件數據", vbTextCompare) > 0 Or _
+                         InStr(1, UCase(compact), "NODATA", vbTextCompare) > 0)
+End Function
 
 Sub SetField(label, id, value)
    Err.Clear
@@ -264,6 +284,26 @@ Sub SetField(label, id, value)
    WScript.Echo "INFO: set " & label & "=" & CStr(value)
    Err.Clear
 End Sub
+
+Function PressExecuteZfi057Window(index)
+   Err.Clear
+   session.findById("wnd[0]/tbar[1]/btn[8]").press
+   If Err.Number <> 0 Then Fail "execute ZFI057 group #" & index & " failed - " & Err.Description, 8
+   WScript.Echo "INFO: pressed execute ZFI057 group #" & index
+   Err.Clear
+   WaitReady 1200000
+   RefreshSapStatus
+   If Trim(CStr(statusText)) <> "" Then WScript.Echo "INFO: sap status after execute ZFI057 group #" & index & " type=" & statusType & ", text=" & statusText
+   If IsNoDataStatusText(statusText) Then
+      WScript.Echo "WARN: execute ZFI057 group #" & index & " returned no data; continuing remaining windows"
+      PressExecuteZfi057Window = False
+      Exit Function
+   End If
+   If statusType = "E" Or statusType = "A" Then
+      Fail "SAP status error after execute ZFI057 group #" & index & " - " & statusText, 6
+   End If
+   PressExecuteZfi057Window = True
+End Function
 
 Sub PressButton(id, label, timeoutMs)
    Err.Clear
@@ -402,7 +442,7 @@ Sub PasteMaterialSelection()
    PressButton "wnd[1]/tbar[0]/btn[8]", "confirm S_MATNR material list", 8000
 End Sub
 
-Sub RunZfi057Window(index)
+Function RunZfi057Window(index)
    WScript.Echo "INFO: zfi057 input group #" & index
    WScript.Echo "INFO: query GET_GS03 where TITLE=" & businessAreaValue & "; resolved FROM/WERKS=" & plantValue
    WScript.Echo "INFO: date input group #" & index & "; S_KADKY=[" & kadkyLow(index) & "~" & kadkyHigh(index) & "]; S_KADAT=[" & kadatLow(index) & "~" & kadatHigh(index) & "]"
@@ -416,8 +456,8 @@ Sub RunZfi057Window(index)
    SetField "kadat-low", "wnd[0]/usr/ctxtS_KADAT-LOW", kadatLow(index)
    SetField "kadat-high", "wnd[0]/usr/ctxtS_KADAT-HIGH", kadatHigh(index)
    PasteMaterialSelection
-   PressButton "wnd[0]/tbar[1]/btn[8]", "execute ZFI057 group #" & index, 1200000
-End Sub
+   RunZfi057Window = PressExecuteZfi057Window(index)
+End Function
 
 For retries = 1 To 100
    Err.Clear
@@ -468,9 +508,22 @@ If factoryGroup <> "" Then WScript.Echo "INFO: factoryGroup=" & factoryGroup
 WScript.Echo "INFO: zfi057 date window count=" & runCount
 
 For i = 1 To runCount
-   RunZfi057Window i
+   If RunZfi057Window(i) Then
+      zfi057WindowSuccessCount = zfi057WindowSuccessCount + 1
+   Else
+      zfi057WindowNoDataCount = zfi057WindowNoDataCount + 1
+   End If
 Next
 
-CheckSapStatus "finish"
+If zfi057WindowSuccessCount = 0 And zfi057WindowNoDataCount > 0 Then
+   Fail "SAP status error after execute ZFI057 all groups - 没有符合条件数据", 6
+End If
+
+If zfi057WindowNoDataCount > 0 Then
+   WScript.Echo "STATUS_TYPE=W"
+   WScript.Echo "STATUS_TEXT=ZFI057 completed with partial no-data windows: success=" & zfi057WindowSuccessCount & ", noData=" & zfi057WindowNoDataCount
+Else
+   CheckSapStatus "finish"
+End If
 WScript.Echo "INFO: transaction script executed"
 WScript.Quit 0

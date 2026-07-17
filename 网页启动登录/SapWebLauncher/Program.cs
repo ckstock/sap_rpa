@@ -10711,6 +10711,23 @@ WScript.Quit 0
         }
 
         {
+            string stdout = string.Join(Environment.NewLine, new[]
+            {
+                "INFO: pressed execute ZFI057 group #1",
+                "INFO: pressed execute ZFI057 group #2",
+                "WARN: execute ZFI057 group #2 returned no data; continuing remaining windows",
+                "STATUS_TYPE=W",
+                "STATUS_TEXT=ZFI057 completed with partial no-data windows: success=1, noData=1",
+                "INFO: transaction script executed"
+            });
+            var partialNoData = BuildRunResultFromVbs(stdout, "", 0, DateTime.UtcNow);
+            bool ok = IsSuccessResult(partialNoData) &&
+                      partialNoData.SapStatusType.Equals("W", StringComparison.OrdinalIgnoreCase) &&
+                      partialNoData.SapStatusText.Contains("partial no-data", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 partial window no-data still counts as step2 success", ok, $"status={partialNoData.Status}; sapStatusType={partialNoData.SapStatusType}; sapStatusText={partialNoData.SapStatusText}");
+        }
+
+        {
             var completed = new Zfi057TbtcoJobCheckResult(
                 true,
                 SapJobStatusFetcher.IsTbtcoTerminalStatus("F"),
