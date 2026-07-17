@@ -483,19 +483,19 @@ static class Program
             lines.Add("no step2 plants resolved by GET_GS03");
         }
 
-        for (int i = 0; i < step2Plants.Length; i++)
+        if (step2Plants.Length > 0)
         {
             var step2 = CloneSapRunParams(p);
             step2.TCode = "ZFI057";
             step2.Script = "ZFI057.vbs";
             step2.BusinessAreas = businessArea;
             step2.BusinessArea = businessArea;
-            step2.Plants = step2Plants[i];
-            step2.Plant = step2Plants[i];
+            step2.Plants = string.Join(",", step2Plants);
+            step2.Plant = "";
             step2.Materials = "";
             step2.RunStrategy = "workflow-step";
             step2.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 1800);
-            lines.Add(BuildZfi057Step2InputSummary(step2, businessArea, step2Plants[i], i + 1, step2Plants.Length, fetch.Materials.Length));
+            lines.Add(BuildZfi057Step2InputSummary(step2, businessArea, step2.Plants, 1, 1, fetch.Materials.Length));
         }
 
         lines.AddRange(new[]
@@ -549,21 +549,27 @@ static class Program
             .ToArray();
     }
 
-    static string BuildZfi057Step2InputSummary(SapRunParams step2, string businessArea, string plant, int attemptIndex, int attemptTotal, int materialCount)
+    static string BuildZfi057Step2InputSummary(SapRunParams step2, string businessArea, string plants, int attemptIndex, int attemptTotal, int materialCount)
     {
         var windows = ResolveZfi057Step2DateWindows(step2.Period, step2.WeekEnd);
         var config = LoadZfi019NlMemoryConfig();
-        string plantText = FirstNonEmpty(plant, "(script-mapped)");
+        string[] plantItems = NormalizeStringArray(FirstNonEmpty(plants, step2.Plants, step2.Plant));
+        string plantText = plantItems.Length > 0 ? string.Join(",", plantItems) : "(script-mapped)";
+        string werksSeed = plantItems.Length > 0 ? plantItems[0] : "(script-mapped)";
+        string werksMode = plantItems.Length > 1 ? "LOW seed + multiSelection" : "LOW only";
         var parts = new List<string>
         {
             $"step2Input attempt={attemptIndex}/{Math.Max(1, attemptTotal)}",
             $"script={FirstNonEmpty(step2.Script, "ZFI057.vbs")}",
             $"tcode={FirstNonEmpty(step2.TCode, "ZFI057")}",
             $"businessArea={businessArea}",
-            $"plant={plantText}",
+            $"plantCount={plantItems.Length}",
+            $"plants={plantText}",
             $"GET_GS03.TITLE={businessArea}",
             $"GET_GS03.FROM={plantText}",
-            $"S_WERKS-LOW={plantText}",
+            $"S_WERKS.mode={werksMode}",
+            $"S_WERKS-LOW.seed={werksSeed}",
+            $"S_WERKS.items={plantText}",
             "S_MTART-LOW=*",
             $"period={step2.Period}",
             $"weekEnd={step2.WeekEnd}",
@@ -3501,8 +3507,9 @@ WHERE id=$id;
     static object LoadExecutionReport(HttpListenerRequest request)
     {
         InitializeDatabase(seedFromScripts: true);
-        DateTime to = ParseReportDate(request.QueryString["to"], DateTime.Now, isEndDate: true);
-        DateTime from = ParseReportDate(request.QueryString["from"], to.AddDays(-30), isEndDate: false);
+        DateTime defaultTo = DateTime.Now.Date.AddDays(1).AddTicks(-1);
+        DateTime to = ParseReportDate(request.QueryString["to"], defaultTo, isEndDate: true);
+        DateTime from = ParseReportDate(request.QueryString["from"], to.Date, isEndDate: false);
         if (from > to)
             (from, to) = (to, from);
 
@@ -5170,12 +5177,29 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
             limit = Math.Clamp(parsedLimit, 1, 200);
 
         string status = request.QueryString["status"] ?? "";
+        string fromRaw = request.QueryString["from"] ?? "";
+        string toRaw = request.QueryString["to"] ?? "";
+        bool hasDateFilter = !string.IsNullOrWhiteSpace(fromRaw) || !string.IsNullOrWhiteSpace(toRaw);
+        DateTime to = ParseReportDate(toRaw, DateTime.Now.Date.AddDays(1).AddTicks(-1), isEndDate: true);
+        DateTime from = ParseReportDate(fromRaw, to.Date, isEndDate: false);
+        if (from > to)
+            (from, to) = (to, from);
+        string fromText = from.ToString("yyyy-MM-dd HH:mm:ss");
+        string toText = to.ToString("yyyy-MM-dd HH:mm:ss");
+
         var runs = new List<RunRecordView>();
         using var connection = OpenDatabaseConnection();
         using var command = connection.CreateCommand();
-        if (string.IsNullOrWhiteSpace(status))
-        {
-            command.CommandText = """
+        var where = new List<string>();
+        if (!string.IsNullOrWhiteSpace(status))
+            where.Add("r.status=$status");
+        if (hasDateFilter)
+            where.Add("COALESCE(NULLIF(r.finished_at, ''), r.queued_at) >= $from AND COALESCE(NULLIF(r.finished_at, ''), r.queued_at) <= $to");
+        string whereSql = where.Count == 0 ? "" : "WHERE " + string.Join("\n  AND ", where);
+        string orderSql = string.IsNullOrWhiteSpace(status)
+            ? "ORDER BY COALESCE(NULLIF(r.finished_at, ''), r.queued_at) DESC"
+            : "ORDER BY r.priority DESC, r.queued_at, r.run_id";
+        command.CommandText = $"""
 SELECT r.run_id, r.transaction_code, r.operator_id, r.operator_name, r.operator_dept, r.ding_talk_user_id, r.status, r.request_json,
        r.sap_status_type, r.sap_status_text, r.message, r.script_file, r.script_hash,
        r.queued_at, r.started_at, r.finished_at, r.duration_ms,
@@ -5185,27 +5209,17 @@ SELECT r.run_id, r.transaction_code, r.operator_id, r.operator_name, r.operator_
        COALESCE(NULLIF(t.name, ''), '') AS transaction_name
 FROM runs r
 LEFT JOIN transactions t ON t.tcode = r.transaction_code
-ORDER BY COALESCE(NULLIF(r.finished_at, ''), r.queued_at) DESC
+{whereSql}
+{orderSql}
 LIMIT $limit;
 """;
-        }
-        else
-        {
-            command.CommandText = """
-SELECT r.run_id, r.transaction_code, r.operator_id, r.operator_name, r.operator_dept, r.ding_talk_user_id, r.status, r.request_json,
-       r.sap_status_type, r.sap_status_text, r.message, r.script_file, r.script_hash,
-       r.queued_at, r.started_at, r.finished_at, r.duration_ms,
-       r.source, r.notify_target, r.priority, r.attempt, r.max_attempts, r.locked_by, r.locked_at,
-       r.run_type, r.parent_run_id, r.batch_item_key, r.batch_index, r.batch_total, r.attempt_no, r.summary_json,
-       r.source_parent_run_id, r.rerun_of_run_id,
-       COALESCE(NULLIF(t.name, ''), '') AS transaction_name
-FROM runs r
-LEFT JOIN transactions t ON t.tcode = r.transaction_code
-WHERE r.status=$status
-ORDER BY r.priority DESC, r.queued_at, r.run_id
-LIMIT $limit;
-""";
+
+        if (!string.IsNullOrWhiteSpace(status))
             command.Parameters.AddWithValue("$status", status.ToLowerInvariant());
+        if (hasDateFilter)
+        {
+            command.Parameters.AddWithValue("$from", fromText);
+            command.Parameters.AddWithValue("$to", toText);
         }
 
         command.Parameters.AddWithValue("$limit", limit);
@@ -5221,6 +5235,7 @@ LIMIT $limit;
             version = 2,
             source = "sqlite",
             database = DatabaseFilePath,
+            period = hasDateFilter ? new { from = fromText, to = toText } : null,
             runs
         };
     }
@@ -5697,7 +5712,10 @@ WHERE run_id=$runId;
         {
             scopeIndex++;
             string area = scope.BusinessArea;
-            string[] plants = scope.Plants;
+            string[] plants = scope.Plants
+                .Where(plant => !string.IsNullOrWhiteSpace(plant))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             AddWorkflowLog(aggregate, "scope", $"#{scopeIndex} businessArea={area}; plants={string.Join(",", plants.Where(x => !string.IsNullOrWhiteSpace(x)))}");
 
             if (string.IsNullOrWhiteSpace(area))
@@ -5745,47 +5763,46 @@ WHERE run_id=$runId;
                 continue;
             }
 
-            int plantIndex = 0;
             int scopeStep2Success = 0;
             int scopeStep2NoDataSkipped = 0;
             bool scopeFailed = false;
             string scopeFailureMessage = "";
-            foreach (string plant in plants)
+            string step2Plants = string.Join(",", plants);
+            var step2 = CloneSapRunParams(p);
+            step2.TCode = "ZFI057";
+            step2.Script = "ZFI057.vbs";
+            step2.BusinessAreas = area;
+            step2.BusinessArea = area;
+            step2.Plants = step2Plants;
+            step2.Plant = "";
+            step2.Materials = string.Join(",", materialItems);
+            step2.RunStrategy = "workflow-step";
+            step2.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 1800);
+
+            AddWorkflowLog(aggregate, "step 2", $"query: {BuildZfi057Step2InputSummary(step2, area, step2Plants, 1, 1, materialItems.Length)}");
+            var step2Result = LaunchSapGuiAndExecute(step2);
+            if (!IsSuccessResult(step2Result) && IsZfi057Step2NoDataResult(step2Result))
             {
-                plantIndex++;
-                var step2 = CloneSapRunParams(p);
-                step2.TCode = "ZFI057";
-                step2.Script = "ZFI057.vbs";
-                step2.BusinessAreas = area;
-                step2.BusinessArea = area;
-                step2.Plants = plant;
-                step2.Plant = plant;
-                step2.Materials = string.Join(",", materialItems);
-                step2.RunStrategy = "workflow-step";
-                step2.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 1800);
-
-                AddWorkflowLog(aggregate, "step 2", $"query: {BuildZfi057Step2InputSummary(step2, area, plant, plantIndex, plants.Length, materialItems.Length)}");
-                var step2Result = LaunchSapGuiAndExecute(step2);
-                if (!IsSuccessResult(step2Result) && IsZfi057Step2NoDataResult(step2Result))
-                {
-                    scopeStep2NoDataSkipped++;
-                    totalStep2NoDataSkipped++;
-                    aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 2] skip no-data plant; businessArea={area}; plant={FirstNonEmpty(plant, "(script-mapped)")}; attempt={plantIndex}/{plants.Length}; message={Truncate(FirstNonEmpty(step2Result.Message, step2Result.SapStatusText), 240)}" });
-                    AddSkippedStepResult(aggregate, "step 2 ZFI057 skipped(no-data)", step2Result);
-                    continue;
-                }
-
+                scopeStep2NoDataSkipped++;
+                totalStep2NoDataSkipped++;
+                aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 2] skip no-data scope; businessArea={area}; plants={step2Plants}; message={Truncate(FirstNonEmpty(step2Result.Message, step2Result.SapStatusText), 240)}" });
+                AddSkippedStepResult(aggregate, "step 2 ZFI057 skipped(no-data)", step2Result);
+            }
+            else
+            {
                 AddStepResult(aggregate, "step 2 ZFI057", step2Result);
+
                 if (!IsSuccessResult(step2Result))
                 {
                     scopeFailed = true;
-                    scopeFailureMessage = $"step2 failed plant={FirstNonEmpty(plant, "(script-mapped)")}: {FirstNonEmpty(step2Result.Message, step2Result.SapStatusText, "ZFI057 failed")}";
+                    scopeFailureMessage = $"step2 failed plants={step2Plants}: {FirstNonEmpty(step2Result.Message, step2Result.SapStatusText, "ZFI057 failed")}";
                     aggregate.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"ZFI057 workflow scope failed; businessArea={area}; {scopeFailureMessage}" });
-                    break;
                 }
-
-                scopeStep2Success++;
-                totalStep2Success++;
+                else
+                {
+                    scopeStep2Success++;
+                    totalStep2Success++;
+                }
             }
 
             if (scopeFailed)
@@ -5796,14 +5813,14 @@ WHERE run_id=$runId;
 
             if (scopeStep2Success == 0 && scopeStep2NoDataSkipped > 0)
             {
-                aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 3] skip ZCO020 because every ZFI057 plant had no data; businessArea={area}; skippedPlants={scopeStep2NoDataSkipped}" });
-                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_data", $"all {scopeStep2NoDataSkipped} plant(s) returned no data"));
+                aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 3] skip ZCO020 because ZFI057 returned no data for all selected plants; businessArea={area}; plants={step2Plants}" });
+                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_data", "all selected plants returned no data"));
                 continue;
             }
 
             if (scopeStep2Success == 0)
             {
-                string message = "no ZFI057 plant execution succeeded";
+                string message = "no ZFI057 step2 execution succeeded";
                 aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 3] skip ZCO020 because {message}; businessArea={area}" });
                 scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_data", message));
                 continue;
@@ -7562,7 +7579,7 @@ ORDER BY 1;
             return "";
 
         if (text.Contains("ZFI057 auto workflow completed with no-data skips", StringComparison.OrdinalIgnoreCase))
-            return "ZFI057 \u81EA\u52A8\u6D41\u7A0B\u5DF2\u5B8C\u6210\uFF0C\u90E8\u5206\u5DE5\u5382\u65E0\u6570\u636E\u5DF2\u8DF3\u8FC7";
+            return "ZFI057 \u81EA\u52A8\u6D41\u7A0B\u5DF2\u5B8C\u6210\uFF0C\u90E8\u5206\u4E1A\u52A1\u8303\u56F4\u65E0\u6570\u636E\u5DF2\u8DF3\u8FC7";
 
         if (text.Contains("ZFI057 auto workflow completed", StringComparison.OrdinalIgnoreCase))
             return "ZFI057 \u81EA\u52A8\u6D41\u7A0B\u5DF2\u5B8C\u6210";
@@ -10803,8 +10820,12 @@ WScript.Quit 0
                 Materials = "MAT001,MAT002",
                 TimeoutSeconds = 1800
             };
-            string summary = BuildZfi057Step2InputSummary(step2, "2800", "1022", 1, 2, 536);
-            bool ok = summary.Contains("S_WERKS-LOW=1022", StringComparison.OrdinalIgnoreCase) &&
+            string summary = BuildZfi057Step2InputSummary(step2, "2800", "1011,1022", 1, 1, 536);
+            bool ok = summary.Contains("plantCount=2", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("plants=1011,1022", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("S_WERKS.mode=LOW seed + multiSelection", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("S_WERKS-LOW.seed=1011", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("S_WERKS.items=1011,1022", StringComparison.OrdinalIgnoreCase) &&
                       summary.Contains("S_KADKY-LOW=2026.03.01", StringComparison.OrdinalIgnoreCase) &&
                       summary.Contains("S_KADKY-HIGH=2026.04.30", StringComparison.OrdinalIgnoreCase) &&
                       summary.Contains("S_KADAT-LOW=2026.03.02", StringComparison.OrdinalIgnoreCase) &&
@@ -10815,7 +10836,7 @@ WScript.Quit 0
                       summary.Contains("materials=omitted", StringComparison.OrdinalIgnoreCase) &&
                       !summary.Contains("MAT001", StringComparison.OrdinalIgnoreCase) &&
                       !summary.Contains("MAT002", StringComparison.OrdinalIgnoreCase);
-            Check("ZFI057 step2 input summary omits materials", ok, summary);
+            Check("ZFI057 step2 input summary uses multi-select and omits materials", ok, summary);
         }
 
         {
@@ -11085,7 +11106,7 @@ Item1=test888
                 FinishedAt = "2026-07-16 10:20:52",
                 DurationMs = 122903
             };
-            string expected = "ZFI057 \u81EA\u52A8\u6D41\u7A0B\u5DF2\u5B8C\u6210\uFF0C\u90E8\u5206\u5DE5\u5382\u65E0\u6570\u636E\u5DF2\u8DF3\u8FC7";
+            string expected = "ZFI057 \u81EA\u52A8\u6D41\u7A0B\u5DF2\u5B8C\u6210\uFF0C\u90E8\u5206\u4E1A\u52A1\u8303\u56F4\u65E0\u6570\u636E\u5DF2\u8DF3\u8FC7";
             string summary = BuildSapDingTalkMessage(run, run.Message);
             string markdown = BuildSapDingTalkMarkdownContent(run, summary);
             string plain = BuildSapDingTalkContent(run, summary);

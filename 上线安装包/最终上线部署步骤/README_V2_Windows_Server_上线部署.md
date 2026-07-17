@@ -225,7 +225,7 @@ sap dingtalk openapi sent: userid=...
 
 ## 6.1 配置 SAP NCo / ZFI019NL memory fetch
 
-`ZFI057` 产值拆分入口后台第一步不运行 `ZFI019NL.vbs`，而是通过 SAP NCo 调用 `ZFI_SAP_API_GATEWAY` 的 `REPORT_SUBMIT/MEMORY_EXPORT`，从 `ZFI019NL` memory 输出读取物料集合。业务范围到工厂映射通过 `GET_GS03` 获取，默认传 `IV_SET_NAME=Z31`，再从返回表筛 `TITLE=业务范围` 并取 `FROM` 作为工厂；同一 `TITLE` 返回多行时必须全部取 `FROM`。上线前必须确认：
+`ZFI057` 产值拆分入口后台第一步不运行 `ZFI019NL.vbs`，而是通过 SAP NCo 调用 `ZFI_SAP_API_GATEWAY` 的 `REPORT_SUBMIT/MEMORY_EXPORT`，从 `ZFI019NL` memory 输出读取物料集合。业务范围到工厂映射通过 `GET_GS03` 获取，默认传 `IV_SET_NAME=Z31`，再从返回表筛 `TITLE=业务范围` 并取 `FROM` 作为工厂；同一 `TITLE` 返回多行时必须全部取 `FROM`。步骤二“业务范围一次执行、一次性传入全部工厂”只针对 `ZFI057` 自动三步工作流，不改变 `ZFI072A`、`ZFI080`、`ZCO019` 等其他事务码的按工厂执行方式；VBS 先填日期和 `S_MTART-LOW=*`，再把首个工厂写入 `S_WERKS-LOW` 通过 SAP 必填校验，多工厂时继续把全部工厂写入 `S_WERKS` 多选，单工厂时跳过多选。上线前必须确认：
 
 | 项目 | 要求 |
 | --- | --- |

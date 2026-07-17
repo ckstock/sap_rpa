@@ -93,7 +93,7 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 
 ## SAP NCo 与 ZFI057 第一步取数
 
-`ZFI057` 工作台入口后台执行三步：第一步通过 SAP NCo 调用 `ZFI_SAP_API_GATEWAY` 的 `REPORT_SUBMIT/MEMORY_EXPORT` 读取 `ZFI019NL` memory 物料集合，第二步调用 `ZFI_SAP_API_GATEWAY` 的 `GET_GS03`，默认传 `IV_SET_NAME=Z31`，再从返回表里筛 `TITLE=业务范围` 的行并取 `FROM` 作为全部工厂；同一 `TITLE` 返回多行时必须全部取 `FROM`，不允许只取第一条，然后逐个运行 `ZFI057.vbs`；第三步运行 `ZCO020.vbs`。第一步不运行 `ZFI019NL.vbs`，也不把 `GET_GS03` 解析出的工厂作为步骤一入参；步骤二必须使用步骤一业务范围通过 `GET_GS03` 一次性取回的工厂集合，不再读取 `ZTSD001`、SQLite `plants` 或 VBS 本地硬编码映射。`ZFI057` 生产入口必须传 `businessAreas`，只传 `plants` 会被视为无有效业务范围。
+`ZFI057` 工作台入口后台执行三步：第一步通过 SAP NCo 调用 `ZFI_SAP_API_GATEWAY` 的 `REPORT_SUBMIT/MEMORY_EXPORT` 读取 `ZFI019NL` memory 物料集合，第二步调用 `ZFI_SAP_API_GATEWAY` 的 `GET_GS03`，默认传 `IV_SET_NAME=Z31`，再从返回表里筛 `TITLE=业务范围` 的行并取 `FROM` 作为全部工厂；同一 `TITLE` 返回多行时必须全部取 `FROM`，不允许只取第一条，然后把全部工厂一次性传给 `ZFI057.vbs`。VBS 先填日期和 `S_MTART-LOW=*`，再把首个工厂写入 `S_WERKS-LOW` 通过 SAP 必填校验；多工厂时继续把全部工厂粘贴到 `S_WERKS` 多选，单工厂时跳过多选。第三步运行 `ZCO020.vbs`。第一步不运行 `ZFI019NL.vbs`，也不把 `GET_GS03` 解析出的工厂作为步骤一入参；步骤二必须使用步骤一业务范围通过 `GET_GS03` 一次性取回的工厂集合，不再读取 `ZTSD001`、SQLite `plants` 或 VBS 本地硬编码映射。这个“一次性多工厂”口径只针对 `ZFI057` 工作流步骤二，不改变其他事务码的按工厂执行逻辑。`ZFI057` 生产入口必须传 `businessAreas`，只传 `plants` 会被视为无有效业务范围。
 
 生产机必须满足：
 
@@ -110,7 +110,7 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 & "D:\RPA\bin\SapWebLauncher.exe" --test-zfi057-get-gs03 --businessArea 2800 --setName Z31
 ```
 
-成功标准：输出包含 `status=success`、`setName=Z31`，`plantCount` 大于 0，`plants` 包含 `GET_GS03` 返回表中 `TITLE=2800` 对应的全部 `FROM` 工厂。如果 `plantCount=0`，先检查返回表是否真的有 `TITLE=2800`；不能退回读取 `ZTSD001`，也不能用本地工厂表或旧 VBS 单工厂映射兜底。
+成功标准：输出包含 `status=success`、`setName=Z31`，`plantCount` 大于 0，`plants` 包含 `GET_GS03` 返回表中 `TITLE=2800` 对应的全部 `FROM` 工厂。如果 `plantCount=0`，先检查返回表是否真的有 `TITLE=2800`；不能退回读取 `ZTSD001`，也不能用本地工厂表或旧 VBS 单工厂映射兜底。`S_WERKS-LOW` 只允许使用 GET_GS03 返回列表的第一个工厂作为必填校验种子值。
 
 单独验收 ZFI019NL memory 物料集合：
 

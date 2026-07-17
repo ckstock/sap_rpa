@@ -11,7 +11,7 @@ On Error Resume Next
 Dim tcode, plantsCsv, businessAreasCsv, factoryGroup, materialsCsv
 Dim field1Name, field1Value, field2Name, field2Value
 Dim yearValue, weekValue, periodValue, weekEndValue
-Dim plantValue, businessAreaValue, materialText, materialCount
+Dim businessAreaValue, plantText, plantSeedValue, plantCount, materialText, materialCount
 Dim SapGuiAuto, application, connection, session
 Dim retries, sleepMs, statusType, statusText
 Dim runCount, i
@@ -47,9 +47,11 @@ If IsPlaceholder(field1Value, "FIELD1_VALUE") Then field1Value = ""
 If IsPlaceholder(field2Name, "FIELD2_NAME") Then field2Name = ""
 If IsPlaceholder(field2Value, "FIELD2_VALUE") Then field2Value = ""
 
-plantValue = FirstCsvValue(plantsCsv)
+plantText = NormalizeListText(plantsCsv)
+plantSeedValue = FirstCsvValue(plantsCsv)
+plantCount = CountLines(plantText)
 businessAreaValue = FirstCsvValue(businessAreasCsv)
-If plantValue = "" Then Fail "ZFI057 requires plant from backend GET_GS03 result in {PLANTS}; business area alone is not accepted by VBS.", 5
+If plantCount <= 0 Then Fail "ZFI057 requires plants from backend GET_GS03 result in {PLANTS}; business area alone is not accepted by VBS.", 5
 
 materialText = ResolveMaterialText()
 materialCount = CountLines(materialText)
@@ -315,7 +317,7 @@ Sub PressButton(id, label, timeoutMs)
    CheckSapStatus label
 End Sub
 
-Sub SetClipboardText(value)
+Sub SetClipboardText(value, expectedLineCount, label)
    Dim fso, shell, tempFolder, dataFile, scriptFile, dataStream, scriptStream
    Dim psScript, command, proc, stdout, stderr, verifiedLineCount
    Err.Clear
@@ -334,7 +336,7 @@ Sub SetClipboardText(value)
    dataStream.Close
    If Err.Number <> 0 Then
       CleanupClipboardTemp fso, dataFile, scriptFile
-      Fail "write clipboard material temp file failed - " & Err.Description, 8
+      Fail "write clipboard " & label & " temp file failed - " & Err.Description, 8
    End If
    Err.Clear
 
@@ -375,16 +377,16 @@ Sub SetClipboardText(value)
    If proc.ExitCode <> 0 Then
       If stderr = "" Then stderr = "exit code " & proc.ExitCode
       CleanupClipboardTemp fso, dataFile, scriptFile
-      Fail "set clipboard material list failed - " & stderr, 8
+      Fail "set clipboard " & label & " failed - " & stderr, 8
    End If
    verifiedLineCount = ClipboardVerifiedLineCount(stdout)
-   If verifiedLineCount <> CLng(materialCount) Then
+   If verifiedLineCount <> CLng(expectedLineCount) Then
       CleanupClipboardTemp fso, dataFile, scriptFile
-      Fail "set clipboard material list failed - clipboard line count does not match materialCount=" & materialCount & "; " & stdout, 8
+      Fail "set clipboard " & label & " failed - clipboard line count does not match expectedLineCount=" & expectedLineCount & "; " & stdout, 8
    End If
 
    CleanupClipboardTemp fso, dataFile, scriptFile
-   WScript.Echo "INFO: material clipboard prepared count=" & materialCount
+   WScript.Echo "INFO: " & label & " clipboard prepared count=" & expectedLineCount
    Err.Clear
 End Sub
 
@@ -436,25 +438,43 @@ Sub OpenTransaction()
 End Sub
 
 Sub PasteMaterialSelection()
-   SetClipboardText materialText
+   SetClipboardText materialText, materialCount, "material list"
    PressButton "wnd[0]/usr/btn%_S_MATNR_%_APP_%-VALU_PUSH", "open S_MATNR multiple selection", 8000
    PressButton "wnd[1]/tbar[0]/btn[24]", "paste S_MATNR material list", 8000
    PressButton "wnd[1]/tbar[0]/btn[8]", "confirm S_MATNR material list", 8000
 End Sub
 
+Sub PasteWerksSelection()
+   SetClipboardText plantText, plantCount, "plant list"
+   PressButton "wnd[0]/usr/btn%_S_WERKS_%_APP_%-VALU_PUSH", "open S_WERKS multiple selection", 8000
+   PressButton "wnd[1]/tbar[0]/btn[24]", "paste S_WERKS plant list", 8000
+   PressButton "wnd[1]/tbar[0]/btn[8]", "confirm S_WERKS plant list", 8000
+End Sub
+
+Sub FillWerksSelection()
+   SetField "werks-low seed", "wnd[0]/usr/ctxtS_WERKS-LOW", plantSeedValue
+   If plantCount > 1 Then
+      PasteWerksSelection
+   Else
+      WScript.Echo "INFO: single S_WERKS plant uses LOW field; skip multiple selection"
+   End If
+End Sub
+
 Function RunZfi057Window(index)
+   Dim plantLogValue
+   plantLogValue = Replace(plantText, vbCrLf, ",")
    WScript.Echo "INFO: zfi057 input group #" & index
-   WScript.Echo "INFO: query GET_GS03 where TITLE=" & businessAreaValue & "; resolved FROM/WERKS=" & plantValue
+   WScript.Echo "INFO: query GET_GS03 where TITLE=" & businessAreaValue & "; resolved FROM/WERKS=" & plantLogValue & "; plantCount=" & plantCount
    WScript.Echo "INFO: date input group #" & index & "; S_KADKY=[" & kadkyLow(index) & "~" & kadkyHigh(index) & "]; S_KADAT=[" & kadatLow(index) & "~" & kadatHigh(index) & "]"
-   WScript.Echo "INFO: query ZFI_SPLIT fields=BUKRS,WERKS,MATNR,BEGDA,ENDDA,MTART; WERKS=" & plantValue & "; BEGDA<=" & kadkyHigh(index) & "; ENDDA>=" & kadkyLow(index) & "; MTART=*"
+   WScript.Echo "INFO: query ZFI_SPLIT fields=BUKRS,WERKS,MATNR,BEGDA,ENDDA,MTART; WERKS=" & plantLogValue & "; BEGDA<=" & kadkyHigh(index) & "; ENDDA>=" & kadkyLow(index) & "; MTART=*"
    WScript.Echo "INFO: upstream material count=" & materialCount
    OpenTransaction
-   SetField "werks-low", "wnd[0]/usr/ctxtS_WERKS-LOW", plantValue
    SetField "kadky-low", "wnd[0]/usr/ctxtS_KADKY-LOW", kadkyLow(index)
    SetField "kadky-high", "wnd[0]/usr/ctxtS_KADKY-HIGH", kadkyHigh(index)
    SetField "mtart-low", "wnd[0]/usr/ctxtS_MTART-LOW", "*"
    SetField "kadat-low", "wnd[0]/usr/ctxtS_KADAT-LOW", kadatLow(index)
    SetField "kadat-high", "wnd[0]/usr/ctxtS_KADAT-HIGH", kadatHigh(index)
+   FillWerksSelection
    PasteMaterialSelection
    RunZfi057Window = PressExecuteZfi057Window(index)
 End Function
@@ -501,7 +521,7 @@ WScript.Echo "INFO: week=" & weekValue
 WScript.Echo "INFO: period=" & periodValue
 WScript.Echo "INFO: weekEnd=" & weekEndValue
 WScript.Echo "INFO: plants=" & plantsCsv
-WScript.Echo "INFO: plant=" & plantValue
+WScript.Echo "INFO: plantCount=" & plantCount
 WScript.Echo "INFO: businessAreas=" & businessAreasCsv
 WScript.Echo "INFO: businessArea=" & businessAreaValue
 If factoryGroup <> "" Then WScript.Echo "INFO: factoryGroup=" & factoryGroup

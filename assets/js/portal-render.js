@@ -38,16 +38,8 @@
 
       await refreshConfigData({ silent: true });
       await refreshQueueStatus({ silent: true });
-      await refreshReportData({ silent: true, renderAfter: false });
-
-      try {
-        const runData = await bridgeFetch("/api/runs?limit=20");
-        if (Array.isArray(runData.runs)) {
-          history = runData.runs.map(normalizeRunFromApi);
-        }
-      } catch (err) {
-        if (!silent) toast("执行历史接口暂不可用，基础配置仍可维护", "warn");
-      }
+      await refreshReportData({ silent: true, renderAfter: false, refreshHistory: false });
+      await refreshHistoryData({ silent });
 
       if (!silent) toast(state.config.online ? "已连接本机执行器并刷新数据" : "API 已连接，但基础配置接口不可用", state.config.online ? "ok" : "warn");
       render();
@@ -55,9 +47,7 @@
 
     function reportDefaultRange() {
       const toDate = new Date();
-      const fromDate = new Date(toDate);
-      fromDate.setDate(fromDate.getDate() - 30);
-      return { from: formatDateInputValue(fromDate), to: formatDateInputValue(toDate) };
+      return { from: formatDateInputValue(toDate), to: formatDateInputValue(toDate) };
     }
 
     function formatDateInputValue(date) {
@@ -91,7 +81,27 @@
       return "/api/reports/execution" + (query ? "?" + query : "");
     }
 
-    async function refreshReportData({ silent = true, renderAfter = true, from = "", to = "" } = {}) {
+    function buildRunsQuery({ limit = 20, from = "", to = "", status = "" } = {}) {
+      const params = new URLSearchParams();
+      params.set("limit", String(limit));
+      if (status) params.set("status", status);
+      if (from) params.set("from", `${from} 00:00:00`);
+      if (to) params.set("to", `${to} 23:59:59`);
+      return "/api/runs?" + params.toString();
+    }
+
+    async function refreshHistoryData({ silent = true, range = getReportRangeFromState(), limit = 20 } = {}) {
+      try {
+        const runData = await bridgeFetch(buildRunsQuery({ limit, ...range }));
+        if (Array.isArray(runData.runs)) {
+          history = runData.runs.map(normalizeRunFromApi);
+        }
+      } catch (err) {
+        if (!silent) toast("执行历史接口暂不可用，基础配置仍可维护", "warn");
+      }
+    }
+
+    async function refreshReportData({ silent = true, renderAfter = true, refreshHistory = true, from = "", to = "" } = {}) {
       const range = from || to ? { from, to } : getReportRangeFromState();
       state.report = { ...state.report, loading: true, from: range.from, to: range.to, error: "" };
       try {
@@ -105,6 +115,7 @@
           transactionRanking: Array.isArray(data.transactionRanking) ? data.transactionRanking : [],
           error: ""
         };
+        if (refreshHistory) await refreshHistoryData({ silent: true, range: getReportRangeFromState() });
         if (!silent) toast("报表数据已刷新", "ok");
       } catch (err) {
         clearReportData(err.message || "本机 API 不可用，请启动 API");
