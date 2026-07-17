@@ -606,7 +606,7 @@ static class Program
         {
             return new List<Zfi057Step2DateWindow>
             {
-                new(1, FormatSapDate(firstOfStartMonth), FormatSapDate(end), FormatSapDate(firstOfStartMonth), FormatSapDate(end))
+                new(1, FormatSapDate(firstOfStartMonth), FormatSapDate(end), FormatSapDate(firstOfStartMonth.AddDays(1)), FormatSapDate(end))
             };
         }
 
@@ -616,7 +616,7 @@ static class Program
         return new List<Zfi057Step2DateWindow>
         {
             new(1, FormatSapDate(previousMonthStart), FormatSapDate(startMonthEnd), FormatSapDate(previousMonthStart.AddDays(1)), FormatSapDate(startMonthEnd)),
-            new(2, FormatSapDate(firstOfEndMonth), FormatSapDate(end), FormatSapDate(firstOfEndMonth), FormatSapDate(end))
+            new(2, FormatSapDate(firstOfEndMonth), FormatSapDate(end), FormatSapDate(firstOfEndMonth.AddDays(1)), FormatSapDate(end))
         };
     }
 
@@ -10793,11 +10793,20 @@ WScript.Quit 0
                       summary.Contains("S_KADAT-LOW=2026.03.02", StringComparison.OrdinalIgnoreCase) &&
                       summary.Contains("S_KADAT-HIGH=2026.04.30", StringComparison.OrdinalIgnoreCase) &&
                       summary.Contains("window2.S_KADKY-LOW=2026.05.01", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("window2.S_KADAT-LOW=2026.05.02", StringComparison.OrdinalIgnoreCase) &&
                       summary.Contains("materialCount=536", StringComparison.OrdinalIgnoreCase) &&
                       summary.Contains("materials=omitted", StringComparison.OrdinalIgnoreCase) &&
                       !summary.Contains("MAT001", StringComparison.OrdinalIgnoreCase) &&
                       !summary.Contains("MAT002", StringComparison.OrdinalIgnoreCase);
             Check("ZFI057 step2 input summary omits materials", ok, summary);
+        }
+
+        {
+            var sameMonthWindows = ResolveZfi057Step2DateWindows("2026.05.04", "2026.05.10");
+            bool ok = sameMonthWindows.Count == 1 &&
+                      sameMonthWindows[0].KadkyLow.Equals("2026.05.01", StringComparison.OrdinalIgnoreCase) &&
+                      sameMonthWindows[0].KadatLow.Equals("2026.05.02", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 S_KADAT low starts from day 2", ok, string.Join(" | ", sameMonthWindows.Select(w => $"{w.Index}:{w.KadkyLow}~{w.KadkyHigh}/{w.KadatLow}~{w.KadatHigh}")));
         }
 
         {
@@ -11127,16 +11136,17 @@ Item1=test888
             };
             run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[scope] #1 businessArea=2800; plants=1011,1022" });
             run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[step 2 ZFI057] INFO: date input group #1; S_KADKY=[2026.03.01~2026.04.30]; S_KADAT=[2026.03.02~2026.04.30]" });
-            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[step 2 ZFI057] INFO: date input group #2; S_KADKY=[2026.05.01~2026.05.03]; S_KADAT=[2026.05.01~2026.05.03]" });
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[step 2 ZFI057] INFO: date input group #2; S_KADKY=[2026.05.01~2026.05.03]; S_KADAT=[2026.05.02~2026.05.03]" });
             string markdown = BuildSapDingTalkMarkdownContent(run, run.SapStatusText);
             string plain = BuildSapDingTalkContent(run, run.SapStatusText);
             bool ok = markdown.Contains("ZFI057\u65E5\u671F\u5165\u53C2", StringComparison.OrdinalIgnoreCase) &&
                       markdown.Contains("\u7B2C1\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
                       markdown.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.03.02~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
                       markdown.Contains("\u7B2C2\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.05.02~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
                       plain.Contains("ZFI057\u65E5\u671F\u5165\u53C2", StringComparison.OrdinalIgnoreCase) &&
                       plain.Contains("\u7B2C1\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
-                      plain.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.05.02~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
                       !markdown.Contains("S_KADKY=", StringComparison.OrdinalIgnoreCase) &&
                       !markdown.Contains("S_KADAT=", StringComparison.OrdinalIgnoreCase) &&
                       !plain.Contains("S_KADKY=", StringComparison.OrdinalIgnoreCase) &&
@@ -11145,9 +11155,9 @@ Item1=test888
         }
 
         {
-            string cleaned = CleanDingTalkDisplayText("ZFI057 failed; S_KADKY=[2026.05.01~2026.05.03]; S_KADAT=[2026.05.01~2026.05.03]");
+            string cleaned = CleanDingTalkDisplayText("ZFI057 failed; S_KADKY=[2026.05.01~2026.05.03]; S_KADAT=[2026.05.02~2026.05.03]");
             bool ok = cleaned.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
-                      cleaned.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
+                      cleaned.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.05.02~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
                       !cleaned.Contains("S_KADKY", StringComparison.OrdinalIgnoreCase) &&
                       !cleaned.Contains("S_KADAT", StringComparison.OrdinalIgnoreCase);
             Check("DingTalk cleans ZFI057 technical date fields", ok, cleaned);

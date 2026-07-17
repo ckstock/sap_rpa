@@ -191,7 +191,7 @@ Sub ResolveZfi057DateWindows()
       runCount = 1
       kadkyLow(1) = FormatSapDate(firstOfStartMonth)
       kadkyHigh(1) = FormatSapDate(parsedEnd)
-      kadatLow(1) = FormatSapDate(firstOfStartMonth)
+      kadatLow(1) = FormatSapDate(DateAdd("d", 1, firstOfStartMonth))
       kadatHigh(1) = FormatSapDate(parsedEnd)
    Else
       runCount = 2
@@ -203,7 +203,7 @@ Sub ResolveZfi057DateWindows()
       kadatHigh(1) = FormatSapDate(startMonthEnd)
       kadkyLow(2) = FormatSapDate(firstOfEndMonth)
       kadkyHigh(2) = FormatSapDate(parsedEnd)
-      kadatLow(2) = FormatSapDate(firstOfEndMonth)
+      kadatLow(2) = FormatSapDate(DateAdd("d", 1, firstOfEndMonth))
       kadatHigh(2) = FormatSapDate(parsedEnd)
    End If
 End Sub
