@@ -400,7 +400,10 @@ internal sealed class SapGs03PlantFetchResult
     public string Message { get; init; } = "";
     public List<string> Plants { get; init; } = new();
     public string Action { get; init; } = "GET_GS03";
+    public string SetName { get; init; } = "";
+    public string BusinessArea { get; init; } = "";
     public string JsonInput { get; init; } = "";
+    public string JsonOutput { get; init; } = "";
     public List<string> RawLines { get; init; } = new();
 }
 
@@ -408,35 +411,69 @@ internal sealed class SapGs03PlantFetcher
 {
     private const string SapApiGatewayFunctionName = "ZFI_SAP_API_GATEWAY";
     private const string ActionName = "GET_GS03";
+    public const string DefaultSetName = "Z31";
 
-    public SapGs03PlantFetchResult FetchPlantsForBusinessArea(SapNcoConnectionConfig connectionConfig, string businessArea)
+    public SapGs03PlantFetchResult FetchPlantsForBusinessArea(SapNcoConnectionConfig connectionConfig, string businessArea, string setName = DefaultSetName)
     {
         ArgumentNullException.ThrowIfNull(connectionConfig);
         string area = NormalizeCode(businessArea);
         if (string.IsNullOrWhiteSpace(area))
             return new SapGs03PlantFetchResult { Success = false, Message = "GET_GS03 business area is empty" };
 
+        string set = NormalizeCode(FirstNonEmpty(setName, DefaultSetName));
         if (!connectionConfig.IsComplete(out string configError))
-            return new SapGs03PlantFetchResult { Success = false, Message = configError };
+            return new SapGs03PlantFetchResult { Success = false, Message = configError, SetName = set, BusinessArea = area };
 
         var inputValues = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["IV_SET_NAME"] = area,
-            ["iv_set_name"] = area,
+            ["IV_SET_NAME"] = set,
+            ["iv_set_name"] = set,
+            ["IV_SETNAME"] = set,
+            ["iv_setname"] = set,
+            ["SET_NAME"] = set,
+            ["setName"] = set,
+            ["SETNAME"] = set,
+            ["setname"] = set,
+            ["set_name"] = set,
+            ["TITLE"] = area,
+            ["title"] = area,
             ["business_area"] = area,
             ["businessArea"] = area,
-            ["gsber"] = area,
-            ["SETNAME"] = area,
-            ["setname"] = area,
-            ["set_name"] = area,
-            ["setName"] = area
+            ["gsber"] = area
         };
         string input = JsonSerializer.Serialize(inputValues);
         var inputCandidates = new List<(string Label, string JsonIn)>
         {
             ("object", input),
-            ("json-string", JsonSerializer.Serialize(area)),
-            ("raw-string", area)
+            ("object-set-name", JsonSerializer.Serialize(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["SET_NAME"] = set,
+                ["TITLE"] = area
+            })),
+            ("object-iv-setname", JsonSerializer.Serialize(new Dictionary<string, string>(StringComparer.Ordinal)
+            {
+                ["IV_SETNAME"] = set,
+                ["TITLE"] = area
+            })),
+            ("object-importing", JsonSerializer.Serialize(new
+            {
+                IMPORTING = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["IV_SET_NAME"] = set
+                },
+                TITLE = area
+            })),
+            ("object-params", JsonSerializer.Serialize(new
+            {
+                PARAMS = new Dictionary<string, string>(StringComparer.Ordinal)
+                {
+                    ["IV_SET_NAME"] = set
+                },
+                TITLE = area
+            })),
+            ("options-text", $"IV_SET_NAME={set};TITLE={area}"),
+            ("json-string", JsonSerializer.Serialize(set)),
+            ("raw-string", set)
         };
 
         try
@@ -447,14 +484,14 @@ internal sealed class SapGs03PlantFetcher
             {
                 var function = destination.Repository.CreateFunction(SapApiGatewayFunctionName);
                 function.SetValue("IV_ACTION", ActionName);
-                TrySetValue(function, "IV_SET_NAME", area);
+                bool topLevelSetNameApplied = TrySetValue(function, "IV_SET_NAME", set);
                 function.SetValue("IV_JSON_IN", candidate.JsonIn);
                 function.Invoke(destination);
 
                 var outerSubrc = function.GetInt("EV_SUBRC");
                 var outerMsg = function.GetString("EV_MSG") ?? "";
                 var jsonOut = function.GetString("EV_JSON_OUT") ?? "";
-                attempts.Add($"{candidate.Label}:{outerSubrc}:{outerMsg}");
+                attempts.Add($"{candidate.Label}:topLevelIV_SET_NAME={(topLevelSetNameApplied ? "yes" : "no")}:params={DescribeFunctionParameters(function)}:{outerSubrc}:{outerMsg}");
                 if (outerSubrc != 0)
                 {
                     if (outerMsg.Contains("IV_SET_NAME", StringComparison.OrdinalIgnoreCase) && candidate.Label != inputCandidates[^1].Label)
@@ -463,7 +500,9 @@ internal sealed class SapGs03PlantFetcher
                     return new SapGs03PlantFetchResult
                     {
                         Success = false,
-                        Message = $"ZFI_SAP_API_GATEWAY GET_GS03 failed: {outerMsg}; attempts={string.Join(" || ", attempts)}",
+                        Message = $"ZFI_SAP_API_GATEWAY GET_GS03 failed: {outerMsg}; setName={set}; businessArea={area}; attempts={string.Join(" || ", attempts)}",
+                        SetName = set,
+                        BusinessArea = area,
                         JsonInput = string.Join(" || ", inputCandidates.Select(x => $"{x.Label}={x.JsonIn}"))
                     };
                 }
@@ -473,7 +512,9 @@ internal sealed class SapGs03PlantFetcher
                     return new SapGs03PlantFetchResult
                     {
                         Success = false,
-                        Message = $"ZFI_SAP_API_GATEWAY GET_GS03 returned empty EV_JSON_OUT.; attempts={string.Join(" || ", attempts)}",
+                        Message = $"ZFI_SAP_API_GATEWAY GET_GS03 returned empty EV_JSON_OUT.; setName={set}; businessArea={area}; attempts={string.Join(" || ", attempts)}",
+                        SetName = set,
+                        BusinessArea = area,
                         JsonInput = candidate.JsonIn
                     };
                 }
@@ -483,7 +524,6 @@ internal sealed class SapGs03PlantFetcher
                 string innerMsg = "";
                 var plants = ExtractPlants(jsonOut, area, rawLines, out innerSubrc, out innerMsg)
                     .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(plant => plant, StringComparer.OrdinalIgnoreCase)
                     .ToList();
 
                 if (innerSubrc != 0)
@@ -491,7 +531,9 @@ internal sealed class SapGs03PlantFetcher
                     return new SapGs03PlantFetchResult
                     {
                         Success = false,
-                        Message = FirstNonEmpty(innerMsg, $"GET_GS03 inner response failed with subrc={innerSubrc}") + $"; attempts={string.Join(" || ", attempts)}",
+                        Message = FirstNonEmpty(innerMsg, $"GET_GS03 inner response failed with subrc={innerSubrc}") + $"; setName={set}; businessArea={area}; attempts={string.Join(" || ", attempts)}",
+                        SetName = set,
+                        BusinessArea = area,
                         JsonInput = candidate.JsonIn,
                         RawLines = rawLines
                     };
@@ -501,10 +543,13 @@ internal sealed class SapGs03PlantFetcher
                 {
                     Success = plants.Count > 0,
                     Message = plants.Count > 0
-                        ? $"GET_GS03 businessArea={area} returned {plants.Count} plant(s); input={candidate.Label}"
-                        : $"GET_GS03 businessArea={area} returned no plants; input={candidate.Label}",
+                        ? $"GET_GS03 setName={set} businessArea={area} returned {plants.Count} plant(s); input={candidate.Label}"
+                        : $"GET_GS03 setName={set} businessArea={area} returned no plants; input={candidate.Label}",
                     Plants = plants,
+                    SetName = set,
+                    BusinessArea = area,
                     JsonInput = candidate.JsonIn,
+                    JsonOutput = jsonOut,
                     RawLines = rawLines
                 };
             }
@@ -512,7 +557,9 @@ internal sealed class SapGs03PlantFetcher
             return new SapGs03PlantFetchResult
             {
                 Success = false,
-                Message = $"ZFI_SAP_API_GATEWAY GET_GS03 failed before invocation; attempts={string.Join(" || ", attempts)}",
+                Message = $"ZFI_SAP_API_GATEWAY GET_GS03 failed before invocation; setName={set}; businessArea={area}; attempts={string.Join(" || ", attempts)}",
+                SetName = set,
+                BusinessArea = area,
                 JsonInput = string.Join(" || ", inputCandidates.Select(x => $"{x.Label}={x.JsonIn}"))
             };
         }
@@ -521,10 +568,20 @@ internal sealed class SapGs03PlantFetcher
             return new SapGs03PlantFetchResult
             {
                 Success = false,
-                Message = $"ZFI_SAP_API_GATEWAY GET_GS03 threw: {ExceptionChain(ex)}",
+                Message = $"ZFI_SAP_API_GATEWAY GET_GS03 threw: {ExceptionChain(ex)}; setName={set}; businessArea={area}",
+                SetName = set,
+                BusinessArea = area,
                 JsonInput = input
             };
         }
+    }
+
+    internal static List<string> ExtractPlantsForBusinessAreaForTest(string jsonOut, string businessArea)
+    {
+        var rawLines = new List<string>();
+        return ExtractPlants(jsonOut, NormalizeCode(businessArea), rawLines, out _, out _)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static List<string> ExtractPlants(string jsonOut, string area, List<string> rawLines, out int innerSubrc, out string innerMsg)
@@ -572,8 +629,12 @@ internal sealed class SapGs03PlantFetcher
         if (TryReadString(element, out string line, "LINE", "line", "WA", "wa"))
             ExtractPlantsFromText(line, area, plants, rawLines);
 
-        if (TryReadString(element, out string plant, "FROM", "from", "LOW", "low", "WERKS", "werks", "PLANT", "plant"))
+        string title = ReadString(element, "TITLE", "title", "GSBER", "gsber", "BUSINESS_AREA", "business_area", "businessArea") ?? "";
+        if (TryReadString(element, out string plant, "FROM", "from", "LOW", "low", "WERKS", "werks", "PLANT", "plant") &&
+            RowMatchesBusinessArea(title, area))
+        {
             AddPlant(plants, plant);
+        }
 
         foreach (var name in new[] { "RT_SET_VALUES", "rt_set_values", "SET_VALUES", "set_values", "VALUES", "values", "ROWS", "rows", "DATA", "data", "ET_LINES", "LINES", "lines" })
         {
@@ -594,8 +655,34 @@ internal sealed class SapGs03PlantFetcher
                 continue;
 
             rawLines.Add(line);
-            foreach (Match match in RegexMatches(line, @"(?:FROM|WERKS|PLANT|LOW)\s*[:=]\s*([A-Za-z0-9]+)"))
-                AddPlant(plants, match.Groups[1].Value);
+            string lineTitle = "";
+            var linePlants = new List<string>();
+            foreach (Match match in RegexMatches(line, @"(?<key>FROM|WERKS|PLANT|LOW|TITLE|GSBER|BUSINESS_AREA)\s*[:=]\s*(?<value>[A-Za-z0-9]+)"))
+            {
+                string key = match.Groups["key"].Value;
+                string value = match.Groups["value"].Value;
+                if (key.Equals("TITLE", StringComparison.OrdinalIgnoreCase) ||
+                    key.Equals("GSBER", StringComparison.OrdinalIgnoreCase) ||
+                    key.Equals("BUSINESS_AREA", StringComparison.OrdinalIgnoreCase))
+                {
+                    lineTitle = FirstNonEmpty(lineTitle, value);
+                }
+                else
+                {
+                    linePlants.Add(value);
+                }
+            }
+
+            if (linePlants.Count > 0)
+            {
+                if (RowMatchesBusinessArea(lineTitle, area))
+                {
+                    foreach (string plant in linePlants)
+                        AddPlant(plants, plant);
+                }
+
+                continue;
+            }
 
             string valueLine = line;
             if (line.StartsWith("ROW=", StringComparison.OrdinalIgnoreCase))
@@ -610,9 +697,8 @@ internal sealed class SapGs03PlantFetcher
             if (parts.Length == 0)
                 continue;
 
-            string first = NormalizeCode(parts[0]);
-            string candidate = first.All(char.IsDigit) && parts.Length > 1 ? NormalizeCode(parts[1]) : first;
-            if (IsPlantCode(candidate) && (parts.Length == 1 || parts.Any(part => NormalizeCode(part).Equals(area, StringComparison.OrdinalIgnoreCase)) || !LooksLikeStatusLine(line)))
+            string candidate = ResolvePlantFromDelimitedLine(parts, area);
+            if (IsPlantCode(candidate) && (parts.Length == 1 || parts.Any(part => NormalizeCode(part).Equals(area, StringComparison.OrdinalIgnoreCase))))
             {
                 AddPlant(plants, candidate);
             }
@@ -624,6 +710,34 @@ internal sealed class SapGs03PlantFetcher
            line.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase) ||
            line.StartsWith("MESSAGE", StringComparison.OrdinalIgnoreCase) ||
            line.StartsWith("METHOD", StringComparison.OrdinalIgnoreCase);
+
+    private static bool RowMatchesBusinessArea(string title, string area)
+    {
+        string normalizedTitle = NormalizeCode(title);
+        return normalizedTitle.Equals(NormalizeCode(area), StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolvePlantFromDelimitedLine(string[] parts, string area)
+    {
+        if (parts.Length == 0)
+            return "";
+
+        if (parts.Length == 1)
+            return NormalizeCode(parts[0]);
+
+        int titleIndex = Array.FindIndex(parts, part => NormalizeCode(part).Equals(area, StringComparison.OrdinalIgnoreCase));
+        if (titleIndex > 0)
+        {
+            for (int i = titleIndex - 1; i >= 0; i--)
+            {
+                string candidate = NormalizeCode(parts[i]);
+                if (IsPlantCode(candidate) && !candidate.Equals(area, StringComparison.OrdinalIgnoreCase))
+                    return candidate;
+            }
+        }
+
+        return "";
+    }
 
     private static void AddPlant(List<string> plants, string? value)
     {
@@ -659,6 +773,12 @@ internal sealed class SapGs03PlantFetcher
 
     private static bool TryGet(JsonElement root, out JsonElement value, params string[] names)
     {
+        if (root.ValueKind != JsonValueKind.Object)
+        {
+            value = default;
+            return false;
+        }
+
         foreach (var name in names)
             if (root.TryGetProperty(name, out value)) return true;
         foreach (var property in root.EnumerateObject())
@@ -679,9 +799,33 @@ internal sealed class SapGs03PlantFetcher
 
     private static string NormalizeCode(string? value) => (value ?? "").Trim().ToUpperInvariant();
 
-    private static void TrySetValue(IRfcFunction function, string name, object value)
+    private static bool TrySetValue(IRfcFunction function, string name, object value)
     {
-        try { function.SetValue(name, value); } catch { }
+        try
+        {
+            function.SetValue(name, value);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string DescribeFunctionParameters(IRfcFunction function)
+    {
+        try
+        {
+            var names = new List<string>();
+            var metadata = function.Metadata;
+            for (int i = 0; i < metadata.ParameterCount; i++)
+                names.Add(metadata[i].Name);
+            return string.Join(",", names);
+        }
+        catch
+        {
+            return "unavailable";
+        }
     }
 
     private static string FirstNonEmpty(params string?[] values)

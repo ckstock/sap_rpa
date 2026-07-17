@@ -190,6 +190,7 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
     "router": ""
   },
   "zfi057Workflow": {
+    "gs03SetName": "Z31",
     "zfi019nlMemory": {
       "report": "ZFI019NL",
       "memoryId": "%ZFI019NA%",
@@ -224,16 +225,25 @@ sap dingtalk openapi sent: userid=...
 
 ## 6.1 配置 SAP NCo / ZFI019NL memory fetch
 
-`ZFI057` 产值拆分入口后台第一步不运行 `ZFI019NL.vbs`，而是通过 SAP NCo 调用 `ZFI_SAP_API_GATEWAY` 的 `REPORT_SUBMIT/MEMORY_EXPORT`，从 `ZFI019NL` memory 输出读取物料集合。上线前必须确认：
+`ZFI057` 产值拆分入口后台第一步不运行 `ZFI019NL.vbs`，而是通过 SAP NCo 调用 `ZFI_SAP_API_GATEWAY` 的 `REPORT_SUBMIT/MEMORY_EXPORT`，从 `ZFI019NL` memory 输出读取物料集合。业务范围到工厂映射通过 `GET_GS03` 获取，默认传 `IV_SET_NAME=Z31`，再从返回表筛 `TITLE=业务范围` 并取 `FROM` 作为工厂；同一 `TITLE` 返回多行时必须全部取 `FROM`。上线前必须确认：
 
 | 项目 | 要求 |
 | --- | --- |
 | NCo 依赖源 | `D:\RPA\依赖\SapNco\sapnco.dll`、`sapnco_utils.dll`、`ijwhost.dll`、`cpc4n.dll` |
 | 运行目录 DLL | `D:\RPA\bin\` 必须包含上述四个 DLL，以及 `System.Configuration.ConfigurationManager.dll`、`System.Security.Permissions.dll` |
-| 本机配置 | `D:\RPA\config.local.json` 必须包含 `sapNco` 和 `zfi057Workflow.zfi019nlMemory` |
+| 本机配置 | `D:\RPA\config.local.json` 必须包含 `sapNco`、`zfi057Workflow.gs03SetName` 和 `zfi057Workflow.zfi019nlMemory`；`gs03SetName` 默认 `Z31` |
 | SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` 仍由 `04_配置SAP登录信息.bat` 在固定 Windows 执行账号下生成 |
+| SAP 网关对象 | `ZFI_SAP_API_GATEWAY` 必须支持 `GET_GS03`；调用参数为 `IV_SET_NAME=Z31`，返回表用 `TITLE` 匹配业务范围，同一 `TITLE` 多行时用全部 `FROM` 输出工厂 |
 
-单独验收命令：
+单独验收业务范围到工厂映射：
+
+```powershell
+& "D:\RPA\bin\SapWebLauncher.exe" --test-zfi057-get-gs03 --businessArea 2800 --setName Z31
+```
+
+成功标准：`status=success`、`setName=Z31`、`plantCount` 大于 0、`plants` 包含 `GET_GS03` 返回表中 `TITLE=2800` 对应的全部 `FROM` 工厂。
+
+单独验收 ZFI019NL memory 物料集合：
 
 ```powershell
 $out = "D:\RPA\logs\zfi019nl-memory-test.out.log"

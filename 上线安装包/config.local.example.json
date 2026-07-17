@@ -14,6 +14,7 @@
     "router": ""
   },
   "zfi057Workflow": {
+    "gs03SetName": "Z31",
     "zfi019nlMemory": {
       "report": "ZFI019NL",
       "memoryId": "%ZFI019NA%",

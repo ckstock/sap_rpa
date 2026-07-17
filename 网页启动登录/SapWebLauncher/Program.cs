@@ -167,7 +167,7 @@ static class Program
         Console.WriteLine($"  初始化本机数据库: {Process.GetCurrentProcess().ProcessName}.exe --init-db");
         Console.WriteLine($"  启动本机 Bridge API: {Process.GetCurrentProcess().ProcessName}.exe --serve");
         Console.WriteLine($"  诊断 ZFI019NL memory 取数: {Process.GetCurrentProcess().ProcessName}.exe --test-zfi019nl-memory --businessArea 2800 --period 2026.04.27 --weekEnd 2026.05.03");
-        Console.WriteLine($"  诊断 ZFI057 业务范围工厂: {Process.GetCurrentProcess().ProcessName}.exe --test-zfi057-get-gs03 --businessArea 2800");
+        Console.WriteLine($"  诊断 ZFI057 业务范围工厂: {Process.GetCurrentProcess().ProcessName}.exe --test-zfi057-get-gs03 --businessArea 2800 --setName Z31");
         Console.WriteLine($"  或从浏览器跳转 {PrimaryProtocolName}://run?action=run&tcode=ZFI019NL&script=openOnly&plants=1022,1024");
     }
 
@@ -370,6 +370,10 @@ static class Program
             string businessArea = FirstNonEmpty(
                 First(values, "businessArea", "businessarea", "gsber") ?? "",
                 "2800");
+            string setName = FirstNonEmpty(
+                First(values, "setName", "setname", "gs03SetName", "gs03setname") ?? "",
+                LoadZfi057Gs03SetName(),
+                SapGs03PlantFetcher.DefaultSetName);
 
             var p = ApplyLocalConfig(new SapRunParams
             {
@@ -381,15 +385,17 @@ static class Program
             });
 
             SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
-            var result = new SapGs03PlantFetcher().FetchPlantsForBusinessArea(connectionConfig, businessArea);
+            var result = new SapGs03PlantFetcher().FetchPlantsForBusinessArea(connectionConfig, businessArea, setName);
             Console.WriteLine("ZFI057 GET_GS03 diagnostic");
             Console.WriteLine($"status={(result.Success ? "success" : "failed")}");
             Console.WriteLine($"message={result.Message}");
             Console.WriteLine($"action={result.Action}");
+            Console.WriteLine($"setName={result.SetName}");
             Console.WriteLine($"businessArea={businessArea}");
             Console.WriteLine($"plants={string.Join(",", result.Plants)}");
             Console.WriteLine($"plantCount={result.Plants.Count}");
             Console.WriteLine($"jsonInput={result.JsonInput}");
+            Console.WriteLine($"jsonOutput={Truncate(result.JsonOutput, 4000)}");
             Console.WriteLine($"rawLines={string.Join(" | ", result.RawLines.Take(20))}");
             return result.Success && result.Plants.Count > 0 ? 0 : 2;
         }
@@ -6345,6 +6351,26 @@ WHERE run_id=$runId;
         };
     }
 
+    static string LoadZfi057Gs03SetName()
+    {
+        try
+        {
+            using JsonDocument? document = LoadLocalConfigDocument();
+            JsonElement? root = document?.RootElement;
+            JsonElement? zfi057 = TryGetObject(root, "zfi057Workflow");
+            return FirstNonEmpty(
+                GetConfigString(zfi057, "gs03SetName"),
+                GetConfigString(zfi057, "getGs03SetName"),
+                GetConfigString(zfi057, "businessAreaSetName"),
+                GetConfigString(root, "zfi057Gs03SetName"),
+                SapGs03PlantFetcher.DefaultSetName);
+        }
+        catch
+        {
+            return SapGs03PlantFetcher.DefaultSetName;
+        }
+    }
+
     static string GetSelectionSummary(Zfi019NlFetchRequest request, string selname)
     {
         var items = request.Conditions
@@ -6487,14 +6513,15 @@ WHERE run_id=$runId;
                 return Array.Empty<string>();
             }
 
-            var result = new SapGs03PlantFetcher().FetchPlantsForBusinessArea(connectionConfig, area);
+            string setName = LoadZfi057Gs03SetName();
+            var result = new SapGs03PlantFetcher().FetchPlantsForBusinessArea(connectionConfig, area, setName);
             if (result.Success && result.Plants.Count > 0)
             {
-                Log($"ZFI057 GET_GS03 mapping loaded from SAP: businessArea={area}; plants={string.Join(",", result.Plants)}");
+                Log($"ZFI057 GET_GS03 mapping loaded from SAP: setName={result.SetName}; businessArea={area}; plants={string.Join(",", result.Plants)}");
                 return DistinctPreserveOrder(result.Plants);
             }
 
-            Log($"ZFI057 GET_GS03 mapping failed: businessArea={area}; reason={result.Message}");
+            Log($"ZFI057 GET_GS03 mapping failed: setName={result.SetName}; businessArea={area}; reason={result.Message}");
         }
         catch (Exception ex)
         {
@@ -7540,6 +7567,8 @@ ORDER BY 1;
         if (text.Contains("ZFI057 auto workflow completed", StringComparison.OrdinalIgnoreCase))
             return "ZFI057 \u81EA\u52A8\u6D41\u7A0B\u5DF2\u5B8C\u6210";
 
+        text = Regex.Replace(text, @"\bS_KADKY\b", "\u6210\u672C\u6838\u7B97\u65E5\u671F", RegexOptions.IgnoreCase);
+        text = Regex.Replace(text, @"\bS_KADAT\b", "\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E", RegexOptions.IgnoreCase);
         text = Regex.Replace(text, @"[A-Za-z]:\\[^\r\n;]+", "\u672C\u673A\u4E34\u65F6\u811A\u672C");
         if (text.Contains("VBS", StringComparison.OrdinalIgnoreCase) &&
             (text.Contains("\u8D85\u8FC7", StringComparison.OrdinalIgnoreCase) || text.Contains("timeout", StringComparison.OrdinalIgnoreCase)))
@@ -7832,7 +7861,7 @@ ORDER BY 1;
             return new List<string>();
 
         return ordered
-            .Select(window => $"\u7B2C{window.Index}\u6B21\uFF1AS_KADKY=[{window.KadkyLow}~{window.KadkyHigh}]\uFF0CS_KADAT=[{window.KadatLow}~{window.KadatHigh}]")
+            .Select(window => $"\u7B2C{window.Index}\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[{window.KadkyLow}~{window.KadkyHigh}]\uFF0C\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[{window.KadatLow}~{window.KadatHigh}]")
             .ToList();
     }
 
@@ -10575,6 +10604,13 @@ WScript.Quit 0
         }
 
         {
+            string json = "{\"EV_SUBRC\":0,\"RT_SET_VALUES\":[{\"FROM\":\"1011\",\"TITLE\":\"2800\"},{\"FROM\":\"1021\",\"TITLE\":\"2900\"},{\"FROM\":\"103C\",\"TITLE\":\"2800\"}]}";
+            var plants = SapGs03PlantFetcher.ExtractPlantsForBusinessAreaForTest(json, "2800");
+            bool ok = plants.SequenceEqual(new[] { "1011", "103C" }, StringComparer.OrdinalIgnoreCase);
+            Check("ZFI057 GET_GS03 filters FROM by TITLE", ok, $"plants={string.Join(",", plants)}");
+        }
+
+        {
             var vbsResult = new RunResultRequest
             {
                 Status = "success",
@@ -11066,8 +11102,8 @@ Item1=test888
                       markdown.Contains("2800\u65E0\u6570\u636E", StringComparison.OrdinalIgnoreCase) &&
                       markdown.Contains("2900\u8FD0\u884C\u5931\u8D25", StringComparison.OrdinalIgnoreCase) &&
                       markdown.Contains("ZFI057\u65E5\u671F\u5165\u53C2", StringComparison.OrdinalIgnoreCase) &&
-                      markdown.Contains("\u7B2C1\u6B21\uFF1AS_KADKY=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
-                      markdown.Contains("\u7B2C2\u6B21\uFF1AS_KADKY=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u7B2C1\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u7B2C2\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
                       plain.Contains("\u2022 \u4E1A\u52A1\u8303\u56F4\uFF1A", StringComparison.OrdinalIgnoreCase) &&
                       plain.Contains(expected2800Mapping, StringComparison.OrdinalIgnoreCase) &&
                       plain.Contains("[2900]->\u5DE5\u5382\uFF1A1021,1023", StringComparison.OrdinalIgnoreCase) &&
@@ -11095,12 +11131,26 @@ Item1=test888
             string markdown = BuildSapDingTalkMarkdownContent(run, run.SapStatusText);
             string plain = BuildSapDingTalkContent(run, run.SapStatusText);
             bool ok = markdown.Contains("ZFI057\u65E5\u671F\u5165\u53C2", StringComparison.OrdinalIgnoreCase) &&
-                      markdown.Contains("\u7B2C1\u6B21\uFF1AS_KADKY=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
-                      markdown.Contains("\u7B2C2\u6B21\uFF1AS_KADKY=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u7B2C1\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.03.02~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u7B2C2\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
                       plain.Contains("ZFI057\u65E5\u671F\u5165\u53C2", StringComparison.OrdinalIgnoreCase) &&
-                      plain.Contains("\u7B2C1\u6B21\uFF1AS_KADKY=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
-                      plain.Contains("\u7B2C2\u6B21\uFF1AS_KADKY=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase);
+                      plain.Contains("\u7B2C1\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("S_KADKY=", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("S_KADAT=", StringComparison.OrdinalIgnoreCase) &&
+                      !plain.Contains("S_KADKY=", StringComparison.OrdinalIgnoreCase) &&
+                      !plain.Contains("S_KADAT=", StringComparison.OrdinalIgnoreCase);
             Check("DingTalk shows ZFI057 date windows from execution logs", ok, Truncate(markdown.Replace("\n", " | "), 260));
+        }
+
+        {
+            string cleaned = CleanDingTalkDisplayText("ZFI057 failed; S_KADKY=[2026.05.01~2026.05.03]; S_KADAT=[2026.05.01~2026.05.03]");
+            bool ok = cleaned.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
+                      cleaned.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
+                      !cleaned.Contains("S_KADKY", StringComparison.OrdinalIgnoreCase) &&
+                      !cleaned.Contains("S_KADAT", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk cleans ZFI057 technical date fields", ok, cleaned);
         }
 
         {
