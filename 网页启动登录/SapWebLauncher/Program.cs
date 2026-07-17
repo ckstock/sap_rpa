@@ -89,13 +89,6 @@ static class Program
         new("超时秒数", new[] { "timeoutSeconds", "timeout", "vbsTimeoutSeconds" }, false),
         new("备注", new[] { "remark", "remarks", "note", "comment" }, false)
     };
-    private static readonly IReadOnlyDictionary<string, string[]> Zfi057Ztsd001BusinessAreaPlants =
-        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["2800"] = new[] { "1011", "1022", "1023", "1029" },
-            ["2900"] = new[] { "1021", "1023" }
-        };
-
     static void Main(string[] args)
     {
         Log($"启动参数: {MaskRawArg(args.FirstOrDefault())}");
@@ -122,6 +115,14 @@ static class Program
              args[0].Equals("test-zfi019nl-memory", StringComparison.OrdinalIgnoreCase)))
         {
             Environment.Exit(RunZfi019NlMemoryDiagnostic(args.Skip(1).ToArray()));
+            return;
+        }
+
+        if (args.Length > 0 &&
+            (args[0].Equals("--test-zfi057-get-gs03", StringComparison.OrdinalIgnoreCase) ||
+             args[0].Equals("test-zfi057-get-gs03", StringComparison.OrdinalIgnoreCase)))
+        {
+            Environment.Exit(RunZfi057GetGs03Diagnostic(args.Skip(1).ToArray()));
             return;
         }
 
@@ -166,6 +167,7 @@ static class Program
         Console.WriteLine($"  初始化本机数据库: {Process.GetCurrentProcess().ProcessName}.exe --init-db");
         Console.WriteLine($"  启动本机 Bridge API: {Process.GetCurrentProcess().ProcessName}.exe --serve");
         Console.WriteLine($"  诊断 ZFI019NL memory 取数: {Process.GetCurrentProcess().ProcessName}.exe --test-zfi019nl-memory --businessArea 2800 --period 2026.04.27 --weekEnd 2026.05.03");
+        Console.WriteLine($"  诊断 ZFI057 业务范围工厂: {Process.GetCurrentProcess().ProcessName}.exe --test-zfi057-get-gs03 --businessArea 2800");
         Console.WriteLine($"  或从浏览器跳转 {PrimaryProtocolName}://run?action=run&tcode=ZFI019NL&script=openOnly&plants=1022,1024");
     }
 
@@ -312,7 +314,7 @@ static class Program
             });
 
             string[] diagnosticPlants = ResolveZfi057DiagnosticPlants(p, businessArea, plants);
-            var fetch = ExecuteZfi057Step1Memory(p, businessArea, diagnosticPlants);
+            var fetch = ExecuteZfi057Step1Memory(p, businessArea, Array.Empty<string>());
             var aggregate = new RunResultRequest { Status = fetch.Result.Status, Message = fetch.Result.Message };
             AddStepResult(aggregate, "diagnostic ZFI019NL memory", fetch.Result);
             AddZfi057MaterialAuditFile(
@@ -355,6 +357,46 @@ static class Program
         {
             Console.Error.WriteLine($"ZFI019NL memory diagnostic failed: {ex.Message}");
             Log($"ZFI019NL memory diagnostic failed: {ex}");
+            return 1;
+        }
+    }
+
+    static int RunZfi057GetGs03Diagnostic(string[] args)
+    {
+        try
+        {
+            EnsureRuntimeDirectories();
+            var values = ParseCliKeyValueArgs(args);
+            string businessArea = FirstNonEmpty(
+                First(values, "businessArea", "businessarea", "gsber") ?? "",
+                "2800");
+
+            var p = ApplyLocalConfig(new SapRunParams
+            {
+                TCode = "ZFI057",
+                Script = "diagnostic",
+                BusinessAreas = businessArea,
+                BusinessArea = businessArea,
+                RunStrategy = "diagnostic"
+            });
+
+            SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
+            var result = new SapGs03PlantFetcher().FetchPlantsForBusinessArea(connectionConfig, businessArea);
+            Console.WriteLine("ZFI057 GET_GS03 diagnostic");
+            Console.WriteLine($"status={(result.Success ? "success" : "failed")}");
+            Console.WriteLine($"message={result.Message}");
+            Console.WriteLine($"action={result.Action}");
+            Console.WriteLine($"businessArea={businessArea}");
+            Console.WriteLine($"plants={string.Join(",", result.Plants)}");
+            Console.WriteLine($"plantCount={result.Plants.Count}");
+            Console.WriteLine($"jsonInput={result.JsonInput}");
+            Console.WriteLine($"rawLines={string.Join(" | ", result.RawLines.Take(20))}");
+            return result.Success && result.Plants.Count > 0 ? 0 : 2;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"ZFI057 GET_GS03 diagnostic failed: {ex.Message}");
+            Log($"ZFI057 GET_GS03 diagnostic failed: {ex}");
             return 1;
         }
     }
@@ -429,7 +471,12 @@ static class Program
             "step2Inputs:"
         };
 
-        string[] step2Plants = plants.Length > 0 ? plants : new[] { "" };
+        string[] step2Plants = plants.Where(plant => !string.IsNullOrWhiteSpace(plant)).ToArray();
+        if (step2Plants.Length == 0)
+        {
+            lines.Add("no step2 plants resolved by GET_GS03");
+        }
+
         for (int i = 0; i < step2Plants.Length; i++)
         {
             var step2 = CloneSapRunParams(p);
@@ -484,10 +531,6 @@ static class Program
 
     static string[] ResolveZfi057DiagnosticPlants(SapRunParams p, string businessArea, string plants)
     {
-        string[] explicitPlants = NormalizeStringArray(plants);
-        if (explicitPlants.Length > 0)
-            return explicitPlants;
-
         var scopeParams = CloneSapRunParams(p);
         scopeParams.BusinessAreas = businessArea;
         scopeParams.BusinessArea = businessArea;
@@ -512,13 +555,16 @@ static class Program
             $"tcode={FirstNonEmpty(step2.TCode, "ZFI057")}",
             $"businessArea={businessArea}",
             $"plant={plantText}",
-            $"ZTSD001.GSBER={businessArea}",
-            $"ZTSD001.WERKS={plantText}",
+            $"GET_GS03.TITLE={businessArea}",
+            $"GET_GS03.FROM={plantText}",
             $"S_WERKS-LOW={plantText}",
             "S_MTART-LOW=*",
             $"period={step2.Period}",
             $"weekEnd={step2.WeekEnd}",
+            $"runCount={windows.Count}",
             $"windowCount={windows.Count}",
+            "materialSource=step1.ZFI019NL_MEMORY",
+            "S_MATNR.source=step1FinalMaterials",
             $"materialCount={materialCount}",
             "materials=omitted",
             $"timeoutSeconds={step2.TimeoutSeconds.GetValueOrDefault(0)}",
@@ -5635,7 +5681,7 @@ WHERE run_id=$runId;
         AddWorkflowLog(aggregate, "workflow", $"ZFI057 auto workflow start; scopeCount={scopes.Count}; period={p.Period}; weekEnd={p.WeekEnd}");
         AddWorkflowLog(aggregate, "workflow", $"raw input: businessAreas={p.BusinessAreas}; plants={p.Plants}; factoryGroup={p.FactoryGroup}; runStrategy={p.RunStrategy}");
         if (scopes.Count == 0)
-            return FailZfi057Workflow(aggregate, "ZFI057 workflow requires businessAreas or plants that can resolve to business areas.", started);
+            return FailZfi057Workflow(aggregate, "ZFI057 workflow requires businessAreas; plants are not used to infer business areas.", started);
 
         int totalStep2Success = 0;
         int totalStep2NoDataSkipped = 0;
@@ -5645,7 +5691,7 @@ WHERE run_id=$runId;
         {
             scopeIndex++;
             string area = scope.BusinessArea;
-            string[] plants = scope.Plants.Length > 0 ? scope.Plants : new[] { "" };
+            string[] plants = scope.Plants;
             AddWorkflowLog(aggregate, "scope", $"#{scopeIndex} businessArea={area}; plants={string.Join(",", plants.Where(x => !string.IsNullOrWhiteSpace(x)))}");
 
             if (string.IsNullOrWhiteSpace(area))
@@ -5656,8 +5702,8 @@ WHERE run_id=$runId;
                 continue;
             }
 
-            AddWorkflowLog(aggregate, "step 1", $"query: method=NCo REPORT_SUBMIT/MEMORY_EXPORT; report=ZFI019NL; businessArea={area}; plants={string.Join(",", plants.Where(x => !string.IsNullOrWhiteSpace(x)))}; period={p.Period}; weekEnd={p.WeekEnd}");
-            var step1Fetch = ExecuteZfi057Step1Memory(p, area, plants);
+            AddWorkflowLog(aggregate, "step 1", $"query: method=NCo REPORT_SUBMIT/MEMORY_EXPORT; report=ZFI019NL; businessArea={area}; period={p.Period}; weekEnd={p.WeekEnd}; plants=not_applicable");
+            var step1Fetch = ExecuteZfi057Step1Memory(p, area, Array.Empty<string>());
             AddStepResult(aggregate, "step 1 ZFI019NL memory", step1Fetch.Result);
             if (!IsSuccessResult(step1Fetch.Result))
             {
@@ -5682,6 +5728,14 @@ WHERE run_id=$runId;
                     Message = $"[scope] businessArea={area} no data after ZFI019NL memory fetch; skip step2/step3"
                 });
                 scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_data", message));
+                continue;
+            }
+
+            if (plants.Length == 0)
+            {
+                string message = $"GET_GS03 returned no step2 plants for businessArea={area}";
+                aggregate.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"ZFI057 workflow scope failed; businessArea={area}; {message}" });
+                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "failed", message));
                 continue;
             }
 
@@ -6330,7 +6384,7 @@ WHERE run_id=$runId;
                 $"meta,runId,{CsvCell(FirstNonEmpty(p.RunId, "-"))}",
                 $"meta,scopeIndex,{scopeIndex}",
                 $"meta,businessArea,{CsvCell(businessArea)}",
-                $"meta,plants,{CsvCell(string.Join(",", plants.Where(x => !string.IsNullOrWhiteSpace(x))))}",
+                $"meta,step2Plants,{CsvCell(string.Join(",", plants.Where(x => !string.IsNullOrWhiteSpace(x))))}",
                 $"meta,period,{CsvCell(p.Period)}",
                 $"meta,weekEnd,{CsvCell(p.WeekEnd)}",
                 $"meta,selectedSource,{CsvCell(selectedSource)}",
@@ -6410,78 +6464,44 @@ WHERE run_id=$runId;
     static List<Zfi057WorkflowScope> ResolveZfi057WorkflowScopes(SapRunParams p)
     {
         string[] requestedAreas = NormalizeStringArray(FirstNonEmpty(p.BusinessAreas, p.BusinessArea));
-        string[] requestedPlants = NormalizeStringArray(FirstNonEmpty(p.Plants, p.Plant));
-        var plantAreaMap = LoadPlantBusinessAreaMap();
-
-        if (requestedAreas.Length == 0 && requestedPlants.Length > 0)
-        {
-            requestedAreas = ResolveZfi057BusinessAreasForPlants(requestedPlants, plantAreaMap)
-                .Where(area => !string.IsNullOrWhiteSpace(area))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToArray();
-        }
-
         if (requestedAreas.Length == 0)
             return new List<Zfi057WorkflowScope>();
 
         var result = new List<Zfi057WorkflowScope>();
         foreach (string area in requestedAreas)
         {
-            string[] plantsForArea = ResolveZfi057PlantsForBusinessArea(area, requestedPlants, requestedAreas.Length, plantAreaMap);
-            result.Add(new Zfi057WorkflowScope(area, plantsForArea));
+            result.Add(new Zfi057WorkflowScope(area, ResolveZfi057Gs03Plants(p, area)));
         }
 
         return result;
     }
 
-    static string[] ResolveZfi057BusinessAreasForPlants(string[] requestedPlants, Dictionary<string, string> plantAreaMap)
+    static string[] ResolveZfi057Gs03Plants(SapRunParams p, string area)
     {
-        var areas = new List<string>();
-        foreach (string plant in requestedPlants)
+        try
         {
-            foreach (var pair in Zfi057Ztsd001BusinessAreaPlants)
+            SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
+            if (!connectionConfig.IsComplete(out string configError))
             {
-                if (pair.Value.Any(value => value.Equals(plant, StringComparison.OrdinalIgnoreCase)))
-                    AddDistinctValuesRaw(areas, new[] { pair.Key });
+                Log($"ZFI057 GET_GS03 mapping skipped: businessArea={area}; SAP NCo config incomplete: {configError}");
+                return Array.Empty<string>();
             }
 
-            if (plantAreaMap.TryGetValue(plant, out string? fallbackArea))
-                AddDistinctValuesRaw(areas, new[] { fallbackArea });
+            var result = new SapGs03PlantFetcher().FetchPlantsForBusinessArea(connectionConfig, area);
+            if (result.Success && result.Plants.Count > 0)
+            {
+                Log($"ZFI057 GET_GS03 mapping loaded from SAP: businessArea={area}; plants={string.Join(",", result.Plants)}");
+                return DistinctPreserveOrder(result.Plants);
+            }
+
+            Log($"ZFI057 GET_GS03 mapping failed: businessArea={area}; reason={result.Message}");
         }
-
-        return areas.ToArray();
-    }
-
-    static string[] ResolveZfi057PlantsForBusinessArea(string area, string[] requestedPlants, int requestedAreaCount, Dictionary<string, string> plantAreaMap)
-    {
-        string[] ztsd001Plants = Zfi057Ztsd001BusinessAreaPlants.TryGetValue(area, out string[]? mappedPlants)
-            ? mappedPlants
-            : Array.Empty<string>();
-
-        if (requestedPlants.Length > 0)
+        catch (Exception ex)
         {
-            string[] plantsForArea = ztsd001Plants.Length > 0
-                ? requestedPlants.Where(plant => ztsd001Plants.Any(mapped => mapped.Equals(plant, StringComparison.OrdinalIgnoreCase))).ToArray()
-                : requestedPlants
-                    .Where(plant => plantAreaMap.TryGetValue(plant, out string? plantArea) &&
-                                    plantArea.Equals(area, StringComparison.OrdinalIgnoreCase))
-                    .ToArray();
-
-            if (plantsForArea.Length > 0)
-                return DistinctPreserveOrder(plantsForArea);
-
-            if (requestedAreaCount == 1)
-                return DistinctPreserveOrder(requestedPlants);
+            Log($"ZFI057 GET_GS03 mapping failed: businessArea={area}; error={ex.Message}");
         }
 
-        if (ztsd001Plants.Length > 0)
-            return DistinctPreserveOrder(ztsd001Plants);
-
-        return plantAreaMap
-            .Where(pair => pair.Value.Equals(area, StringComparison.OrdinalIgnoreCase))
-            .Select(pair => pair.Key)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
+        return Array.Empty<string>();
     }
 
     static string[] DistinctPreserveOrder(IEnumerable<string> values)
@@ -6503,32 +6523,6 @@ WHERE run_id=$runId;
             if (!target.Any(v => v.Equals(trimmed, StringComparison.OrdinalIgnoreCase)))
                 target.Add(trimmed);
         }
-    }
-
-    static Dictionary<string, string> LoadPlantBusinessAreaMap()
-    {
-        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        try
-        {
-            InitializeDatabase(seedFromScripts: true);
-            using var connection = OpenDatabaseConnection();
-            using var command = connection.CreateCommand();
-            command.CommandText = "SELECT code, business_area FROM plants WHERE enabled=1";
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                string code = reader.GetString(0);
-                string area = reader.GetString(1);
-                if (!string.IsNullOrWhiteSpace(code) && !string.IsNullOrWhiteSpace(area))
-                    result[code] = area;
-            }
-        }
-        catch (Exception ex)
-        {
-            Log($"load plant business-area map failed: {ex.Message}");
-        }
-
-        return result;
     }
 
     static SapRunParams CloneSapRunParams(SapRunParams p)
@@ -7718,6 +7712,13 @@ ORDER BY 1;
                 result.Add(new DingTalkInputLine(group.Label, values));
         }
 
+        if (run.TransactionCode.Equals("ZFI057", StringComparison.OrdinalIgnoreCase))
+        {
+            var dateWindowValues = BuildZfi057DingTalkDateWindowValues(run, requestParams);
+            if (dateWindowValues.Count > 0)
+                result.Add(new DingTalkInputLine("ZFI057日期入参", dateWindowValues));
+        }
+
         foreach (var pair in requestParams.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
         {
             if (!IsAllowedDingTalkParam(pair.Key, allowedParamKeys) ||
@@ -7751,19 +7752,87 @@ ORDER BY 1;
                 GetDictionaryValue(requestParams, "businessAreas", "businessareas", "businessArea", "businessarea", "businessAreaList", "businessareaslist", "gsberlist", "gsber"));
         }
 
-        string plants = FirstNonEmpty(GetDictionaryValue(requestParams, "plants", "plant", "plantCodes", "factoryCodes", "werkslist", "plantlist", "werks"));
-        var scopes = ResolveZfi057WorkflowScopes(new SapRunParams
-        {
-            TCode = "ZFI057",
-            BusinessAreas = businessAreas,
-            BusinessArea = FirstCsvValue(businessAreas),
-            Plants = plants,
-            Plant = FirstCsvValue(plants)
-        });
+        return NormalizeStringArray(businessAreas)
+            .Where(area => !string.IsNullOrWhiteSpace(area))
+            .Select(area => $"[{area}]->\u5DE5\u5382\uFF1A\u672A\u89E3\u6790\uFF08GET_GS03\u65E5\u5FD7\u7F3A\u5931\uFF09")
+            .ToList();
+    }
 
-        return scopes
-            .Where(scope => !string.IsNullOrWhiteSpace(scope.BusinessArea))
-            .Select(scope => $"[{scope.BusinessArea}]->\u5DE5\u5382\uFF1A{(scope.Plants.Length == 0 ? "\u672A\u89E3\u6790" : string.Join(",", scope.Plants))}")
+    static List<string> BuildZfi057DingTalkDateWindowValues(RunRecordView run, Dictionary<string, string> requestParams)
+    {
+        var loggedValues = BuildZfi057DingTalkDateWindowValuesFromLogs(run);
+        if (loggedValues.Count > 0)
+            return loggedValues;
+
+        var dateParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string period = GetDictionaryValue(requestParams, "period", "startDate", "dateFrom", "fromDate", "beginDate", "dateBegin");
+        string weekEnd = GetDictionaryValue(requestParams, "weekEnd", "week_end", "endDate", "dateTo", "toDate", "dateEnd");
+        if (!string.IsNullOrWhiteSpace(period))
+            dateParams["period"] = period;
+        if (!string.IsNullOrWhiteSpace(weekEnd))
+            dateParams["weekEnd"] = weekEnd;
+        AddDefaultExecutionDateParams("ZFI057", dateParams);
+
+        var windows = ResolveZfi057Step2DateWindows(GetParamValue(dateParams, "period"), GetParamValue(dateParams, "weekEnd"));
+        return FormatZfi057DingTalkDateWindowValues(windows);
+    }
+
+    static List<string> BuildZfi057DingTalkDateWindowValuesFromLogs(RunRecordView run)
+    {
+        var windows = new List<Zfi057Step2DateWindow>();
+        foreach (var line in run.Logs)
+        {
+            string message = line.Message ?? "";
+            foreach (Match match in Regex.Matches(message, @"date input group #(\d+);\s*S_KADKY=\[([^~\]]+)~([^\]]+)\];\s*S_KADAT=\[([^~\]]+)~([^\]]+)\]", RegexOptions.IgnoreCase))
+            {
+                if (!int.TryParse(match.Groups[1].Value, out int index))
+                    continue;
+                AddZfi057DateWindow(windows, new Zfi057Step2DateWindow(
+                    index,
+                    match.Groups[2].Value.Trim(),
+                    match.Groups[3].Value.Trim(),
+                    match.Groups[4].Value.Trim(),
+                    match.Groups[5].Value.Trim()));
+            }
+
+            foreach (Match match in Regex.Matches(message, @"window(\d+)\.S_KADKY-LOW=([^;]+).*?window\1\.S_KADKY-HIGH=([^;]+).*?window\1\.S_KADAT-LOW=([^;]+).*?window\1\.S_KADAT-HIGH=([^;]+)", RegexOptions.IgnoreCase))
+            {
+                if (!int.TryParse(match.Groups[1].Value, out int index))
+                    continue;
+                AddZfi057DateWindow(windows, new Zfi057Step2DateWindow(
+                    index,
+                    match.Groups[2].Value.Trim(),
+                    match.Groups[3].Value.Trim(),
+                    match.Groups[4].Value.Trim(),
+                    match.Groups[5].Value.Trim()));
+            }
+        }
+
+        return FormatZfi057DingTalkDateWindowValues(windows);
+    }
+
+    static void AddZfi057DateWindow(List<Zfi057Step2DateWindow> windows, Zfi057Step2DateWindow candidate)
+    {
+        if (windows.Any(window => window.Index == candidate.Index &&
+                                  window.KadkyLow.Equals(candidate.KadkyLow, StringComparison.OrdinalIgnoreCase) &&
+                                  window.KadkyHigh.Equals(candidate.KadkyHigh, StringComparison.OrdinalIgnoreCase) &&
+                                  window.KadatLow.Equals(candidate.KadatLow, StringComparison.OrdinalIgnoreCase) &&
+                                  window.KadatHigh.Equals(candidate.KadatHigh, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        windows.Add(candidate);
+    }
+
+    static List<string> FormatZfi057DingTalkDateWindowValues(IEnumerable<Zfi057Step2DateWindow> windows)
+    {
+        var ordered = windows
+            .OrderBy(window => window.Index)
+            .ToList();
+        if (ordered.Count <= 1)
+            return new List<string>();
+
+        return ordered
+            .Select(window => $"\u7B2C{window.Index}\u6B21\uFF1AS_KADKY=[{window.KadkyLow}~{window.KadkyHigh}]\uFF0CS_KADAT=[{window.KadatLow}~{window.KadatHigh}]")
             .ToList();
     }
 
@@ -10482,34 +10551,27 @@ WScript.Quit 0
             var p = new SapRunParams
             {
                 TCode = "ZFI057",
-                BusinessAreas = "2800,2900",
+                Plants = "103C",
                 Period = "2026.06.29",
                 WeekEnd = "2026.07.05"
             };
             var scopes = ResolveZfi057WorkflowScopes(p);
-            bool ok = scopes.Count == 2 &&
-                      scopes[0].BusinessArea.Equals("2800", StringComparison.OrdinalIgnoreCase) &&
-                      scopes[0].Plants.SequenceEqual(new[] { "1011", "1022", "1023", "1029" }, StringComparer.OrdinalIgnoreCase) &&
-                      scopes[1].BusinessArea.Equals("2900", StringComparison.OrdinalIgnoreCase) &&
-                      scopes[1].Plants.SequenceEqual(new[] { "1021", "1023" }, StringComparer.OrdinalIgnoreCase);
-            Check("ZFI057 workflow scope maps business areas to ZTSD001 plants", ok, $"scopeCount={scopes.Count}, scopes={string.Join(";", scopes.Select(s => $"{s.BusinessArea}:{string.Join(",", s.Plants)}"))}");
+            bool ok = scopes.Count == 0;
+            Check("ZFI057 workflow requires businessAreas before GET_GS03", ok, $"scopeCount={scopes.Count}, scopes={string.Join(";", scopes.Select(s => $"{s.BusinessArea}:{string.Join(",", s.Plants)}"))}");
         }
 
         {
-            var p = new SapRunParams
+            var request = BuildZfi019NlMemoryRequest(new SapRunParams
             {
                 TCode = "ZFI057",
-                Plants = "1023",
+                BusinessAreas = "2800",
+                Plants = "9999",
                 Period = "2026.06.29",
                 WeekEnd = "2026.07.05"
-            };
-            var scopes = ResolveZfi057WorkflowScopes(p);
-            bool ok = scopes.Count == 2 &&
-                      scopes[0].BusinessArea.Equals("2800", StringComparison.OrdinalIgnoreCase) &&
-                      scopes[0].Plants.SequenceEqual(new[] { "1023" }, StringComparer.OrdinalIgnoreCase) &&
-                      scopes[1].BusinessArea.Equals("2900", StringComparison.OrdinalIgnoreCase) &&
-                      scopes[1].Plants.SequenceEqual(new[] { "1023" }, StringComparer.OrdinalIgnoreCase);
-            Check("ZFI057 workflow resolves shared plant to multiple business areas", ok, $"scopeCount={scopes.Count}, scopes={string.Join(";", scopes.Select(s => $"{s.BusinessArea}:{string.Join(",", s.Plants)}"))}");
+            }, "2800", Array.Empty<string>());
+            bool ok = GetSelectionSummary(request, "S_GSBER").Equals("I:EQ:2800:", StringComparison.OrdinalIgnoreCase) &&
+                      request.SplitWerks.Count == 0;
+            Check("ZFI057 step1 ignores explicit plants and uses businessArea only", ok, $"S_GSBER={GetSelectionSummary(request, "S_GSBER")}, splitWerks={string.Join(",", request.SplitWerks)}");
         }
 
         {
@@ -10540,7 +10602,7 @@ WScript.Quit 0
                 p,
                 1,
                 "2800",
-                new[] { "1011", "1022", "1023", "1029" },
+                new[] { "1011", "1022" },
                 "ZFI019NL",
                 Array.Empty<string>(),
                 new[] { "MAT001", "MAT002" },
@@ -10573,12 +10635,12 @@ WScript.Quit 0
             {
                 Period = "2026.04.27",
                 WeekEnd = "2026.05.03"
-            }, "2800", new[] { "1011", "1022", "1023", "1029" });
+            }, "2800", Array.Empty<string>());
             bool ok = GetSelectionSummary(request, "S_BUDAT").Equals("I:BT:20260427:20260503", StringComparison.OrdinalIgnoreCase) &&
                       GetSelectionSummary(request, "S_GSBER").Equals("I:EQ:2800:", StringComparison.OrdinalIgnoreCase) &&
                       request.MemoryId.Equals("%ZFI019NA%", StringComparison.OrdinalIgnoreCase) &&
                       request.MemoryName.Equals("GT_ALV", StringComparison.OrdinalIgnoreCase) &&
-                      request.SplitWerks.SequenceEqual(new[] { "1011", "1022", "1023", "1029" }, StringComparer.OrdinalIgnoreCase);
+                      request.SplitWerks.Count == 0;
             Check("ZFI057 step1 memory request", ok, $"S_BUDAT={GetSelectionSummary(request, "S_BUDAT")}, S_GSBER={GetSelectionSummary(request, "S_GSBER")}, splitWerks={string.Join(",", request.SplitWerks)}");
         }
 
@@ -10991,19 +11053,54 @@ Item1=test888
                 FinishedAt = "2026-07-16 10:20:52",
                 DurationMs = 122903
             };
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[scope] #1 businessArea=2800; plants=1011,1022,1031" });
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[scope] #2 businessArea=2900; plants=1021,1023" });
             string summary = BuildSapDingTalkMessage(run, run.Message);
             string markdown = BuildSapDingTalkMarkdownContent(run, summary);
             string plain = BuildSapDingTalkContent(run, summary);
+            string expected2800Mapping = "[2800]->\u5DE5\u5382\uFF1A1011,1022,1031";
             bool ok = summary.Contains("2800\u65E0\u6570\u636E", StringComparison.OrdinalIgnoreCase) &&
                       summary.Contains("2900\u8FD0\u884C\u5931\u8D25", StringComparison.OrdinalIgnoreCase) &&
-                      markdown.Contains("[2800]->\u5DE5\u5382\uFF1A1011,1022,1023,1029", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains(expected2800Mapping, StringComparison.OrdinalIgnoreCase) &&
                       markdown.Contains("[2900]->\u5DE5\u5382\uFF1A1021,1023", StringComparison.OrdinalIgnoreCase) &&
                       markdown.Contains("2800\u65E0\u6570\u636E", StringComparison.OrdinalIgnoreCase) &&
                       markdown.Contains("2900\u8FD0\u884C\u5931\u8D25", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("ZFI057\u65E5\u671F\u5165\u53C2", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u7B2C1\u6B21\uFF1AS_KADKY=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u7B2C2\u6B21\uFF1AS_KADKY=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
                       plain.Contains("\u2022 \u4E1A\u52A1\u8303\u56F4\uFF1A", StringComparison.OrdinalIgnoreCase) &&
-                      plain.Contains("[2800]->\u5DE5\u5382\uFF1A1011,1022,1023,1029", StringComparison.OrdinalIgnoreCase) &&
-                      plain.Contains("[2900]->\u5DE5\u5382\uFF1A1021,1023", StringComparison.OrdinalIgnoreCase);
+                      plain.Contains(expected2800Mapping, StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("[2900]->\u5DE5\u5382\uFF1A1021,1023", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("ZFI057\u65E5\u671F\u5165\u53C2", StringComparison.OrdinalIgnoreCase);
             Check("DingTalk shows ZFI057 scope mapping and results", ok, Truncate(markdown.Replace("\n", " | "), 260));
+        }
+
+        {
+            var run = new RunRecordView
+            {
+                RunId = "RUN-SELFTEST-ZFI057-DINGTALK-DATE-LOG",
+                TransactionCode = "ZFI057",
+                TransactionName = "\u4EA7\u503C\u62C6\u5206",
+                Status = "success",
+                RequestJson = "{\"transactionCode\":\"ZFI057\",\"params\":{\"businessAreas\":\"2800\"}}",
+                SapStatusType = "S",
+                SapStatusText = "ZFI057\u6D41\u7A0B\u5B8C\u6210\uFF0C\u4E1A\u52A1\u8303\u56F4\uFF1A2800\u8FD0\u884C\u6210\u529F",
+                StartedAt = "2026-07-16 10:18:49",
+                FinishedAt = "2026-07-16 10:20:52",
+                DurationMs = 122903
+            };
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[scope] #1 businessArea=2800; plants=1011,1022" });
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[step 2 ZFI057] INFO: date input group #1; S_KADKY=[2026.03.01~2026.04.30]; S_KADAT=[2026.03.02~2026.04.30]" });
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[step 2 ZFI057] INFO: date input group #2; S_KADKY=[2026.05.01~2026.05.03]; S_KADAT=[2026.05.01~2026.05.03]" });
+            string markdown = BuildSapDingTalkMarkdownContent(run, run.SapStatusText);
+            string plain = BuildSapDingTalkContent(run, run.SapStatusText);
+            bool ok = markdown.Contains("ZFI057\u65E5\u671F\u5165\u53C2", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u7B2C1\u6B21\uFF1AS_KADKY=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u7B2C2\u6B21\uFF1AS_KADKY=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("ZFI057\u65E5\u671F\u5165\u53C2", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("\u7B2C1\u6B21\uFF1AS_KADKY=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("\u7B2C2\u6B21\uFF1AS_KADKY=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk shows ZFI057 date windows from execution logs", ok, Truncate(markdown.Replace("\n", " | "), 260));
         }
 
         {
@@ -11025,8 +11122,8 @@ Item1=test888
             string plain = BuildSapDingTalkContent(run, run.SapStatusText);
             bool ok = markdown.Contains("[2800]->\u5DE5\u5382\uFF1A9001,9002", StringComparison.OrdinalIgnoreCase) &&
                       plain.Contains("[2800]->\u5DE5\u5382\uFF1A9001,9002", StringComparison.OrdinalIgnoreCase) &&
-                      !markdown.Contains("1011,1022,1023,1029", StringComparison.OrdinalIgnoreCase) &&
-                      !plain.Contains("1011,1022,1023,1029", StringComparison.OrdinalIgnoreCase);
+                      !markdown.Contains("\u672A\u89E3\u6790", StringComparison.OrdinalIgnoreCase) &&
+                      !plain.Contains("\u672A\u89E3\u6790", StringComparison.OrdinalIgnoreCase);
             Check("DingTalk prefers logged ZFI057 scope mapping", ok, Truncate(markdown.Replace("\n", " | "), 260));
         }
 

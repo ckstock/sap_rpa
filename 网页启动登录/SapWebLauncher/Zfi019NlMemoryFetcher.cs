@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 
 namespace SapWebLauncher;
 
@@ -383,6 +384,313 @@ internal sealed class SapJobStatusFetcher
     private static string FormatSapLocal(DateTime value) => value.ToString("yyyyMMdd HHmmss", CultureInfo.InvariantCulture);
 
     private static string FormatNullableLocal(DateTime? value) => value.HasValue ? FormatSapLocal(value.Value) : "-";
+
+    private static string ExceptionChain(Exception ex)
+    {
+        var parts = new List<string>();
+        for (Exception? current = ex; current != null; current = current.InnerException)
+            parts.Add($"{current.GetType().Name}: {current.Message}");
+        return string.Join(" -> ", parts);
+    }
+}
+
+internal sealed class SapGs03PlantFetchResult
+{
+    public bool Success { get; init; }
+    public string Message { get; init; } = "";
+    public List<string> Plants { get; init; } = new();
+    public string Action { get; init; } = "GET_GS03";
+    public string JsonInput { get; init; } = "";
+    public List<string> RawLines { get; init; } = new();
+}
+
+internal sealed class SapGs03PlantFetcher
+{
+    private const string SapApiGatewayFunctionName = "ZFI_SAP_API_GATEWAY";
+    private const string ActionName = "GET_GS03";
+
+    public SapGs03PlantFetchResult FetchPlantsForBusinessArea(SapNcoConnectionConfig connectionConfig, string businessArea)
+    {
+        ArgumentNullException.ThrowIfNull(connectionConfig);
+        string area = NormalizeCode(businessArea);
+        if (string.IsNullOrWhiteSpace(area))
+            return new SapGs03PlantFetchResult { Success = false, Message = "GET_GS03 business area is empty" };
+
+        if (!connectionConfig.IsComplete(out string configError))
+            return new SapGs03PlantFetchResult { Success = false, Message = configError };
+
+        var inputValues = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["IV_SET_NAME"] = area,
+            ["iv_set_name"] = area,
+            ["business_area"] = area,
+            ["businessArea"] = area,
+            ["gsber"] = area,
+            ["SETNAME"] = area,
+            ["setname"] = area,
+            ["set_name"] = area,
+            ["setName"] = area
+        };
+        string input = JsonSerializer.Serialize(inputValues);
+        var inputCandidates = new List<(string Label, string JsonIn)>
+        {
+            ("object", input),
+            ("json-string", JsonSerializer.Serialize(area)),
+            ("raw-string", area)
+        };
+
+        try
+        {
+            var destination = SapRpaNcoDestinationProvider.GetDestination(connectionConfig);
+            var attempts = new List<string>();
+            foreach (var candidate in inputCandidates)
+            {
+                var function = destination.Repository.CreateFunction(SapApiGatewayFunctionName);
+                function.SetValue("IV_ACTION", ActionName);
+                TrySetValue(function, "IV_SET_NAME", area);
+                function.SetValue("IV_JSON_IN", candidate.JsonIn);
+                function.Invoke(destination);
+
+                var outerSubrc = function.GetInt("EV_SUBRC");
+                var outerMsg = function.GetString("EV_MSG") ?? "";
+                var jsonOut = function.GetString("EV_JSON_OUT") ?? "";
+                attempts.Add($"{candidate.Label}:{outerSubrc}:{outerMsg}");
+                if (outerSubrc != 0)
+                {
+                    if (outerMsg.Contains("IV_SET_NAME", StringComparison.OrdinalIgnoreCase) && candidate.Label != inputCandidates[^1].Label)
+                        continue;
+
+                    return new SapGs03PlantFetchResult
+                    {
+                        Success = false,
+                        Message = $"ZFI_SAP_API_GATEWAY GET_GS03 failed: {outerMsg}; attempts={string.Join(" || ", attempts)}",
+                        JsonInput = string.Join(" || ", inputCandidates.Select(x => $"{x.Label}={x.JsonIn}"))
+                    };
+                }
+
+                if (string.IsNullOrWhiteSpace(jsonOut))
+                {
+                    return new SapGs03PlantFetchResult
+                    {
+                        Success = false,
+                        Message = $"ZFI_SAP_API_GATEWAY GET_GS03 returned empty EV_JSON_OUT.; attempts={string.Join(" || ", attempts)}",
+                        JsonInput = candidate.JsonIn
+                    };
+                }
+
+                var rawLines = new List<string>();
+                int innerSubrc = 0;
+                string innerMsg = "";
+                var plants = ExtractPlants(jsonOut, area, rawLines, out innerSubrc, out innerMsg)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(plant => plant, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (innerSubrc != 0)
+                {
+                    return new SapGs03PlantFetchResult
+                    {
+                        Success = false,
+                        Message = FirstNonEmpty(innerMsg, $"GET_GS03 inner response failed with subrc={innerSubrc}") + $"; attempts={string.Join(" || ", attempts)}",
+                        JsonInput = candidate.JsonIn,
+                        RawLines = rawLines
+                    };
+                }
+
+                return new SapGs03PlantFetchResult
+                {
+                    Success = plants.Count > 0,
+                    Message = plants.Count > 0
+                        ? $"GET_GS03 businessArea={area} returned {plants.Count} plant(s); input={candidate.Label}"
+                        : $"GET_GS03 businessArea={area} returned no plants; input={candidate.Label}",
+                    Plants = plants,
+                    JsonInput = candidate.JsonIn,
+                    RawLines = rawLines
+                };
+            }
+
+            return new SapGs03PlantFetchResult
+            {
+                Success = false,
+                Message = $"ZFI_SAP_API_GATEWAY GET_GS03 failed before invocation; attempts={string.Join(" || ", attempts)}",
+                JsonInput = string.Join(" || ", inputCandidates.Select(x => $"{x.Label}={x.JsonIn}"))
+            };
+        }
+        catch (Exception ex)
+        {
+            return new SapGs03PlantFetchResult
+            {
+                Success = false,
+                Message = $"ZFI_SAP_API_GATEWAY GET_GS03 threw: {ExceptionChain(ex)}",
+                JsonInput = input
+            };
+        }
+    }
+
+    private static List<string> ExtractPlants(string jsonOut, string area, List<string> rawLines, out int innerSubrc, out string innerMsg)
+    {
+        innerSubrc = 0;
+        innerMsg = "";
+        var plants = new List<string>();
+        try
+        {
+            using var document = JsonDocument.Parse(jsonOut);
+            var root = document.RootElement;
+            innerSubrc = ReadInt(root, 0, "EV_SUBRC", "SUBRC", "subrc");
+            innerMsg = ReadString(root, "EV_MSG", "MSG", "MESSAGE", "message") ?? "";
+            ExtractPlants(root, area, plants, rawLines);
+        }
+        catch (JsonException)
+        {
+            ExtractPlantsFromText(jsonOut, area, plants, rawLines);
+        }
+
+        return plants
+            .Select(NormalizeCode)
+            .Where(IsPlantCode)
+            .ToList();
+    }
+
+    private static void ExtractPlants(JsonElement element, string area, List<string> plants, List<string> rawLines)
+    {
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+                ExtractPlants(item, area, plants, rawLines);
+            return;
+        }
+
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            ExtractPlantsFromText(element.GetString() ?? "", area, plants, rawLines);
+            return;
+        }
+
+        if (element.ValueKind != JsonValueKind.Object)
+            return;
+
+        if (TryReadString(element, out string line, "LINE", "line", "WA", "wa"))
+            ExtractPlantsFromText(line, area, plants, rawLines);
+
+        if (TryReadString(element, out string plant, "FROM", "from", "LOW", "low", "WERKS", "werks", "PLANT", "plant"))
+            AddPlant(plants, plant);
+
+        foreach (var name in new[] { "RT_SET_VALUES", "rt_set_values", "SET_VALUES", "set_values", "VALUES", "values", "ROWS", "rows", "DATA", "data", "ET_LINES", "LINES", "lines" })
+        {
+            if (TryGet(element, out var child, name))
+                ExtractPlants(child, area, plants, rawLines);
+        }
+    }
+
+    private static void ExtractPlantsFromText(string text, string area, List<string> plants, List<string> rawLines)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return;
+
+        foreach (string raw in text.Replace("\r\n", "\n").Split('\n'))
+        {
+            string line = raw.Trim();
+            if (line.Length == 0)
+                continue;
+
+            rawLines.Add(line);
+            foreach (Match match in RegexMatches(line, @"(?:FROM|WERKS|PLANT|LOW)\s*[:=]\s*([A-Za-z0-9]+)"))
+                AddPlant(plants, match.Groups[1].Value);
+
+            string valueLine = line;
+            if (line.StartsWith("ROW=", StringComparison.OrdinalIgnoreCase))
+                valueLine = line["ROW=".Length..];
+            else if (line.Contains('='))
+                continue;
+
+            string[] parts = valueLine
+                .Split(new[] { '|', '\t', ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries)
+                .Select(part => part.Trim())
+                .ToArray();
+            if (parts.Length == 0)
+                continue;
+
+            string first = NormalizeCode(parts[0]);
+            string candidate = first.All(char.IsDigit) && parts.Length > 1 ? NormalizeCode(parts[1]) : first;
+            if (IsPlantCode(candidate) && (parts.Length == 1 || parts.Any(part => NormalizeCode(part).Equals(area, StringComparison.OrdinalIgnoreCase)) || !LooksLikeStatusLine(line)))
+            {
+                AddPlant(plants, candidate);
+            }
+        }
+    }
+
+    private static bool LooksLikeStatusLine(string line)
+        => line.StartsWith("OK:", StringComparison.OrdinalIgnoreCase) ||
+           line.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase) ||
+           line.StartsWith("MESSAGE", StringComparison.OrdinalIgnoreCase) ||
+           line.StartsWith("METHOD", StringComparison.OrdinalIgnoreCase);
+
+    private static void AddPlant(List<string> plants, string? value)
+    {
+        string plant = NormalizeCode(value);
+        if (IsPlantCode(plant))
+            plants.Add(plant);
+    }
+
+    private static bool IsPlantCode(string value)
+        => value.Length is >= 3 and <= 6 && value.All(char.IsLetterOrDigit);
+
+    private static int ReadInt(JsonElement root, int defaultValue, params string[] names)
+    {
+        if (!TryGet(root, out var token, names)) return defaultValue;
+        if (token.ValueKind == JsonValueKind.Number && token.TryGetInt32(out var value)) return value;
+        return int.TryParse(token.ToString(), out value) ? value : defaultValue;
+    }
+
+    private static string? ReadString(JsonElement root, params string[] names)
+        => TryGet(root, out var token, names) ? token.ToString() : null;
+
+    private static bool TryReadString(JsonElement root, out string value, params string[] names)
+    {
+        if (TryGet(root, out var token, names))
+        {
+            value = token.ToString();
+            return true;
+        }
+
+        value = "";
+        return false;
+    }
+
+    private static bool TryGet(JsonElement root, out JsonElement value, params string[] names)
+    {
+        foreach (var name in names)
+            if (root.TryGetProperty(name, out value)) return true;
+        foreach (var property in root.EnumerateObject())
+            if (names.Any(x => property.Name.Equals(x, StringComparison.OrdinalIgnoreCase)))
+            {
+                value = property.Value;
+                return true;
+            }
+        value = default;
+        return false;
+    }
+
+    private static IEnumerable<Match> RegexMatches(string input, string pattern)
+    {
+        foreach (Match match in Regex.Matches(input, pattern, RegexOptions.IgnoreCase))
+            yield return match;
+    }
+
+    private static string NormalizeCode(string? value) => (value ?? "").Trim().ToUpperInvariant();
+
+    private static void TrySetValue(IRfcFunction function, string name, object value)
+    {
+        try { function.SetValue(name, value); } catch { }
+    }
+
+    private static string FirstNonEmpty(params string?[] values)
+    {
+        foreach (string? value in values)
+            if (!string.IsNullOrWhiteSpace(value))
+                return value;
+        return "";
+    }
 
     private static string ExceptionChain(Exception ex)
     {

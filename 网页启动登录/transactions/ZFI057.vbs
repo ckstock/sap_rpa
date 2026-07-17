@@ -2,7 +2,7 @@
 ' @name=ZFI057 value split
 ' @params=plants,businessAreas,period,weekEnd
 ' @dateRule=LAST_FULL_WEEK_BY_SYSTEM_DATE_WITH_CROSS_MONTH_SPLIT
-' @factoryRule=business area maps to plant through portal/ ZTSD001; material list comes from ZFI019NL and ZFI_SPLIT upstream data
+' @factoryRule=business area maps to plant through ZFI_SAP_API_GATEWAY GET_GS03; material list comes from ZFI019NL and ZFI_SPLIT upstream data
 '
 ' Standardized for SapWebLauncher. Source is ASCII/WSH safe.
 
@@ -48,8 +48,7 @@ If IsPlaceholder(field2Value, "FIELD2_VALUE") Then field2Value = ""
 
 plantValue = FirstCsvValue(plantsCsv)
 businessAreaValue = FirstCsvValue(businessAreasCsv)
-If plantValue = "" And businessAreaValue <> "" Then plantValue = PlantFromBusinessArea(businessAreaValue)
-If plantValue = "" Then Fail "ZFI057 requires plant from {PLANTS} or resolvable business area from {BUSINESS_AREAS}", 5
+If plantValue = "" Then Fail "ZFI057 requires plant from backend GET_GS03 result in {PLANTS}; business area alone is not accepted by VBS.", 5
 
 materialText = ResolveMaterialText()
 materialCount = CountLines(materialText)
@@ -208,21 +207,6 @@ Sub ResolveZfi057DateWindows()
       kadatHigh(2) = FormatSapDate(parsedEnd)
    End If
 End Sub
-
-Function PlantFromBusinessArea(area)
-   Select Case Trim(CStr(area))
-      Case "2900": PlantFromBusinessArea = "1024"
-      Case "9200": PlantFromBusinessArea = "1032"
-      Case "2800": PlantFromBusinessArea = "1022"
-      Case "3960": PlantFromBusinessArea = "6041"
-      Case "2910": PlantFromBusinessArea = "103C"
-      Case "3400": PlantFromBusinessArea = "1031"
-      Case "2920": PlantFromBusinessArea = "1033"
-      Case "5100": PlantFromBusinessArea = "1035"
-      Case "2790": PlantFromBusinessArea = "1036"
-      Case Else: PlantFromBusinessArea = ""
-   End Select
-End Function
 
 Sub Fail(message, code)
    WScript.Echo "STATUS_TYPE=E"
@@ -420,7 +404,8 @@ End Sub
 
 Sub RunZfi057Window(index)
    WScript.Echo "INFO: zfi057 input group #" & index
-   WScript.Echo "INFO: query ZTSD001 where GSBER=" & businessAreaValue & "; resolved WERKS=" & plantValue
+   WScript.Echo "INFO: query GET_GS03 where TITLE=" & businessAreaValue & "; resolved FROM/WERKS=" & plantValue
+   WScript.Echo "INFO: date input group #" & index & "; S_KADKY=[" & kadkyLow(index) & "~" & kadkyHigh(index) & "]; S_KADAT=[" & kadatLow(index) & "~" & kadatHigh(index) & "]"
    WScript.Echo "INFO: query ZFI_SPLIT fields=BUKRS,WERKS,MATNR,BEGDA,ENDDA,MTART; WERKS=" & plantValue & "; BEGDA<=" & kadkyHigh(index) & "; ENDDA>=" & kadkyLow(index) & "; MTART=*"
    WScript.Echo "INFO: upstream material count=" & materialCount
    OpenTransaction
