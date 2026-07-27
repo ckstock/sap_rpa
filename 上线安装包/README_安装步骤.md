@@ -91,6 +91,8 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 
 `multiLogonPolicy` 控制 SAP 多重登录弹窗处理。默认值是 `takeover`：服务器登录同一 SAP 账号时，如果 SAP 弹出“该账号已在其他终端登录”的多重登录确认，程序会选择继续本次登录并终止该账号其他登录，让服务器任务继续执行。若生产策略不允许踢掉其他终端，把它改成 `fail`，或设置环境变量 `SAP_RPA_MULTI_LOGON_POLICY=fail`，程序会遇到多重登录弹窗直接失败并写日志。
 
+多重登录验收不能只看日志里是否出现 `selected MULTI_LOGON_OPT1`。那只代表程序选中了“继续本次登录并终止其他登录”的单选项，还必须继续按确认按钮或发送 Enter，并等待弹窗关闭或 `session.Info.User` 变成目标用户。若日志仍停在 `SAPMSYST screen=500`、`NO: scripting engine or connection not ready`，并且没有 `加载外部事务码脚本`、`INFO: transaction=<事务码>`，说明还没有真正进入事务码。发布版本里处理该弹窗的 `cscript //T` 超时必须长于内部确认等待时间。
+
 ## SAP NCo 与 ZFI057 第一步取数
 
 `ZFI057` 工作台入口后台执行三步：第一步通过 SAP NCo 调用 `ZFI_SAP_API_GATEWAY` 的 `REPORT_SUBMIT/MEMORY_EXPORT` 读取 `ZFI019NL` memory 物料集合，第二步调用 `ZFI_SAP_API_GATEWAY` 的 `GET_GS03`，默认传 `IV_SET_NAME=Z31`，再从返回表里筛 `TITLE=业务范围` 的行并取 `FROM` 作为全部工厂；同一 `TITLE` 返回多行时必须全部取 `FROM`，不允许只取第一条，然后把全部工厂一次性传给 `ZFI057.vbs`。VBS 先填日期和 `S_MTART-LOW=*`，再把首个工厂写入 `S_WERKS-LOW` 通过 SAP 必填校验；多工厂时继续把全部工厂粘贴到 `S_WERKS` 多选，单工厂时跳过多选。第三步运行 `ZCO020.vbs`。第一步不运行 `ZFI019NL.vbs`，也不把 `GET_GS03` 解析出的工厂作为步骤一入参；步骤二必须使用步骤一业务范围通过 `GET_GS03` 一次性取回的工厂集合，不再读取 `ZTSD001`、SQLite `plants` 或 VBS 本地硬编码映射。这个“一次性多工厂”口径只针对 `ZFI057` 工作流步骤二，不改变其他事务码的按工厂执行逻辑。`ZFI057` 生产入口必须传 `businessAreas`，只传 `plants` 会被视为无有效业务范围。
@@ -100,7 +102,7 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 | 项目 | 要求 |
 | --- | --- |
 | NCo 依赖源 | `D:\RPA\依赖\SapNco\sapnco.dll`、`sapnco_utils.dll`、`ijwhost.dll`、`cpc4n.dll` |
-| 运行目录 DLL | `D:\RPA\bin\` 必须包含上述四个 DLL，以及 `System.Configuration.ConfigurationManager.dll`、`System.Security.Permissions.dll` |
+| 运行目录 DLL | `D:\RPA\bin\` 必须包含上述四个 DLL，以及 `System.Configuration.ConfigurationManager.dll`、`System.Security.Permissions.dll`；ZFI072A 总 Excel 合并还依赖 publish 输出中的 `ClosedXML*.dll`、`DocumentFormat.OpenXml*.dll`、`ExcelNumberFormat.dll`、`RBush.dll`、`SixLabors.Fonts.dll`。后端升级必须完整复制 publish 输出到 `D:\RPA\bin\`，不能只替换 `SapWebLauncher.exe` |
 | 本机配置 | `D:\RPA\config.local.json` 必须包含 `sapNco`、`zfi057Workflow.gs03SetName` 和 `zfi057Workflow.zfi019nlMemory`；`gs03SetName` 默认 `Z31` |
 | SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` 仍由 `04_配置SAP登录信息.bat` 在固定 Windows 执行账号下生成 |
 | SAP 网关对象 | `ZFI_SAP_API_GATEWAY` 必须支持 `GET_GS03`；调用时传 `IV_SET_NAME=Z31`，返回表按 `TITLE=业务范围` 过滤，同一 `TITLE` 多行时取全部 `FROM` 为工厂；上线前必须跑下面的 `--test-zfi057-get-gs03` |
@@ -138,7 +140,7 @@ Get-Content $out
 | 网关 | `gateway\rpa-gateway.js`、`gateway\start-rpa-gateway.ps1` |
 | 启动脚本 | `启动脚本\00_register_sap_gui_components.cmd`、`00_register_sap_gui_components.ps1`、`start_sap_rpa_services.cmd`、`check_sap_rpa_services.cmd`、`01_start_sap_rpa_services.ps1`、`02_check_sap_rpa_services.ps1`、`gitnexus.cmd`、`gitnexus.ps1` |
 | NCo 依赖源 | `依赖\SapNco\sapnco.dll`、`sapnco_utils.dll`、`ijwhost.dll`、`cpc4n.dll` |
-| 后端 | `dotnet publish` 后的全部输出复制到 `D:\RPA\bin\` |
+| 后端 | `dotnet publish` 后的全部输出复制到 `D:\RPA\bin\`，不能只替换 `SapWebLauncher.exe` 或单个 dll；否则 NCo 或 ZFI072A Excel 合并依赖可能缺失 |
 | 事务脚本 | `网页启动登录\transactions\*.vbs` 和 `transaction-config.json` 复制到 `D:\RPA\transactions\` |
 | 配置模板 | `上线安装包\config.local.example.json` 复制到 `D:\RPA\config.local.example.json` |
 
@@ -268,3 +270,4 @@ C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 10. VBS 从运行目录 `transactions` 读取的是最新脚本。
 11. SAP GUI 已登录复用时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
 12. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
+13. ZFI072A 多工厂任务完成后，`D:\RPA\临时文件\文件数据` 中生成一个 `ZFI072A_采购价月表_yyyyMMddHHmmss.xlsx` 总文件；每个 child 分片在 `_parts\ZFI072A\<parentRunId>` 下，父 run 的 `run_files` 登记总文件。SAP 状态栏“已传递 xx 个字节”表示 ALV 前端导出完成，不是失败；SAP GUI 标准导出可能短暂打开 Excel，程序应在分片落盘后按完整路径关闭对应工作簿，父 run 收尾也只根据 child run 的 `run_files` 分片路径调度安全关闭 helper。若 Excel COM 无法附着，最多只对标题匹配 `ZFI072A_*.xls*` 的可见窗口发送一次非破坏性关闭请求；关闭失败只记录 `WARN`，不得按进程名直接 kill Excel，避免误关用户手工打开的其他 Excel。

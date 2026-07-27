@@ -1,3 +1,4 @@
+using ClosedXML.Excel;
 using Microsoft.Win32;
 using Microsoft.Data.Sqlite;
 using System;
@@ -37,6 +38,7 @@ static class Program
     private const string Zfi057TbtcoJobName = "ZFI057";
     private const int Zfi057TbtcoPollTimeoutSeconds = 600;
     private const int Zfi057TbtcoPollIntervalSeconds = 10;
+    private const string AlvMergedFileType = "alv-merged";
     private static readonly string ExeDirectory = AppContext.BaseDirectory;
     private static readonly string LocalConfigDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -46,6 +48,7 @@ static class Program
     private static readonly string LogDirectory = Path.Combine(RuntimeRoot, "logs");
     private static readonly string OutputDirectory = Path.Combine(RuntimeRoot, "outputs");
     private static readonly string RuntimeTransactionsDirectory = Path.Combine(RuntimeRoot, "transactions");
+    private static readonly string AlvExportDataDirectory = Path.Combine(RuntimeRoot, "\u4E34\u65F6\u6587\u4EF6", "\u6587\u4EF6\u6570\u636E");
     private static readonly string RuntimeLocalConfigFilePath = Path.Combine(RuntimeRoot, "config.local.json");
     private static readonly string LogFilePath = Path.Combine(LogDirectory, "launcher.log");
     private static readonly string ConfigFilePath = Path.Combine(LocalConfigDirectory, "config.json");
@@ -221,6 +224,7 @@ static class Program
         Directory.CreateDirectory(LogDirectory);
         Directory.CreateDirectory(OutputDirectory);
         Directory.CreateDirectory(RuntimeTransactionsDirectory);
+        Directory.CreateDirectory(AlvExportDataDirectory);
     }
 
     static void MigrateLegacyDatabaseIfNeeded()
@@ -921,6 +925,7 @@ static class Program
             Field2Value = First(query, "value2", "field2value") ?? "",
             ButtonId = First(query, "button", "buttonid") ?? "",
             RunId = First(query, "runid", "run_id") ?? "",
+            ParentRunId = First(query, "parentrunid", "parent_run_id") ?? "",
             TimeoutSeconds = ParseOptionalPositiveInt(First(query, "timeoutseconds", "timeout", "vbstimeoutseconds"))
         };
 
@@ -4486,13 +4491,13 @@ WHERE run_id=$runId;
     static bool UsesWeeklyDateFallback(string tcode)
     {
         string code = FirstNonEmpty(tcode, "").Trim().ToUpperInvariant();
-        return code is "ZFI072A";
+        return code is "ZFI072A" or "ZFI148";
     }
 
     static bool UsesBudatDateRange(string tcode)
     {
         string code = FirstNonEmpty(tcode, "").Trim().ToUpperInvariant();
-        return code is "ZFI080" or "ZCO019" or "ZFI019NA" or "ZFI019NL" or "ZFIR034" or "ZFI057" or "ZCO020";
+        return code is "ZFI072N" or "ZFI080B" or "ZFI080" or "ZCO019" or "ZFI019NA" or "ZFI019NL" or "ZFIR034" or "ZFI057" or "ZCO020" or "ZFI148";
     }
 
     static bool UsesDateRangeOnlyInputs(string tcode)
@@ -4662,7 +4667,10 @@ ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
 
     static bool UsesPlantBatchItems(string tcode)
     {
-        return tcode.Equals("ZCO019", StringComparison.OrdinalIgnoreCase) ||
+        return tcode.Equals("ZFI072N", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI080B", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI148", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZCO019", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI080", StringComparison.OrdinalIgnoreCase);
     }
@@ -4946,7 +4954,37 @@ WHERE child_run_id=$childRunId;
 
         long durationMs = latestItems.Sum(i => Math.Max(0, i.DurationMs));
         string finishedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        string message = BuildBatchSummaryMessage(parentRunId, latestItems);
+        var parentFiles = new List<RunFile>();
+        string exportMessage = "";
+        string parentTransactionCode = "";
+        try
+        {
+            var parentForExport = LoadRun(parentRunId, includeDetails: false);
+            parentTransactionCode = parentForExport?.TransactionCode ?? "";
+            if (SupportsAlvExport(parentTransactionCode))
+            {
+                bool requireFragments = parentStatus.Equals("failed", StringComparison.OrdinalIgnoreCase);
+                var mergedAlvFile = BuildMergedBatchAlvWorkbook(parentRunId, latestItems, requireFragments);
+                if (mergedAlvFile != null)
+                {
+                    parentFiles.Add(mergedAlvFile);
+                    exportMessage = $"\uFF1BALV\u5408\u5E76\u6587\u4EF6\uFF1A{mergedAlvFile.Name}";
+                }
+                else if (requireFragments)
+                {
+                    AppendRunLog(parentRunId, "WARN", "skip ALV merged workbook because no child ALV fragment exists");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            AppendRunLog(parentRunId, "ERROR", $"ALV merged workbook failed: {ex.Message}");
+            exportMessage = $"\uFF1BALV\u5408\u5E76\u5931\u8D25\uFF1A{ex.Message}";
+            if (parentStatus.Equals("success", StringComparison.OrdinalIgnoreCase))
+                parentStatus = "partial_failed";
+        }
+
+        string message = BuildBatchSummaryMessage(parentRunId, latestItems) + exportMessage;
         command.CommandText = """
 UPDATE runs
 SET status=$status,
@@ -4969,9 +5007,67 @@ WHERE run_id=$parentRunId
 
         if (updatedRows > 0)
         {
+            if (parentFiles.Count > 0)
+                ReplaceRunFiles(parentRunId, parentFiles);
             CleanupSapGuiSessionAfterRunId(parentRunId);
+            CloseExportedExcelWindowsForTransaction(parentTransactionCode, parentRunId);
             UpdateScheduleRunStatusForRun(parentRunId, parentStatus, message);
             NotifyRunEvent(parentRunId, parentStatus.Equals("success", StringComparison.OrdinalIgnoreCase) ? "success" : "failure", message);
+        }
+    }
+
+    static void CloseExportedExcelWindowsForTransaction(string transactionCode, string runId)
+    {
+        if (!SupportsAlvExport(transactionCode))
+            return;
+
+        string filePrefix = transactionCode.Trim().ToUpperInvariant() + "_";
+        var exportedFiles = LoadBatchItems(runId)
+            .OrderBy(i => i.BatchIndex)
+            .SelectMany(i => LoadRunFiles(i.ChildRunId))
+            .Select(f => Environment.ExpandEnvironmentVariables(f.Path ?? ""))
+            .Where(path => IsExcelWorkbookPath(path) && File.Exists(path))
+            .Where(path => Path.GetFileName(path).StartsWith(filePrefix, StringComparison.OrdinalIgnoreCase))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        foreach (string outputFile in exportedFiles)
+        {
+            ScheduleDelayedExcelWorkbookClose(outputFile, runId);
+        }
+
+        CloseVisibleExportedExcelWindowsByTitle(transactionCode, runId);
+    }
+
+    static void CloseVisibleExportedExcelWindowsByTitle(string transactionCode, string runId)
+    {
+        string titlePrefix = transactionCode.Trim().ToUpperInvariant() + "_";
+        foreach (var process in Process.GetProcessesByName("EXCEL"))
+        {
+            try
+            {
+                string title = process.MainWindowTitle ?? "";
+                if (!title.StartsWith(titlePrefix, StringComparison.OrdinalIgnoreCase) ||
+                    !title.Contains(".xls", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                bool requested = process.CloseMainWindow();
+                if (requested)
+                    process.WaitForExit(1500);
+
+                process.Refresh();
+                string currentTitle = process.HasExited ? "" : process.MainWindowTitle ?? "";
+                if (process.HasExited || !currentTitle.Equals(title, StringComparison.OrdinalIgnoreCase))
+                    AppendRunLog(runId, "INFO", $"requested close for exported Excel window: {title}");
+                else
+                    AppendRunLog(runId, "WARN", $"exported Excel window still open after non-destructive close request: {title}");
+            }
+            catch (Exception ex)
+            {
+                AppendRunLog(runId, "WARN", $"failed to request exported Excel window close: {ex.Message}");
+            }
         }
     }
 
@@ -5582,7 +5678,11 @@ SELECT run_id
 FROM runs
 WHERE status='queued'
   AND COALESCE(run_type, 'single') <> 'parent'
-ORDER BY priority DESC, queued_at, run_id
+ORDER BY priority DESC,
+         queued_at,
+         COALESCE(NULLIF(parent_run_id, ''), run_id),
+         batch_index,
+         run_id
 LIMIT 1;
 """;
             runId = select.ExecuteScalar() as string ?? "";
@@ -6476,6 +6576,225 @@ WHERE run_id=$runId;
         return string.IsNullOrWhiteSpace(part) ? "na" : part;
     }
 
+    static string SafeDisplayFileNamePart(string value)
+    {
+        string text = FirstNonEmpty(value, "na").Trim();
+        if (string.IsNullOrWhiteSpace(text))
+            return "na";
+
+        foreach (char c in Path.GetInvalidFileNameChars())
+            text = text.Replace(c, '_');
+
+        text = Regex.Replace(text, @"\s+", "_").Trim('_', '.');
+        return string.IsNullOrWhiteSpace(text) ? "na" : text;
+    }
+
+    static bool SupportsAlvExport(string tcode)
+    {
+        return tcode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static AlvExportTarget BuildAlvExportTarget(SapRunParams p, string effectivePlants)
+    {
+        if (!SupportsAlvExport(p.TCode))
+            return AlvExportTarget.Empty;
+
+        try
+        {
+            string tcodePart = SafeFileNamePart(p.TCode.ToUpperInvariant());
+            string parentPart = SafeFileNamePart(FirstNonEmpty(p.ParentRunId, p.RunId, "single"));
+            string plantPart = SafeFileNamePart(FirstNonEmpty(FirstCsvValue(effectivePlants), p.Plant, "plant"));
+            string runPart = SafeFileNamePart(FirstNonEmpty(p.RunId, Guid.NewGuid().ToString("N")));
+            string directory = Path.Combine(AlvExportDataDirectory, "_parts", tcodePart, parentPart);
+            Directory.CreateDirectory(directory);
+            string fileName = $"{tcodePart}_{plantPart}_{runPart}.xlsx";
+            return new AlvExportTarget(directory, fileName, Path.Combine(directory, fileName));
+        }
+        catch (Exception ex)
+        {
+            Log($"prepare ALV export target failed: tcode={p.TCode}, runId={p.RunId}, {ex}");
+            return AlvExportTarget.Empty;
+        }
+    }
+
+    static RunFile? BuildMergedBatchAlvWorkbook(string parentRunId, List<BatchItemStatus> latestItems, bool requireFragments = false)
+    {
+        var parent = LoadRun(parentRunId, includeDetails: false);
+        if (parent == null || !SupportsAlvExport(parent.TransactionCode))
+            return null;
+
+        Directory.CreateDirectory(AlvExportDataDirectory);
+        string transactionPart = SafeDisplayFileNamePart(string.Join("_",
+            new[] { parent.TransactionCode, parent.TransactionName }.Where(v => !string.IsNullOrWhiteSpace(v))));
+        string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+        string finalPath = Path.Combine(AlvExportDataDirectory, $"{transactionPart}_{timestamp}.xlsx");
+
+        var fragments = latestItems
+            .OrderBy(i => i.BatchIndex)
+            .SelectMany(i => LoadRunFiles(i.ChildRunId)
+                .Where(f => File.Exists(Environment.ExpandEnvironmentVariables(f.Path ?? "")))
+                .Select(f => new AlvMergeFragment(
+                    i.Plant,
+                    i.ChildRunId,
+                    i.Status,
+                    f.Name,
+                    Environment.ExpandEnvironmentVariables(f.Path ?? ""),
+                    f.Size)))
+            .ToList();
+
+        if (requireFragments && fragments.Count == 0)
+            return null;
+
+        CreateMergedAlvWorkbook(finalPath, parentRunId, parent.TransactionCode, parent.TransactionName, latestItems, fragments);
+        var file = BuildRunFile(finalPath);
+        file.Type = AlvMergedFileType;
+        AppendRunLog(parentRunId, "INFO", $"ALV merged workbook generated: {finalPath}; fragments={fragments.Count}");
+        return file;
+    }
+
+    static void CreateMergedAlvWorkbook(
+        string finalPath,
+        string parentRunId,
+        string transactionCode,
+        string transactionName,
+        List<BatchItemStatus> latestItems,
+        List<AlvMergeFragment> fragments)
+    {
+        using var output = new XLWorkbook();
+        var merged = output.Worksheets.Add("\u5408\u5E76\u6570\u636E");
+        var manifest = output.Worksheets.Add("\u5206\u7247\u6E05\u5355");
+        WriteAlvManifestSheet(manifest, parentRunId, transactionCode, transactionName, latestItems, fragments);
+
+        int outputRow = 1;
+        bool headerWritten = false;
+        int copiedDataRows = 0;
+        var readErrors = new List<string>();
+
+        foreach (var fragment in fragments)
+        {
+            try
+            {
+                using var source = new XLWorkbook(fragment.Path);
+                var sheet = source.Worksheets.FirstOrDefault();
+                var range = sheet?.RangeUsed();
+                if (sheet == null || range == null)
+                    continue;
+
+                var rows = range.RowsUsed().ToList();
+                if (rows.Count == 0)
+                    continue;
+
+                int sourceColumnCount = range.ColumnCount();
+                if (!headerWritten)
+                {
+                    merged.Cell(outputRow, 1).Value = "\u6765\u6E90\u5DE5\u5382";
+                    merged.Cell(outputRow, 2).Value = "\u5B50\u4EFB\u52A1";
+                    merged.Cell(outputRow, 3).Value = "\u6E90\u6587\u4EF6";
+                    for (int col = 1; col <= sourceColumnCount; col++)
+                        merged.Cell(outputRow, col + 3).Value = rows[0].Cell(col).Value;
+                    outputRow++;
+                    headerWritten = true;
+                }
+
+                foreach (var row in rows.Skip(1))
+                {
+                    merged.Cell(outputRow, 1).Value = fragment.Plant;
+                    merged.Cell(outputRow, 2).Value = fragment.ChildRunId;
+                    merged.Cell(outputRow, 3).Value = fragment.FileName;
+                    for (int col = 1; col <= sourceColumnCount; col++)
+                        merged.Cell(outputRow, col + 3).Value = row.Cell(col).Value;
+                    outputRow++;
+                    copiedDataRows++;
+                }
+            }
+            catch (Exception ex)
+            {
+                readErrors.Add($"{fragment.FileName}: {ex.Message}");
+            }
+        }
+
+        if (!headerWritten)
+        {
+            merged.Cell(1, 1).Value = "\u4EFB\u52A1";
+            merged.Cell(1, 2).Value = "\u8BF4\u660E";
+            merged.Cell(2, 1).Value = parentRunId;
+            merged.Cell(2, 2).Value = "\u65E0\u53EF\u5408\u5E76 ALV \u6570\u636E";
+            outputRow = 3;
+        }
+
+        if (readErrors.Count > 0)
+        {
+            var errors = output.Worksheets.Add("\u5408\u5E76\u5F02\u5E38");
+            errors.Cell(1, 1).Value = "\u6587\u4EF6";
+            errors.Cell(1, 2).Value = "\u9519\u8BEF";
+            for (int i = 0; i < readErrors.Count; i++)
+            {
+                string[] parts = readErrors[i].Split(new[] { ": " }, 2, StringSplitOptions.None);
+                errors.Cell(i + 2, 1).Value = parts.ElementAtOrDefault(0) ?? "";
+                errors.Cell(i + 2, 2).Value = parts.ElementAtOrDefault(1) ?? readErrors[i];
+            }
+            errors.Columns().AdjustToContents();
+        }
+
+        merged.Cell(Math.Max(outputRow, 2), 1).Worksheet.Columns().AdjustToContents();
+        manifest.Columns().AdjustToContents();
+        output.Properties.Title = $"{transactionCode} {transactionName}".Trim();
+        output.Properties.Subject = $"SAP RPA ALV merged data; parentRunId={parentRunId}; rows={copiedDataRows}";
+        output.SaveAs(finalPath);
+    }
+
+    static void WriteAlvManifestSheet(
+        IXLWorksheet manifest,
+        string parentRunId,
+        string transactionCode,
+        string transactionName,
+        List<BatchItemStatus> latestItems,
+        List<AlvMergeFragment> fragments)
+    {
+        manifest.Cell(1, 1).Value = "\u7236\u4EFB\u52A1";
+        manifest.Cell(1, 2).Value = parentRunId;
+        manifest.Cell(2, 1).Value = "\u4E8B\u52A1";
+        manifest.Cell(2, 2).Value = $"{transactionCode} {transactionName}".Trim();
+        manifest.Cell(3, 1).Value = "\u751F\u6210\u65F6\u95F4";
+        manifest.Cell(3, 2).Value = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
+
+        int row = 5;
+        manifest.Cell(row, 1).Value = "\u5DE5\u5382";
+        manifest.Cell(row, 2).Value = "\u5B50\u4EFB\u52A1";
+        manifest.Cell(row, 3).Value = "\u72B6\u6001";
+        manifest.Cell(row, 4).Value = "\u5206\u7247\u6587\u4EF6";
+        manifest.Cell(row, 5).Value = "\u5206\u7247\u8DEF\u5F84";
+        manifest.Cell(row, 6).Value = "\u5927\u5C0F";
+
+        var byChild = fragments.GroupBy(f => f.ChildRunId, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
+        foreach (var item in latestItems.OrderBy(i => i.BatchIndex))
+        {
+            if (!byChild.TryGetValue(item.ChildRunId, out var itemFragments) || itemFragments.Count == 0)
+            {
+                row++;
+                manifest.Cell(row, 1).Value = item.Plant;
+                manifest.Cell(row, 2).Value = item.ChildRunId;
+                manifest.Cell(row, 3).Value = item.Status;
+                manifest.Cell(row, 4).Value = "\u672A\u751F\u6210\u5206\u7247";
+                manifest.Cell(row, 5).Value = "";
+                manifest.Cell(row, 6).Value = 0;
+                continue;
+            }
+
+            foreach (var fragment in itemFragments)
+            {
+                row++;
+                manifest.Cell(row, 1).Value = item.Plant;
+                manifest.Cell(row, 2).Value = item.ChildRunId;
+                manifest.Cell(row, 3).Value = item.Status;
+                manifest.Cell(row, 4).Value = fragment.FileName;
+                manifest.Cell(row, 5).Value = fragment.Path;
+                manifest.Cell(row, 6).Value = fragment.Size;
+            }
+        }
+    }
+
     static string CsvCell(string value)
     {
         string text = value ?? "";
@@ -6690,7 +7009,8 @@ WHERE child_run_id=$childRunId;
             ["action"] = "run",
             ["tcode"] = item.TransactionCode,
             ["script"] = FirstNonEmpty(item.ScriptFile, DefaultScriptForTCode(item.TransactionCode)),
-            ["runid"] = item.RunId
+            ["runid"] = item.RunId,
+            ["parentrunid"] = item.ParentRunId
         };
 
         foreach (var pair in request.Params)
@@ -6818,21 +7138,43 @@ VALUES($runId, $type, $name, $path, $size);
     static TransactionScriptInfo LoadScriptInfo(string tcode)
     {
         using var connection = OpenDatabaseConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = "SELECT script_file, script_hash, params_json FROM transactions WHERE tcode=$tcode";
-        command.Parameters.AddWithValue("$tcode", tcode.ToUpperInvariant());
-        using var reader = command.ExecuteReader();
-        if (reader.Read())
+        string normalizedTcode = tcode.ToUpperInvariant();
+        string scriptFile = "";
+        string scriptHash = "";
+        string paramsJson = "";
+        using (var command = connection.CreateCommand())
         {
+            command.CommandText = "SELECT script_file, script_hash, params_json FROM transactions WHERE tcode=$tcode";
+            command.Parameters.AddWithValue("$tcode", normalizedTcode);
+            using var reader = command.ExecuteReader();
+            if (reader.Read())
+            {
+                scriptFile = reader.GetString(0);
+                scriptHash = reader.GetString(1);
+                paramsJson = reader.GetString(2);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(scriptFile))
+        {
+            scriptHash = FirstNonEmpty(LoadCachedScriptHash(connection, normalizedTcode), scriptHash);
             return new TransactionScriptInfo
             {
-                ScriptFile = reader.GetString(0),
-                ScriptHash = reader.GetString(1),
-                ParamKeys = SafeJsonArray(reader.GetString(2))
+                ScriptFile = scriptFile,
+                ScriptHash = scriptHash,
+                ParamKeys = SafeJsonArray(paramsJson)
             };
         }
 
-        return new TransactionScriptInfo { ScriptFile = $"{tcode.ToUpperInvariant()}.vbs" };
+        return new TransactionScriptInfo { ScriptFile = $"{normalizedTcode}.vbs" };
+    }
+
+    static string LoadCachedScriptHash(SqliteConnection connection, string tcode)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT script_hash FROM script_cache WHERE tcode=$tcode";
+        command.Parameters.AddWithValue("$tcode", tcode.ToUpperInvariant());
+        return command.ExecuteScalar() as string ?? "";
     }
 
     static void CleanupSapGuiSessionAfterRunId(string runId)
@@ -6967,6 +7309,37 @@ ORDER BY id;
         }
 
         return files;
+    }
+
+    static void ReplaceRunFiles(string runId, IEnumerable<RunFile> files)
+    {
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+        using (var deleteFiles = connection.CreateCommand())
+        {
+            deleteFiles.Transaction = tx;
+            deleteFiles.CommandText = "DELETE FROM run_files WHERE run_id=$runId";
+            deleteFiles.Parameters.AddWithValue("$runId", runId);
+            deleteFiles.ExecuteNonQuery();
+        }
+
+        foreach (var file in files)
+        {
+            using var command = connection.CreateCommand();
+            command.Transaction = tx;
+            command.CommandText = """
+INSERT INTO run_files(run_id, file_type, file_name, file_path, file_size)
+VALUES($runId, $type, $name, $path, $size);
+""";
+            command.Parameters.AddWithValue("$runId", runId);
+            command.Parameters.AddWithValue("$type", FirstNonEmpty(file.Type, "output"));
+            command.Parameters.AddWithValue("$name", file.Name ?? "");
+            command.Parameters.AddWithValue("$path", file.Path ?? "");
+            command.Parameters.AddWithValue("$size", file.Size);
+            command.ExecuteNonQuery();
+        }
+
+        tx.Commit();
     }
 
     static List<BatchItemStatus> LoadBatchItems(string parentRunId)
@@ -7765,6 +8138,14 @@ ORDER BY 1;
                 result.Add(new DingTalkInputLine("ZFI057日期入参", dateWindowValues));
         }
 
+        if (run.TransactionCode.Equals("ZFI072N", StringComparison.OrdinalIgnoreCase) ||
+            run.TransactionCode.Equals("ZFI080B", StringComparison.OrdinalIgnoreCase))
+        {
+            var budatValues = BuildBudatDingTalkDateWindowValues(run, requestParams);
+            if (budatValues.Count > 0)
+                result.Add(new DingTalkInputLine("过账日期", budatValues));
+        }
+
         foreach (var pair in requestParams.OrderBy(p => p.Key, StringComparer.OrdinalIgnoreCase))
         {
             if (!IsAllowedDingTalkParam(pair.Key, allowedParamKeys) ||
@@ -7882,6 +8263,104 @@ ORDER BY 1;
             .ToList();
     }
 
+    static List<string> BuildBudatDingTalkDateWindowValues(RunRecordView run, Dictionary<string, string> requestParams)
+    {
+        var loggedValues = BuildBudatDingTalkDateWindowValuesFromLogs(run);
+        if (loggedValues.Count > 0)
+            return loggedValues;
+
+        var dateParams = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string period = GetDictionaryValue(requestParams, "period", "startDate", "dateFrom", "fromDate", "beginDate", "dateBegin");
+        string weekEnd = GetDictionaryValue(requestParams, "weekEnd", "week_end", "endDate", "dateTo", "toDate", "dateEnd");
+        if (!string.IsNullOrWhiteSpace(period))
+            dateParams["period"] = period;
+        if (!string.IsNullOrWhiteSpace(weekEnd))
+            dateParams["weekEnd"] = weekEnd;
+        AddDefaultExecutionDateParams(run.TransactionCode, dateParams);
+
+        if (run.TransactionCode.Equals("ZFI072N", StringComparison.OrdinalIgnoreCase))
+            return FormatBudatDateWindowValues(ResolveZfi072nBudatDateWindows(GetParamValue(dateParams, "period"), GetParamValue(dateParams, "weekEnd")));
+
+        string low = GetParamValue(dateParams, "period");
+        string high = GetParamValue(dateParams, "weekEnd");
+        return string.IsNullOrWhiteSpace(low) || string.IsNullOrWhiteSpace(high)
+            ? new List<string>()
+            : new List<string> { $"{low}~{high}" };
+    }
+
+    static List<string> BuildBudatDingTalkDateWindowValuesFromLogs(RunRecordView run)
+    {
+        var windows = new List<BudatDateWindow>();
+        foreach (var line in run.Logs)
+        {
+            string message = line.Message ?? "";
+            foreach (Match match in Regex.Matches(message, @"date input group #(\d+);\s*S_BUDAT=\[([^~\]]+)~([^\]]+)\]", RegexOptions.IgnoreCase))
+            {
+                if (!int.TryParse(match.Groups[1].Value, out int index))
+                    continue;
+
+                AddBudatDateWindow(windows, new BudatDateWindow(
+                    index,
+                    match.Groups[2].Value.Trim(),
+                    match.Groups[3].Value.Trim()));
+            }
+        }
+
+        return FormatBudatDateWindowValues(windows);
+    }
+
+    static List<BudatDateWindow> ResolveZfi072nBudatDateWindows(string period, string weekEnd)
+    {
+        DateTime defaultStart = StartOfWeek(DateTime.Today).AddDays(-7);
+        DateTime defaultEnd = defaultStart.AddDays(6);
+        DateTime start = ParseFlexibleDateOrDefault(period, defaultStart);
+        DateTime end = ParseFlexibleDateOrDefault(weekEnd, defaultEnd);
+        if (end < start)
+            return new List<BudatDateWindow>();
+
+        if (start.Year == end.Year && start.Month == end.Month)
+        {
+            return new List<BudatDateWindow>
+            {
+                new(1, FormatSapDate(new DateTime(end.Year, end.Month, 1)), FormatSapDate(end))
+            };
+        }
+
+        return new List<BudatDateWindow>
+        {
+            new(1, FormatSapDate(new DateTime(start.Year, start.Month, 1)), FormatSapDate(new DateTime(start.Year, start.Month, DateTime.DaysInMonth(start.Year, start.Month)))),
+            new(2, FormatSapDate(new DateTime(end.Year, end.Month, 1)), FormatSapDate(end))
+        };
+    }
+
+    static void AddBudatDateWindow(List<BudatDateWindow> windows, BudatDateWindow candidate)
+    {
+        if (windows.Any(window => window.Index == candidate.Index &&
+                                  window.Low.Equals(candidate.Low, StringComparison.OrdinalIgnoreCase) &&
+                                  window.High.Equals(candidate.High, StringComparison.OrdinalIgnoreCase)))
+            return;
+
+        windows.Add(candidate);
+    }
+
+    static List<string> FormatBudatDateWindowValues(IEnumerable<BudatDateWindow> windows)
+    {
+        var ordered = windows
+            .OrderBy(window => window.Index)
+            .Where(window => !string.IsNullOrWhiteSpace(window.Low) && !string.IsNullOrWhiteSpace(window.High))
+            .ToList();
+
+        if (ordered.Count == 0)
+            return new List<string>();
+
+        if (ordered.Count == 1)
+            return new List<string> { $"{ordered[0].Low}~{ordered[0].High}" };
+
+        return ordered
+            .Select(window => $"第{window.Index}次：{window.Low}~{window.High}")
+            .ToList();
+    }
+
     static List<string> BuildZfi057DingTalkBusinessAreaMappingValuesFromLogs(RunRecordView run)
     {
         var values = new List<string>();
@@ -7964,8 +8443,14 @@ ORDER BY 1;
         if (code is "ZCO020")
             return new[] { "businessAreas", "period", "weekEnd" };
 
-        if (code is "ZFI072A" or "ZFI085" or "ZFI014D" or "ZFI072N" or "ZFI057" or
-            "ZCO020" or "ZPP063" or "ZPP063X" or "ZFI019NC" or "ZFI080B" or "ZFI148")
+        if (code is "ZFI072N" or "ZFI080B")
+            return new[] { "plants" };
+
+        if (code is "ZFI148")
+            return new[] { "plants", "period", "weekEnd", "year", "week" };
+
+        if (code is "ZFI072A" or "ZFI085" or "ZFI014D" or "ZFI057" or
+            "ZCO020" or "ZPP063" or "ZPP063X" or "ZFI019NC")
         {
             return new[] { "year", "week", "plants" };
         }
@@ -9566,7 +10051,7 @@ End Function
 Function TryPressTakeover(ByVal candidate)
    On Error Resume Next
    TryPressTakeover = False
-   Dim modal, radio, okButton, title, canPress
+   Dim modal, radio, okButton, title, canPress, waited, modalStillOpen, candidateUser
    For k = 1 To 3
       Err.Clear
       Set modal = candidate.findById("wnd[" & k & "]")
@@ -9592,17 +10077,56 @@ Function TryPressTakeover(ByVal candidate)
             If canPress Then
                radio.Select
                radio.SetFocus
+               AddDiag "selected MULTI_LOGON_OPT1 on wnd[" & k & "]"
                Err.Clear
                Set okButton = candidate.findById("wnd[" & k & "]/tbar[0]/btn[0]")
                If Err.Number = 0 And IsObject(okButton) Then
                   okButton.Press
+                  If Err.Number = 0 Then
+                     AddDiag "pressed takeover OK button on wnd[" & k & "]"
+                  Else
+                     AddDiag "press takeover OK button failed on wnd[" & k & "]: " & Err.Description
+                     Err.Clear
+                  End If
                Else
                   Err.Clear
                   candidate.findById("wnd[" & k & "]").sendVKey 0
+                  If Err.Number = 0 Then
+                     AddDiag "sent takeover Enter on wnd[" & k & "]"
+                  Else
+                     AddDiag "send takeover Enter failed on wnd[" & k & "]: " & Err.Description
+                     Err.Clear
+                  End If
                End If
-               WScript.Sleep 1000
-               AddDiag "selected MULTI_LOGON_OPT1 on wnd[" & k & "]"
-               TryPressTakeover = True
+               WScript.Sleep 500
+               Err.Clear
+               candidate.findById("wnd[" & k & "]").sendVKey 0
+               If Err.Number = 0 Then AddDiag "sent takeover Enter fallback on wnd[" & k & "]"
+               Err.Clear
+
+               waited = 0
+               Do While waited <= 30000
+                  WScript.Sleep 1000
+                  waited = waited + 1000
+                  Err.Clear
+                  candidateUser = Trim(CStr(candidate.Info.User))
+                  If Err.Number = 0 And candidateUser <> "" Then
+                     AddDiag "takeover confirmed by session user=" & candidateUser & " afterMs=" & waited
+                     TryPressTakeover = True
+                     Exit Function
+                  End If
+                  Err.Clear
+                  Set modal = candidate.findById("wnd[" & k & "]")
+                  modalStillOpen = (Err.Number = 0 And IsObject(modal))
+                  Err.Clear
+                  If Not modalStillOpen Then
+                     AddDiag "takeover dialog closed afterMs=" & waited
+                     TryPressTakeover = True
+                     Exit Function
+                  End If
+               Loop
+
+               AddDiag "takeover dialog still open after confirm wait on wnd[" & k & "]"
                Exit Function
             End If
          Else
@@ -9654,7 +10178,7 @@ WScript.Quit 4
         try
         {
             File.WriteAllText(takeoverFile, takeoverScript, Encoding.Default);
-            var psi = new ProcessStartInfo(ResolveCscriptPath(), $"//T:12 //nologo \"{takeoverFile}\"")
+            var psi = new ProcessStartInfo(ResolveCscriptPath(), $"//T:60 //nologo \"{takeoverFile}\"")
             {
                 UseShellExecute = false,
                 CreateNoWindow = true,
@@ -9669,7 +10193,7 @@ WScript.Quit 4
                 return false;
             }
 
-            if (!proc.WaitForExit(15_000))
+            if (!proc.WaitForExit(65_000))
             {
                 proc.Kill(entireProcessTree: true);
                 detail = "timeout while selecting SAP multi-logon takeover option";
@@ -9969,6 +10493,10 @@ WScript.Quit 0
 
     static string ResolveCscriptPath()
     {
+        string sysWow64Path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "SysWOW64", "cscript.exe");
+        if (File.Exists(sysWow64Path))
+            return sysWow64Path;
+
         string systemPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "cscript.exe");
         if (File.Exists(systemPath))
             return systemPath;
@@ -10064,6 +10592,10 @@ WScript.Quit 0
             }
         }
 
+        AlvExportTarget alvExportTarget = BuildAlvExportTarget(p, effectivePlants);
+        if (SupportsAlvExport(p.TCode) && string.IsNullOrWhiteSpace(alvExportTarget.FullPath))
+            return FailedRunResult($"ALV export path could not be prepared for {p.TCode}, runId={p.RunId}", started);
+
         string vbsScript = template
             .Replace("{OK_CODE}", VbsEscape(p.TCode))
             .Replace("{SAP_SYSTEM}", VbsEscape(StrictSapSessionMatching ? p.System : ""))
@@ -10079,10 +10611,14 @@ WScript.Quit 0
             .Replace("{MATERIALS}", VbsEscape(materialPlaceholder))
             .Replace("{FACTORY_GROUP}", VbsEscape(p.FactoryGroup))
             .Replace("{RUN_STRATEGY}", VbsEscape(p.RunStrategy))
+            .Replace("{PARENT_RUN_ID}", VbsEscape(p.ParentRunId))
             .Replace("{PERIOD}", VbsEscape(p.Period))
             .Replace("{YEAR}", VbsEscape(p.Year))
             .Replace("{WEEK}", VbsEscape(p.Week))
             .Replace("{WEEK_END}", VbsEscape(p.WeekEnd))
+            .Replace("{ALV_EXPORT_DIR}", VbsEscape(alvExportTarget.Directory))
+            .Replace("{ALV_EXPORT_FILENAME}", VbsEscape(alvExportTarget.FileName))
+            .Replace("{ALV_EXPORT_PATH}", VbsEscape(alvExportTarget.FullPath))
             .Replace("{CARET_POS}", string.IsNullOrWhiteSpace(p.CaretPos) ? "0" : p.CaretPos)
             .Replace("{BUTTON_ID}", VbsEscape(p.ButtonId));
 
@@ -10198,7 +10734,19 @@ WScript.Quit 0
                 return failed;
             }
 
-            return BuildRunResultFromVbs(stdOut, stdErr, proc?.ExitCode ?? 0, started);
+            var parsed = BuildRunResultFromVbs(stdOut, stdErr, proc?.ExitCode ?? 0, started);
+            if (p.TCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) &&
+                !parsed.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+            {
+                keepTempFile = true;
+                parsed.Logs.Add(new RunLogLine
+                {
+                    Level = "ERROR",
+                    Message = $"ZFI072A failed result; temp script retained for ALV export diagnostics: {tmpFile}"
+                });
+            }
+
+            return parsed;
         }
         finally
         {
@@ -10573,6 +11121,68 @@ WScript.Quit 0
         }
 
         {
+            string fragment1 = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_1_{Guid.NewGuid():N}.xlsx");
+            string fragment2 = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_2_{Guid.NewGuid():N}.xlsx");
+            string finalPath = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_merged_{Guid.NewGuid():N}.xlsx");
+            string emptyPath = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_empty_{Guid.NewGuid():N}.xlsx");
+            try
+            {
+                using (var wb = new XLWorkbook())
+                {
+                    var ws = wb.Worksheets.Add("ALV");
+                    ws.Cell(1, 1).Value = "MATNR";
+                    ws.Cell(1, 2).Value = "AMOUNT";
+                    ws.Cell(2, 1).Value = "MAT001";
+                    ws.Cell(2, 2).Value = 10;
+                    wb.SaveAs(fragment1);
+                }
+                using (var wb = new XLWorkbook())
+                {
+                    var ws = wb.Worksheets.Add("ALV");
+                    ws.Cell(1, 1).Value = "MATNR";
+                    ws.Cell(1, 2).Value = "AMOUNT";
+                    ws.Cell(2, 1).Value = "MAT002";
+                    ws.Cell(2, 2).Value = 20;
+                    wb.SaveAs(fragment2);
+                }
+
+                var items = new List<BatchItemStatus>
+                {
+                    new() { Plant = "1011", ChildRunId = "RUN-CHILD-1", Status = "success", BatchIndex = 1 },
+                    new() { Plant = "1022", ChildRunId = "RUN-CHILD-2", Status = "success", BatchIndex = 2 }
+                };
+                var fragments = new List<AlvMergeFragment>
+                {
+                    new("1011", "RUN-CHILD-1", "success", Path.GetFileName(fragment1), fragment1, new FileInfo(fragment1).Length),
+                    new("1022", "RUN-CHILD-2", "success", Path.GetFileName(fragment2), fragment2, new FileInfo(fragment2).Length)
+                };
+                CreateMergedAlvWorkbook(finalPath, "RUN-SELFTEST-ZFI072A-ALV", "ZFI072A", "\u91C7\u8D2D\u4EF7\u6708\u8868", items, fragments);
+                using var merged = new XLWorkbook(finalPath);
+                var mergedSheet = merged.Worksheet("\u5408\u5E76\u6570\u636E");
+                bool ok = File.Exists(finalPath) &&
+                          mergedSheet.Cell(1, 1).GetString() == "\u6765\u6E90\u5DE5\u5382" &&
+                          mergedSheet.Cell(2, 1).GetString() == "1011" &&
+                          mergedSheet.Cell(2, 4).GetString() == "MAT001" &&
+                          mergedSheet.Cell(3, 1).GetString() == "1022" &&
+                          mergedSheet.Cell(3, 4).GetString() == "MAT002";
+                Check("ZFI072A ALV fragment merge workbook", ok, $"final={finalPath}");
+
+                CreateMergedAlvWorkbook(emptyPath, "RUN-SELFTEST-ZFI072A-EMPTY", "ZFI072A", "\u91C7\u8D2D\u4EF7\u6708\u8868", items, new List<AlvMergeFragment>());
+                using var empty = new XLWorkbook(emptyPath);
+                bool emptyOk = File.Exists(emptyPath) &&
+                               empty.Worksheet("\u5408\u5E76\u6570\u636E").Cell(2, 2).GetString().Contains("ALV", StringComparison.OrdinalIgnoreCase);
+                Check("ZFI072A ALV empty merge workbook", emptyOk, $"empty={emptyPath}");
+            }
+            finally
+            {
+                foreach (string path in new[] { fragment1, fragment2, finalPath, emptyPath })
+                {
+                    try { if (File.Exists(path)) File.Delete(path); } catch { }
+                }
+            }
+        }
+
+        {
             var request = new CreateRunRequest
             {
                 TransactionCode = "ZFI019NL",
@@ -10924,6 +11534,83 @@ Item1=test888
         {
             var request = new CreateRunRequest
             {
+                TransactionCode = "ZFI072N",
+                Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["plants"] = "1022,1032",
+                    ["period"] = "2026.02.23",
+                    ["weekEnd"] = "2026.03.01"
+                }
+            };
+            NormalizeCreateRunParams(request);
+            string[] plants = NormalizeStringArray(GetParamValue(request.Params, "plants"));
+            var plan = ResolveBatchPlan("ZFI072N", plants, Array.Empty<string>());
+            var childRequest = plan == null ? request : CloneRunRequestForBatchItem(request, plan, "1032");
+            var windows = ResolveZfi072nBudatDateWindows(GetParamValue(request.Params, "period"), GetParamValue(request.Params, "weekEnd"));
+            var invalidWindows = ResolveZfi072nBudatDateWindows("2026.03.01", "2026.02.23");
+            bool ok = plan != null &&
+                      plan.ParamKey.Equals("plants", StringComparison.OrdinalIgnoreCase) &&
+                      plan.Items.SequenceEqual(new[] { "1022", "1032" }, StringComparer.OrdinalIgnoreCase) &&
+                      GetParamValue(childRequest.Params, "plants").Equals("1032", StringComparison.OrdinalIgnoreCase) &&
+                      GetParamValue(childRequest.Params, "period").Equals("2026.02.23", StringComparison.OrdinalIgnoreCase) &&
+                      windows.Count == 2 &&
+                      windows[0].Low.Equals("2026.02.01", StringComparison.OrdinalIgnoreCase) &&
+                      windows[0].High.Equals("2026.02.28", StringComparison.OrdinalIgnoreCase) &&
+                      windows[1].Low.Equals("2026.03.01", StringComparison.OrdinalIgnoreCase) &&
+                      windows[1].High.Equals("2026.03.01", StringComparison.OrdinalIgnoreCase) &&
+                      invalidWindows.Count == 0;
+            Check("ZFI072N plants batch split and cross-month BUDAT windows", ok, $"plants={GetParamValue(request.Params, "plants")}, child={GetParamValue(childRequest.Params, "plants")}, windows={string.Join("|", windows.Select(w => $"{w.Index}:{w.Low}~{w.High}"))}");
+        }
+
+        {
+            var request = new CreateRunRequest
+            {
+                TransactionCode = "ZFI080B",
+                Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["plants"] = "1022,1032"
+                }
+            };
+            NormalizeCreateRunParams(request);
+            DateTime defaultStart = StartOfWeek(DateTime.Today).AddDays(-7);
+            DateTime defaultEnd = defaultStart.AddDays(6);
+            string[] plants = NormalizeStringArray(GetParamValue(request.Params, "plants"));
+            var plan = ResolveBatchPlan("ZFI080B", plants, Array.Empty<string>());
+            bool ok = plan != null &&
+                      plan.Items.SequenceEqual(new[] { "1022", "1032" }, StringComparer.OrdinalIgnoreCase) &&
+                      GetParamValue(request.Params, "period").Equals(FormatSapDate(defaultStart), StringComparison.OrdinalIgnoreCase) &&
+                      GetParamValue(request.Params, "weekEnd").Equals(FormatSapDate(defaultEnd), StringComparison.OrdinalIgnoreCase);
+            Check("ZFI080B plants batch split and weekly BUDAT default", ok, $"period={GetParamValue(request.Params, "period")}, weekEnd={GetParamValue(request.Params, "weekEnd")}, plants={GetParamValue(request.Params, "plants")}");
+        }
+
+        {
+            var request = new CreateRunRequest
+            {
+                TransactionCode = "ZFI148",
+                Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["plants"] = "1022,1032"
+                }
+            };
+            NormalizeCreateRunParams(request);
+            DateTime defaultStart = StartOfWeek(DateTime.Today).AddDays(-7);
+            DateTime defaultEnd = defaultStart.AddDays(6);
+            string[] plants = NormalizeStringArray(GetParamValue(request.Params, "plants"));
+            var plan = ResolveBatchPlan("ZFI148", plants, Array.Empty<string>());
+            var childRequest = plan == null ? request : CloneRunRequestForBatchItem(request, plan, "1032");
+            bool ok = plan != null &&
+                      plan.Items.SequenceEqual(new[] { "1022", "1032" }, StringComparer.OrdinalIgnoreCase) &&
+                      GetParamValue(childRequest.Params, "plants").Equals("1032", StringComparison.OrdinalIgnoreCase) &&
+                      GetParamValue(request.Params, "period").Equals(FormatSapDate(defaultStart), StringComparison.OrdinalIgnoreCase) &&
+                      GetParamValue(request.Params, "weekEnd").Equals(FormatSapDate(defaultEnd), StringComparison.OrdinalIgnoreCase) &&
+                      GetParamValue(request.Params, "year").Equals(defaultStart.Year.ToString(), StringComparison.OrdinalIgnoreCase) &&
+                      GetParamValue(request.Params, "week").Equals(ISOWeek.GetWeekOfYear(defaultStart).ToString(), StringComparison.OrdinalIgnoreCase);
+            Check("ZFI148 plants batch split and weekly year/week default", ok, $"period={GetParamValue(request.Params, "period")}, weekEnd={GetParamValue(request.Params, "weekEnd")}, year={GetParamValue(request.Params, "year")}, week={GetParamValue(request.Params, "week")}, child={GetParamValue(childRequest.Params, "plants")}");
+        }
+
+        {
+            var request = new CreateRunRequest
+            {
                 TransactionCode = "ZFIR034",
                 Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
                 {
@@ -11033,6 +11720,63 @@ Item1=test888
                       !markdown.Contains("失败工厂", StringComparison.OrdinalIgnoreCase) &&
                       !markdown.Contains("SHOULD_NOT_APPEAR", StringComparison.OrdinalIgnoreCase);
             Check("DingTalk inputs for plants", ok, Truncate(markdown.Replace("\n", " | "), 240));
+        }
+
+        {
+            var run = new RunRecordView
+            {
+                RunId = "RUN-SELFTEST-ZFI072N",
+                TransactionCode = "ZFI072N",
+                TransactionName = "维护采购价",
+                Status = "success",
+                RequestJson = "{\"transactionCode\":\"ZFI072N\",\"params\":{\"plants\":\"1022,1032\",\"plant\":\"1022\",\"year\":\"2026\",\"week\":\"9\",\"period\":\"2026.02.23\",\"weekEnd\":\"2026.03.01\",\"businessAreas\":\"2900\",\"token\":\"SHOULD_NOT_APPEAR\"}}",
+                SapStatusType = "S",
+                SapStatusText = "自动化已跑完",
+                StartedAt = "2026-03-02 10:00:00",
+                FinishedAt = "2026-03-02 10:02:00",
+                DurationMs = 120000
+            };
+            run.BatchItems.Add(new BatchItemStatus { Plant = "1022", BatchIndex = 1, Status = "success" });
+            run.BatchItems.Add(new BatchItemStatus { Plant = "1032", BatchIndex = 2, Status = "success" });
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[ZFI072N] INFO: date input group #1; S_BUDAT=[2026.02.01~2026.02.28]" });
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[ZFI072N] INFO: date input group #2; S_BUDAT=[2026.03.01~2026.03.01]" });
+            string markdown = BuildSapDingTalkMarkdownContent(run, "自动化已跑完");
+            bool ok = markdown.Contains("过账日期", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("第1次：2026.02.01~2026.02.28", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("第2次：2026.03.01~2026.03.01", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("[1022]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("[1032]", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("年度", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("周次", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("业务范围", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("[2900]", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("SHOULD_NOT_APPEAR", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk inputs for ZFI072N BUDAT windows", ok, Truncate(markdown.Replace("\n", " | "), 260));
+        }
+
+        {
+            var run = new RunRecordView
+            {
+                RunId = "RUN-SELFTEST-ZFI080B",
+                TransactionCode = "ZFI080B",
+                TransactionName = "工费率保存",
+                Status = "success",
+                RequestJson = "{\"transactionCode\":\"ZFI080B\",\"params\":{\"plants\":\"1022\",\"plant\":\"1022\",\"period\":\"2026.06.22\",\"weekEnd\":\"2026.06.28\",\"year\":\"2026\",\"week\":\"26\",\"businessAreas\":\"2900\"}}",
+                SapStatusType = "S",
+                SapStatusText = "自动化已跑完",
+                StartedAt = "2026-07-02 10:00:00",
+                FinishedAt = "2026-07-02 10:02:00",
+                DurationMs = 120000
+            };
+            string markdown = BuildSapDingTalkMarkdownContent(run, "自动化已跑完");
+            bool ok = markdown.Contains("过账日期", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("2026.06.22~2026.06.28", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("[1022]", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("年度", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("周次", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("业务范围", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("[2900]", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk inputs for ZFI080B BUDAT range", ok, Truncate(markdown.Replace("\n", " | "), 260));
         }
 
         {
@@ -11480,7 +12224,24 @@ Item1=test888
             }
             else if (TryReadOutputKey(line, "OUTPUT_FILE", out string outputFile))
             {
-                result.Files.Add(BuildRunFile(outputFile));
+                if (!string.IsNullOrWhiteSpace(outputFile))
+                {
+                    var file = BuildRunFile(outputFile);
+                    result.Files.Add(file);
+                    if (file.Size <= 0)
+                    {
+                        result.Status = "failed";
+                        string expanded = Environment.ExpandEnvironmentVariables(outputFile);
+                        string message = File.Exists(expanded)
+                            ? $"OUTPUT_FILE is empty: {outputFile}"
+                            : $"OUTPUT_FILE was reported but does not exist: {outputFile}";
+                        result.Logs.Add(new RunLogLine { Level = "ERROR", Message = message });
+                    }
+                    else
+                    {
+                        ScheduleDelayedExcelWorkbookClose(outputFile, result.Logs);
+                    }
+                }
                 result.Logs.Add(new RunLogLine { Level = "INFO", Message = line });
             }
             else if (TryReadOutputKey(line, "ERROR", out string errorValue))
@@ -11523,6 +12284,116 @@ Item1=test888
             exitCode == 0 ? "transaction script executed" : $"VBS exit code {exitCode}");
 
         return result;
+    }
+
+    static void ScheduleDelayedExcelWorkbookClose(string outputFile, List<RunLogLine> logs)
+    {
+        try
+        {
+            string expanded = Environment.ExpandEnvironmentVariables(outputFile ?? "");
+            if (string.IsNullOrWhiteSpace(expanded) || !File.Exists(expanded))
+                return;
+
+            if (!IsExcelWorkbookPath(expanded))
+                return;
+
+            ScheduleExcelCloseHelper(expanded);
+            logs.Add(new RunLogLine { Level = "INFO", Message = $"scheduled delayed Excel close for output workbook: {Path.GetFileName(expanded)}" });
+        }
+        catch (Exception ex)
+        {
+            logs.Add(new RunLogLine { Level = "WARN", Message = $"failed to schedule delayed Excel close: {ex.Message}" });
+        }
+    }
+
+    static void ScheduleDelayedExcelWorkbookClose(string outputFile, string runId)
+    {
+        try
+        {
+            string expanded = Environment.ExpandEnvironmentVariables(outputFile ?? "");
+            if (string.IsNullOrWhiteSpace(expanded) || !File.Exists(expanded) || !IsExcelWorkbookPath(expanded))
+                return;
+
+            ScheduleExcelCloseHelper(expanded);
+            AppendRunLog(runId, "INFO", $"scheduled safe Excel close for exported workbook: {Path.GetFileName(expanded)}");
+        }
+        catch (Exception ex)
+        {
+            AppendRunLog(runId, "WARN", $"failed to schedule safe Excel close for exported workbook: {ex.Message}");
+        }
+    }
+
+    static bool IsExcelWorkbookPath(string path)
+    {
+        string extension = Path.GetExtension(path ?? "");
+        return extension.Equals(".xlsx", StringComparison.OrdinalIgnoreCase) ||
+            extension.Equals(".xls", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void ScheduleExcelCloseHelper(string fullPath)
+    {
+        string workbookName = Path.GetFileName(fullPath);
+        if (string.IsNullOrWhiteSpace(workbookName))
+            return;
+
+        string helperDir = Path.Combine(LogDirectory, "excel-close");
+        Directory.CreateDirectory(helperDir);
+        string safeName = Regex.Replace(workbookName, @"[^A-Za-z0-9_.-]+", "_");
+        if (safeName.Length > 80)
+            safeName = safeName[^80..];
+        string helperPath = Path.Combine(helperDir, $"close_{DateTime.Now:yyyyMMddHHmmssfff}_{safeName}.vbs");
+        File.WriteAllLines(helperPath, BuildExcelCloseHelperScript(), Encoding.ASCII);
+
+        var psi = new ProcessStartInfo(ResolveCscriptPath())
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        };
+        psi.ArgumentList.Add("//B");
+        psi.ArgumentList.Add("//nologo");
+        psi.ArgumentList.Add(helperPath);
+        psi.ArgumentList.Add(Path.GetFullPath(fullPath));
+
+        Process.Start(psi);
+    }
+
+    static string[] BuildExcelCloseHelperScript()
+    {
+        return new[]
+        {
+            "On Error Resume Next",
+            "target = LCase(Replace(CStr(WScript.Arguments.Item(0)), \"/\", \"\\\"))",
+            "waited = 0",
+            "Do While waited <= 60000",
+            "  Err.Clear",
+            "  Set app = GetObject(, \"Excel.Application\")",
+            "  If Err.Number = 0 And IsObject(app) Then",
+            "    app.DisplayAlerts = False",
+            "    closed = 0",
+            "    For i = app.Workbooks.Count To 1 Step -1",
+            "      Err.Clear",
+            "      Set wb = app.Workbooks.Item(CInt(i))",
+            "      fullName = \"\"",
+            "      If Err.Number = 0 Then fullName = LCase(Replace(CStr(wb.FullName), \"/\", \"\\\"))",
+            "      If Err.Number = 0 And fullName = target Then",
+            "        wb.Close False",
+            "        closed = closed + 1",
+            "      End If",
+            "      Err.Clear",
+            "    Next",
+            "    If closed > 0 Then",
+            "      WScript.Sleep 500",
+            "      If app.Workbooks.Count = 0 Then app.Quit",
+            "      WScript.Quit 0",
+            "    End If",
+            "  End If",
+            "  Err.Clear",
+            "  WScript.Sleep 1000",
+            "  waited = waited + 1000",
+            "Loop",
+            "WScript.Quit 0"
+        };
     }
 
     static RunResultRequest FailedRunResult(string message, DateTime started)
@@ -11672,10 +12543,18 @@ class SapRunParams
     public string CaretPos { get; set; } = "0";
     public string ButtonId { get; set; } = "";
     public string RunId { get; set; } = "";
+    public string ParentRunId { get; set; } = "";
     public int? TimeoutSeconds { get; set; }
 }
 
 record BatchRunPlan(string TCode, string ParamKey, string SingleParamKey, string ListParamKey, string ItemLabel, string[] Items);
+
+record AlvExportTarget(string Directory, string FileName, string FullPath)
+{
+    public static readonly AlvExportTarget Empty = new("", "", "");
+}
+
+record AlvMergeFragment(string Plant, string ChildRunId, string Status, string FileName, string Path, long Size);
 
 record Zfi057WorkflowScope(string BusinessArea, string[] Plants);
 
@@ -11684,6 +12563,8 @@ record Zfi057WorkflowScopeResult(string BusinessArea, string[] Plants, string St
 record Zfi057Step1MaterialFetch(RunResultRequest Result, string[] Materials, Zfi019NlFetchResult FetchResult);
 
 record Zfi057Step2DateWindow(int Index, string KadkyLow, string KadkyHigh, string KadatLow, string KadatHigh);
+
+record BudatDateWindow(int Index, string Low, string High);
 
 record Zfi057Step3ScopeResult(bool Success, string Message, string FirstJobStatus, string FinalJobStatus, bool Repeated);
 

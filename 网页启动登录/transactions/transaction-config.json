@@ -55,13 +55,15 @@
                              "script":  "ZFI072N.vbs",
                              "icon":  "receipt-text",
                              "params":  [
-                                            "year",
-                                            "week",
-                                            "plants"
+                                            "plants",
+                                            "period",
+                                            "weekEnd"
                                         ],
-                             "factoryRule":  "按选中厂区工厂执行",
+                             "factoryRule":  "按选中工厂执行；过账日期按上一完整周推导，跨月时 VBS 连续执行两段过账日期窗口",
                              "defaultPlantGroup":  "PINGHU_ALL",
-                             "automation":  "openOnly"
+                             "automation":  "script",
+                             "timeoutSeconds":  1200,
+                             "retryCount":  2
                          },
                          {
                              "code":  "ZFI057",
@@ -242,13 +244,15 @@
                              "script":  "ZFI080B.vbs",
                              "icon":  "calculator",
                              "params":  [
-                                            "year",
-                                            "week",
-                                            "plants"
+                                            "plants",
+                                            "period",
+                                            "weekEnd"
                                         ],
-                             "factoryRule":  "东台、黄江保存",
+                             "factoryRule":  "按选中工厂和上一完整周过账日期保存",
                              "defaultPlantGroup":  "PINGHU_ALL",
-                             "automation":  "openOnly"
+                             "automation":  "script",
+                             "timeoutSeconds":  1200,
+                             "retryCount":  2
                          },
                          {
                              "code":  "ZFI148",
@@ -257,13 +261,15 @@
                              "script":  "ZFI148.vbs",
                              "icon":  "send",
                              "params":  [
-                                            "year",
-                                            "week",
-                                            "plants"
+                                            "plants",
+                                            "period",
+                                            "weekEnd"
                                         ],
-                             "factoryRule":  "保存后推送",
+                             "factoryRule":  "按选中工厂推送；年度/周次按系统日期上一完整周自动推导",
                              "defaultPlantGroup":  "PINGHU_ALL",
-                             "automation":  "openOnly"
+                             "automation":  "script",
+                             "timeoutSeconds":  1200,
+                             "retryCount":  2
                          }
                      ]
 }

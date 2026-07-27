@@ -8,13 +8,14 @@
 
 On Error Resume Next
 
-Dim tcode, plantsCsv, factoryGroup, unresolvedPlantsToken, unresolvedOkCodeToken
+Dim tcode, plantsCsv, factoryGroup, parentRunId, unresolvedPlantsToken, unresolvedOkCodeToken, unresolvedParentRunIdToken
 Dim targetSystem, targetClient, targetUser, unresolvedSapSystemToken, unresolvedSapClientToken, unresolvedSapUserToken
 Dim targetDate, yearValue, weekValue, pageYear, pageWeek, periodValue, weekEndValue
-Dim plantValue, setOk
+Dim plantValue, setOk, noDataResult, alvExportReady, alvResult, fatalError, fatalExitCode
 Dim SapGuiAuto, application, connection, session, connIndex, sessIndex
 Dim retries, maxRetries, sleepMs, statusType, statusText, operationError
-Dim longRunTimeoutMs, saveTimeoutMs, saveButtonTimeoutMs, sapCloseOk
+Dim longRunTimeoutMs, saveTimeoutMs, saveButtonTimeoutMs, exportTimeoutMs, sapCloseOk, shouldCloseSapAtEnd
+Dim alvExportDir, alvExportFilename, alvOutputFile, unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
 
 tcode = "{OK_CODE}"
 targetSystem = "{SAP_SYSTEM}"
@@ -22,37 +23,85 @@ targetClient = "{SAP_CLIENT}"
 targetUser = "{SAP_USER}"
 plantsCsv = "{PLANTS}"
 factoryGroup = "{FACTORY_GROUP}"
+parentRunId = "{PARENT_RUN_ID}"
 pageYear = "{YEAR}"
 pageWeek = "{WEEK}"
 periodValue = "{PERIOD}"
 weekEndValue = "{WEEK_END}"
+alvExportDir = "{ALV_EXPORT_DIR}"
+alvExportFilename = "{ALV_EXPORT_FILENAME}"
 maxRetries = 100
 longRunTimeoutMs = 3600000
 If CsvContains(plantsCsv, "9301") Then longRunTimeoutMs = 7200000
 saveTimeoutMs = 600000
 saveButtonTimeoutMs = 120000
+exportTimeoutMs = 180000
+noDataResult = False
+alvExportReady = False
+fatalError = False
+fatalExitCode = 0
 unresolvedPlantsToken = "{" & "PLANTS" & "}"
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
+unresolvedParentRunIdToken = "{" & "PARENT_RUN_ID" & "}"
 unresolvedSapSystemToken = "{" & "SAP_SYSTEM" & "}"
 unresolvedSapClientToken = "{" & "SAP_CLIENT" & "}"
 unresolvedSapUserToken = "{" & "SAP_USER" & "}"
+unresolvedAlvExportDirToken = "{" & "ALV_EXPORT_DIR" & "}"
+unresolvedAlvExportFilenameToken = "{" & "ALV_EXPORT_FILENAME" & "}"
 
 If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFI072A"
+If Trim(CStr(parentRunId)) = unresolvedParentRunIdToken Then parentRunId = ""
 If Trim(CStr(targetSystem)) = unresolvedSapSystemToken Then targetSystem = ""
 If Trim(CStr(targetClient)) = unresolvedSapClientToken Then targetClient = ""
 If Trim(CStr(targetUser)) = unresolvedSapUserToken Then targetUser = ""
+If Trim(CStr(alvExportDir)) = unresolvedAlvExportDirToken Then alvExportDir = ""
+If Trim(CStr(alvExportFilename)) = unresolvedAlvExportFilenameToken Then alvExportFilename = ""
 If UCase(Trim(CStr(tcode))) <> "ZFI072A" Then
    EmitError "ZFI072A script refuses non-ZFI072A tcode=" & CStr(tcode)
    WScript.Quit 10
 End If
+shouldCloseSapAtEnd = (Trim(CStr(parentRunId)) = "")
 
 Sub EmitError(message)
-   If Trim(CStr(statusType)) = "" Then statusType = "E"
-   If Trim(CStr(statusText)) = "" Then statusText = CStr(message)
+   If Trim(CStr(statusType)) <> "" Or Trim(CStr(statusText)) <> "" Then
+      WScript.Echo "SAP_STATUS_TYPE=" & statusType
+      WScript.Echo "SAP_STATUS_TEXT=" & statusText
+   End If
+   statusType = "E"
+   statusText = CStr(message)
    WScript.Echo "STATUS_TYPE=" & statusType
    WScript.Echo "STATUS_TEXT=" & statusText
    WScript.Echo "ERROR=" & message
    WScript.Echo "ERROR: " & message
+End Sub
+
+Sub HardQuit(exitCode)
+   Err.Clear
+   On Error Resume Next
+   WScript.Quit CInt(exitCode)
+   On Error GoTo 0
+   Err.Raise vbObjectError + 7201, "ZFI072A", "WScript.Quit returned unexpectedly; exitCode=" & CStr(exitCode)
+End Sub
+
+Sub FailAndQuit(message, exitCode)
+   fatalError = True
+   fatalExitCode = CInt(exitCode)
+   alvExportReady = False
+   alvOutputFile = ""
+   EmitError message
+   WScript.Echo "FATAL_EXIT_CODE=" & CStr(fatalExitCode)
+   If shouldCloseSapAtEnd Then
+      Err.Clear
+      sapCloseOk = CloseSapSession()
+   Else
+      WScript.Echo "INFO: defer SAP cleanup to parent after batch completion"
+   End If
+End Sub
+
+Sub StopIfFatal(context)
+   If fatalError Then
+      WScript.Echo "FATAL_ABORT=" & CStr(context)
+   End If
 End Sub
 
 Function DoneStatusText()
@@ -66,9 +115,36 @@ Function BoolText(value)
    End If
 End Function
 
+Function NoDataStatusText()
+   NoDataStatusText = ChrW(&H6CA1) & ChrW(&H6709) & ChrW(&H7B26) & ChrW(&H5408) & ChrW(&H6761) & ChrW(&H4EF6) & ChrW(&H6570) & ChrW(&H636E)
+End Function
+
+Function IsNoDataStatusText(value)
+   Dim text
+   text = LCase(Trim(CStr(value)))
+   IsNoDataStatusText = False
+   If text = "" Then Exit Function
+   If InStr(text, "no data") > 0 Or InStr(text, "no records") > 0 Then
+      IsNoDataStatusText = True
+      Exit Function
+   End If
+   If InStr(text, ChrW(&H6CA1) & ChrW(&H6709)) > 0 And _
+      (InStr(text, ChrW(&H6570) & ChrW(&H636E)) > 0 Or InStr(text, ChrW(&H7B26) & ChrW(&H5408) & ChrW(&H6761) & ChrW(&H4EF6)) > 0) Then
+      IsNoDataStatusText = True
+      Exit Function
+   End If
+   If InStr(text, ChrW(&H65E0) & ChrW(&H6570) & ChrW(&H636E)) > 0 Then
+      IsNoDataStatusText = True
+      Exit Function
+   End If
+End Function
+
 If Trim(CStr(plantsCsv)) = "" Or Trim(CStr(plantsCsv)) = unresolvedPlantsToken Then
    EmitError "ZFI072A requires plants from launcher input/API selection"
    WScript.Quit 5
+End If
+If CsvCount(plantsCsv) > 1 Then
+   FailAndQuit "ZFI072A child script requires one plant per run; launcher must split plants before invoking VBS. plants=" & CStr(plantsCsv), 8
 End If
 
 targetDate = DateAdd("d", -7, Date)
@@ -79,6 +155,7 @@ If pageWeek <> "" Then weekValue = pageWeek
 
 Function ObjectExists(id)
    Dim obj
+   On Error Resume Next
    Err.Clear
    Set obj = session.findById(id)
    ObjectExists = (Err.Number = 0 And IsObject(obj))
@@ -160,6 +237,7 @@ End Function
 
 Function WaitForObject(id, timeoutMs)
    Dim waited, obj
+   On Error Resume Next
    WaitForObject = False
    waited = 0
    Do While waited <= timeoutMs
@@ -178,6 +256,7 @@ End Function
 
 Function PressButtonByCandidates(label, ids)
    Dim id, obj
+   On Error Resume Next
    PressButtonByCandidates = False
    For Each id In ids
       Err.Clear
@@ -198,6 +277,7 @@ End Function
 
 Function WaitForSessionReady(timeoutMs)
    Dim waited, busyNow
+   On Error Resume Next
    WaitForSessionReady = False
    waited = 0
    Do While waited <= timeoutMs
@@ -218,6 +298,7 @@ End Function
 
 Function WaitForAnyObject(label, ids, timeoutMs)
    Dim waited, id, obj
+   On Error Resume Next
    WaitForAnyObject = False
    waited = 0
    Do While waited <= timeoutMs
@@ -239,21 +320,23 @@ End Function
 
 Function ObjectIsEnabled(id)
    Dim obj, enabledValue
+   On Error Resume Next
    ObjectIsEnabled = False
    Err.Clear
    Set obj = session.findById(CStr(id))
    If Err.Number = 0 And IsObject(obj) Then
-      enabledValue = True
       Err.Clear
       enabledValue = obj.Enabled
-      If Err.Number <> 0 Then enabledValue = True
-      ObjectIsEnabled = CBool(enabledValue)
+      If Err.Number = 0 Then
+         ObjectIsEnabled = CBool(enabledValue)
+      End If
    End If
    Err.Clear
 End Function
 
 Function WaitForAnyEnabledObject(label, ids, timeoutMs)
    Dim waited, id
+   On Error Resume Next
    WaitForAnyEnabledObject = False
    waited = 0
    Do While waited <= timeoutMs
@@ -269,19 +352,54 @@ Function WaitForAnyEnabledObject(label, ids, timeoutMs)
    Loop
 End Function
 
+Function IsAlvOutputReady()
+   Dim programName, screenNumber
+   On Error Resume Next
+   IsAlvOutputReady = False
+   If Not IsObject(session) Then Exit Function
+   programName = UCase(Trim(CStr(SafeSessionValue(session, "Program"))))
+   screenNumber = Trim(CStr(SafeSessionValue(session, "ScreenNumber")))
+   If programName = "SAPLSLVC_FULLSCREEN" And (screenNumber = "500" Or screenNumber = "0500") Then
+      IsAlvOutputReady = True
+      Exit Function
+   End If
+   If ObjectExists("wnd[0]/tbar[1]/btn[43]") Then
+      IsAlvOutputReady = True
+      Exit Function
+   End If
+End Function
+
 Function WaitForPostExecuteReady(timeoutMs)
    Dim waited, readyLogged
+   On Error Resume Next
    WaitForPostExecuteReady = False
    waited = 0
    readyLogged = False
    WScript.Echo "INFO: wait for SAP execute processing, timeoutMs=" & CStr(timeoutMs)
    Do While waited <= timeoutMs
+      If IsAlvOutputReady() Then
+         WScript.Echo "INFO: SAP execute processing finished, ALV output screen/button detected before session ready check"
+         WaitForPostExecuteReady = True
+         Err.Clear
+         EchoSessionContext "ALV_READY_CONTEXT"
+         Err.Clear
+         Exit Function
+      End If
       If WaitForSessionReady(1000) Then
          Err.Clear
          statusType = session.findById("wnd[0]/sbar").MessageType
          statusText = session.findById("wnd[0]/sbar").Text
          If Err.Number = 0 Then
             If statusText <> "" Then WScript.Echo "INFO: post execute status type=" & statusType & ", text=" & statusText
+            If IsNoDataStatusText(statusText) Then
+               noDataResult = True
+               statusType = "W"
+               statusText = NoDataStatusText()
+               WScript.Echo "WARN: SAP ALV has no data; skip save/export for this plant"
+               WaitForPostExecuteReady = True
+               Err.Clear
+               Exit Function
+            End If
             If statusType = "E" Or statusType = "A" Then
                EmitError "SAP execute rejected - " & statusText
                Err.Clear
@@ -299,8 +417,21 @@ Function WaitForPostExecuteReady(timeoutMs)
             WaitForPostExecuteReady = True
             Exit Function
          End If
+          If ObjectIsEnabled("wnd[0]/tbar[1]/btn[43]") Then
+             WScript.Echo "INFO: SAP execute processing finished, ALV export button is enabled"
+             WaitForPostExecuteReady = True
+             Exit Function
+          End If
+         If IsAlvOutputReady() Then
+            WScript.Echo "INFO: SAP execute processing finished, ALV output screen/button detected"
+            WaitForPostExecuteReady = True
+            Err.Clear
+            EchoSessionContext "ALV_READY_CONTEXT"
+            Err.Clear
+            Exit Function
+         End If
          If Not readyLogged Then
-            WScript.Echo "INFO: SAP session ready after execute, waiting for save action availability"
+            WScript.Echo "INFO: SAP session ready after execute, waiting for save/export action availability"
             readyLogged = True
          End If
       End If
@@ -311,6 +442,7 @@ Function WaitForPostExecuteReady(timeoutMs)
          EchoSessionContext "WAIT_CONTEXT"
       End If
    Loop
+   EchoSessionContext "ERROR_CONTEXT"
    EmitError "SAP execute did not finish before timeoutMs=" & CStr(timeoutMs)
 End Function
 
@@ -326,6 +458,7 @@ End Function
 
 Function WaitForSaveComplete(timeoutMs)
    Dim waited
+   On Error Resume Next
    WaitForSaveComplete = False
    waited = 0
    WScript.Echo "INFO: wait for SAP save processing, timeoutMs=" & CStr(timeoutMs)
@@ -355,6 +488,338 @@ Function WaitForSaveComplete(timeoutMs)
       End If
    Loop
    EmitError "SAP save did not finish before timeoutMs=" & CStr(timeoutMs)
+End Function
+
+Function CombinePath(folderPath, fileName)
+   If Right(CStr(folderPath), 1) = "\" Then
+      CombinePath = CStr(folderPath) & CStr(fileName)
+   Else
+      CombinePath = CStr(folderPath) & "\" & CStr(fileName)
+   End If
+End Function
+
+Function EnsureFolderExists(folderPath)
+   Dim fso, parentPath
+   On Error Resume Next
+   EnsureFolderExists = False
+   If Trim(CStr(folderPath)) = "" Then Exit Function
+   Err.Clear
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If Err.Number <> 0 Then
+      EmitError "create FileSystemObject failed - " & Err.Description
+      Err.Clear
+      Exit Function
+   End If
+   If fso.FolderExists(folderPath) Then
+      EnsureFolderExists = True
+      Exit Function
+   End If
+   parentPath = fso.GetParentFolderName(folderPath)
+   If parentPath <> "" And Not fso.FolderExists(parentPath) Then
+      If Not EnsureFolderExists(parentPath) Then Exit Function
+   End If
+   Err.Clear
+   fso.CreateFolder folderPath
+   If Err.Number <> 0 Then
+      EmitError "create export folder failed: " & folderPath & " - " & Err.Description
+      Err.Clear
+      Exit Function
+   End If
+   EnsureFolderExists = fso.FolderExists(folderPath)
+   Err.Clear
+End Function
+
+Function DeleteFileIfExists(filePath)
+   Dim fso
+   On Error Resume Next
+   DeleteFileIfExists = False
+   Err.Clear
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If Err.Number <> 0 Then
+      EmitError "create FileSystemObject failed before ALV export cleanup - " & Err.Description
+      Err.Clear
+      Exit Function
+   End If
+   If fso.FileExists(filePath) Then
+      Err.Clear
+      fso.DeleteFile filePath, True
+      If Err.Number <> 0 Then
+         EmitError "delete existing ALV export file failed: " & filePath & " - " & Err.Description
+         Err.Clear
+         Exit Function
+      End If
+      WScript.Echo "INFO: deleted existing ALV export file before export"
+   End If
+   DeleteFileIfExists = True
+   Err.Clear
+End Function
+
+Function FileExistsAndNotEmpty(filePath)
+   Dim fso
+   On Error Resume Next
+   FileExistsAndNotEmpty = False
+   If Trim(CStr(filePath)) = "" Then Exit Function
+   Err.Clear
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If Err.Number = 0 And fso.FileExists(filePath) Then
+      FileExistsAndNotEmpty = (CLng(fso.GetFile(filePath).Size) > 0)
+   End If
+   Err.Clear
+End Function
+
+Function WaitForFileReady(filePath, timeoutMs)
+   Dim fso, waited, size1, size2
+   On Error Resume Next
+   WaitForFileReady = False
+   waited = 0
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   Do While waited <= timeoutMs
+      Err.Clear
+      If fso.FileExists(filePath) Then
+         size1 = fso.GetFile(filePath).Size
+         WScript.Sleep 500
+         size2 = fso.GetFile(filePath).Size
+         If Err.Number = 0 And CLng(size2) > 0 And CLng(size1) = CLng(size2) Then
+            WaitForFileReady = True
+            Err.Clear
+            Exit Function
+         End If
+      End If
+      Err.Clear
+      WScript.Sleep 500
+      waited = waited + 1000
+   Loop
+End Function
+
+Sub CloseExportedExcelWorkbook(filePath)
+   Dim excelApp, wb, i, targetPath, workbookPath, targetName, closedCount, fso, waited
+   On Error Resume Next
+   closedCount = 0
+   If Trim(CStr(filePath)) = "" Then Exit Sub
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   targetPath = LCase(Replace(CStr(filePath), "/", "\"))
+   targetName = LCase(fso.GetFileName(CStr(filePath)))
+   waited = 0
+   Do While waited <= 10000 And closedCount = 0
+      Err.Clear
+      Set excelApp = GetObject(, "Excel.Application")
+      If Err.Number = 0 And IsObject(excelApp) Then
+         excelApp.DisplayAlerts = False
+         For i = excelApp.Workbooks.Count To 1 Step -1
+            Err.Clear
+            Set wb = excelApp.Workbooks.Item(CInt(i))
+            If Err.Number = 0 And IsObject(wb) Then
+               workbookPath = LCase(Replace(CStr(wb.FullName), "/", "\"))
+               If workbookPath = targetPath Then
+                  Err.Clear
+                  wb.Close False
+                  If Err.Number = 0 Then
+                     closedCount = closedCount + 1
+                     WScript.Echo "INFO: closed exported Excel workbook=" & CStr(filePath)
+                  Else
+                     WScript.Echo "WARN: failed to close exported Excel workbook - " & Err.Description
+                  End If
+               End If
+            End If
+            Err.Clear
+         Next
+      End If
+      If closedCount = 0 Then
+         WScript.Sleep 500
+         waited = waited + 500
+      End If
+   Loop
+   If closedCount > 0 Then
+      WScript.Sleep 1000
+      Err.Clear
+      If excelApp.Workbooks.Count = 0 Then
+         excelApp.Quit
+         WScript.Echo "INFO: quit Excel after exported workbook close"
+      End If
+   Else
+      ScheduleExcelCloseHelper filePath
+      WScript.Echo "INFO: exported Excel workbook not visible yet; scheduled delayed close for " & targetName
+   End If
+   Err.Clear
+End Sub
+
+Sub ScheduleExcelCloseHelper(targetPath)
+   Dim fso, sh, helperDir, helperPath, ts, commandLine, targetName
+   On Error Resume Next
+   If Trim(CStr(targetPath)) = "" Then Exit Sub
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   Set sh = CreateObject("WScript.Shell")
+   targetName = fso.GetFileName(CStr(targetPath))
+   helperDir = fso.BuildPath(fso.GetParentFolderName(CStr(targetPath)), "_excel_close")
+   If Not fso.FolderExists(helperDir) Then fso.CreateFolder helperDir
+   helperPath = fso.BuildPath(helperDir, "sap_rpa_close_excel_" & Replace(Replace(CStr(targetName), ".", "_"), "-", "_") & ".vbs")
+   Set ts = fso.CreateTextFile(helperPath, True, False)
+   If Err.Number <> 0 Then
+      WScript.Echo "WARN: failed to create delayed Excel close helper - " & Err.Description
+      Err.Clear
+      Exit Sub
+   End If
+   ts.WriteLine "On Error Resume Next"
+   ts.WriteLine "target = LCase(Replace(CStr(WScript.Arguments.Item(0)), ""/"", ""\""))"
+   ts.WriteLine "waited = 0"
+   ts.WriteLine "Do While waited <= 30000"
+   ts.WriteLine "  Err.Clear"
+   ts.WriteLine "  Set app = GetObject(, ""Excel.Application"")"
+   ts.WriteLine "  If Err.Number = 0 And IsObject(app) Then"
+   ts.WriteLine "    app.DisplayAlerts = False"
+   ts.WriteLine "    closed = 0"
+   ts.WriteLine "    For i = app.Workbooks.Count To 1 Step -1"
+   ts.WriteLine "      Err.Clear"
+   ts.WriteLine "      Set wb = app.Workbooks.Item(CInt(i))"
+   ts.WriteLine "      fullName = """""
+   ts.WriteLine "      If Err.Number = 0 Then fullName = LCase(Replace(CStr(wb.FullName), ""/"", ""\""))"
+   ts.WriteLine "      If Err.Number = 0 And fullName = target Then"
+   ts.WriteLine "        wb.Close False"
+   ts.WriteLine "        closed = closed + 1"
+   ts.WriteLine "      End If"
+   ts.WriteLine "      Err.Clear"
+   ts.WriteLine "    Next"
+   ts.WriteLine "    If closed > 0 Then"
+   ts.WriteLine "      WScript.Sleep 500"
+   ts.WriteLine "      If app.Workbooks.Count = 0 Then app.Quit"
+   ts.WriteLine "      WScript.Quit 0"
+   ts.WriteLine "    End If"
+   ts.WriteLine "  End If"
+   ts.WriteLine "  Err.Clear"
+   ts.WriteLine "  WScript.Sleep 500"
+   ts.WriteLine "  waited = waited + 500"
+   ts.WriteLine "Loop"
+   ts.WriteLine "WScript.Quit 0"
+   ts.Close
+   commandLine = """" & WScript.FullName & """ //B //Nologo """ & helperPath & """ """ & CStr(targetPath) & """"
+   sh.Run commandLine, 0, False
+   If Err.Number <> 0 Then
+      WScript.Echo "WARN: failed to start delayed Excel close helper - " & Err.Description
+      Err.Clear
+   End If
+End Sub
+
+Sub ConfirmExportOverwriteIfPresent()
+   Dim confirmTry, obj
+   On Error Resume Next
+   For confirmTry = 1 To 5
+      WScript.Sleep 300
+      If Not ObjectExists("wnd[1]") Then Exit For
+      Err.Clear
+      Set obj = session.findById("wnd[1]/usr/btnSPOP-OPTION1")
+      If Err.Number = 0 And IsObject(obj) Then
+         obj.press
+         WScript.Echo "INFO: confirmed ALV export overwrite via OPTION1"
+      Else
+         Err.Clear
+         Set obj = session.findById("wnd[1]/tbar[0]/btn[0]")
+         If Err.Number = 0 And IsObject(obj) And Not ObjectExists("wnd[1]/usr/ctxtDY_PATH") Then
+            obj.press
+            WScript.Echo "INFO: confirmed ALV export dialog via toolbar OK"
+         End If
+      End If
+      Err.Clear
+   Next
+End Sub
+
+Function ExportAlvIfConfigured(exportDir, exportFilename, timeoutMs)
+   On Error Resume Next
+   ExportAlvIfConfigured = False
+   alvExportReady = False
+   alvOutputFile = ""
+   exportDir = Trim(CStr(exportDir))
+   exportFilename = Trim(CStr(exportFilename))
+   WScript.Echo "INFO: ALV export target dir=" & exportDir & ", filename=" & exportFilename
+   If exportDir = "" Or exportFilename = "" Then
+      FailAndQuit "ALV export target is empty for ZFI072A", 8
+      Exit Function
+   End If
+
+   If Not EnsureFolderExists(exportDir) Then
+      FailAndQuit "ALV export folder could not be prepared: " & exportDir, 8
+      Exit Function
+   End If
+   WScript.Echo "INFO: ALV export folder ready=" & exportDir
+   alvOutputFile = CombinePath(exportDir, exportFilename)
+   If Not DeleteFileIfExists(alvOutputFile) Then
+      FailAndQuit "ALV export target could not be cleared before export: " & alvOutputFile, 8
+      Exit Function
+   End If
+
+   WScript.Echo "INFO: wait for ALV export button before press"
+   If Not WaitForAnyObject("ALV export button", Array("wnd[0]/tbar[1]/btn[43]"), timeoutMs) Then
+      EchoSessionContext "ERROR_CONTEXT"
+      FailAndQuit "ALV export button not found before timeout", 8
+      Exit Function
+   End If
+
+   Err.Clear
+   session.findById("wnd[0]/tbar[1]/btn[43]").press
+   If Err.Number <> 0 Then
+      operationError = Err.Description
+      Err.Clear
+      FailAndQuit "press ALV export button failed - " & operationError, 8
+      Exit Function
+   End If
+   WScript.Echo "INFO: pressed ALV export button"
+
+   If Not WaitForObject("wnd[1]", 10000) Then
+      EchoSessionContext "ERROR_CONTEXT"
+      FailAndQuit "ALV export dialog did not open", 8
+      Exit Function
+   End If
+
+   If Not ObjectExists("wnd[1]/usr/ctxtDY_PATH") Then
+      Err.Clear
+      session.findById("wnd[1]/tbar[0]/btn[0]").press
+      If Err.Number <> 0 Then
+         operationError = Err.Description
+         Err.Clear
+         FailAndQuit "confirm ALV export format dialog failed - " & operationError, 8
+         Exit Function
+      End If
+      WScript.Echo "INFO: confirmed ALV export format dialog"
+   End If
+
+   If Not WaitForObject("wnd[1]/usr/ctxtDY_PATH", 10000) Then
+      EchoSessionContext "ERROR_CONTEXT"
+      FailAndQuit "ALV export path field did not appear", 8
+      Exit Function
+   End If
+
+   Err.Clear
+   session.findById("wnd[1]/usr/ctxtDY_PATH").Text = exportDir
+   session.findById("wnd[1]/usr/ctxtDY_FILENAME").Text = exportFilename
+   session.findById("wnd[1]/usr/ctxtDY_FILENAME").caretPosition = Len(exportFilename)
+   session.findById("wnd[1]/tbar[0]/btn[0]").press
+   If Err.Number <> 0 Then
+      operationError = Err.Description
+      Err.Clear
+      FailAndQuit "submit ALV export file path failed - " & operationError, 8
+      Exit Function
+   End If
+   WScript.Echo "INFO: submitted ALV export file=" & alvOutputFile
+
+   ConfirmExportOverwriteIfPresent
+   If Not WaitForFileReady(alvOutputFile, timeoutMs) Then
+      Err.Clear
+      statusType = session.findById("wnd[0]/sbar").MessageType
+      statusText = session.findById("wnd[0]/sbar").Text
+      If Err.Number = 0 And IsNoDataStatusText(statusText) Then
+         WScript.Echo "WARN: ALV export produced no file; SAP status indicates no data"
+         Err.Clear
+      Else
+         Err.Clear
+      End If
+      FailAndQuit "ALV export file was not created before timeout: " & alvOutputFile, 8
+      Exit Function
+   End If
+
+   WScript.Echo "INFO: ALV export file ready=" & alvOutputFile
+   WScript.Echo "OUTPUT_FILE=" & alvOutputFile
+   CloseExportedExcelWorkbook alvOutputFile
+   alvExportReady = True
+   ExportAlvIfConfigured = True
 End Function
 
 Function SessionIsUsable(candidate)
@@ -399,6 +864,7 @@ Function SessionIsUsable(candidate)
 End Function
 
 Function SafeSessionValue(candidate, valueName)
+   On Error Resume Next
    SafeSessionValue = ""
    Err.Clear
    Select Case valueName
@@ -421,6 +887,7 @@ End Function
 
 Function SafeObjectText(candidate, id, propertyName)
    Dim obj
+   On Error Resume Next
    SafeObjectText = ""
    Err.Clear
    Set obj = candidate.findById(id)
@@ -437,6 +904,29 @@ Function SafeObjectText(candidate, id, propertyName)
    Err.Clear
 End Function
 
+Function SafeSessionObjectEnabled(id)
+   Dim obj, enabledValue
+   On Error Resume Next
+   SafeSessionObjectEnabled = "missing"
+   If Not IsObject(session) Then Exit Function
+   Err.Clear
+   Set obj = session.findById(CStr(id))
+   If Err.Number <> 0 Or Not IsObject(obj) Then
+      Err.Clear
+      Exit Function
+   End If
+   Err.Clear
+   enabledValue = obj.Enabled
+   If Err.Number <> 0 Then
+      SafeSessionObjectEnabled = "exists"
+   ElseIf CBool(enabledValue) Then
+      SafeSessionObjectEnabled = "enabled"
+   Else
+      SafeSessionObjectEnabled = "disabled"
+   End If
+   Err.Clear
+End Function
+
 Function CandidateHasObject(candidate, id)
    Dim obj
    CandidateHasObject = False
@@ -447,16 +937,21 @@ Function CandidateHasObject(candidate, id)
 End Function
 
 Sub EchoSessionContext(prefix)
+   On Error Resume Next
    If Not IsObject(session) Then
       WScript.Echo prefix & ": no active session object"
       Exit Sub
    End If
-   WScript.Echo prefix & ": transaction=" & SafeSessionValue(session, "Transaction") & _
-      ", title=" & SafeObjectText(session, "wnd[0]", "Text") & _
-      ", statusType=" & SafeObjectText(session, "wnd[0]/sbar", "MessageType") & _
-      ", statusText=" & SafeObjectText(session, "wnd[0]/sbar", "Text") & _
-      ", program=" & SafeSessionValue(session, "Program") & _
-      ", screen=" & SafeSessionValue(session, "ScreenNumber")
+   WScript.Echo prefix & ": begin"
+   WScript.Echo prefix & ": transaction=" & SafeSessionValue(session, "Transaction")
+   WScript.Echo prefix & ": title=" & SafeObjectText(session, "wnd[0]", "Text")
+   WScript.Echo prefix & ": statusType=" & SafeObjectText(session, "wnd[0]/sbar", "MessageType")
+   WScript.Echo prefix & ": statusText=" & SafeObjectText(session, "wnd[0]/sbar", "Text")
+   WScript.Echo prefix & ": program=" & SafeSessionValue(session, "Program")
+   WScript.Echo prefix & ": screen=" & SafeSessionValue(session, "ScreenNumber")
+   WScript.Echo prefix & ": btn43=" & SafeSessionObjectEnabled("wnd[0]/tbar[1]/btn[43]")
+   WScript.Echo prefix & ": btn14=" & SafeSessionObjectEnabled("wnd[0]/tbar[1]/btn[14]")
+   WScript.Echo prefix & ": btn11=" & SafeSessionObjectEnabled("wnd[0]/tbar[1]/btn[11]")
 End Sub
 
 Sub EmitSapGuiDiagnostics(reason)
@@ -612,7 +1107,8 @@ End Sub
 
 Sub QuitWithCleanup(exitCode)
    sapCloseOk = CloseSapSession()
-   WScript.Quit exitCode
+   Err.Clear
+   HardQuit exitCode
 End Sub
 
 Function FillPlantMultipleSelection(value)
@@ -814,6 +1310,7 @@ If Not ObjectExists("wnd[0]/tbar[0]/okcd") Then
 End If
 
 WScript.Echo "INFO: transaction=" & tcode
+WScript.Echo "INFO: ZFI072A script version=20260727-strict-alv-11"
 WScript.Echo "INFO: year=" & yearValue
 WScript.Echo "INFO: week=" & weekValue
 If plantsCsv <> "" Then WScript.Echo "INFO: plants=" & plantsCsv
@@ -875,14 +1372,61 @@ End If
 Err.Clear
 WScript.Echo "INFO: pressed execute, waiting before save"
 
-If Not WaitForPostExecuteReady(longRunTimeoutMs) Then QuitWithCleanup 8
-If Not PressSaveAfterReady(saveButtonTimeoutMs) Then QuitWithCleanup 8
-If Not WaitForSaveComplete(saveTimeoutMs) Then QuitWithCleanup 8
+If Not WaitForPostExecuteReady(longRunTimeoutMs) Then
+   EchoSessionContext "ERROR_CONTEXT"
+   If Not fatalError Then FailAndQuit "SAP execute did not reach save/export ready state", 8
+   WScript.Quit fatalExitCode
+End If
+StopIfFatal "after WaitForPostExecuteReady"
+If fatalError Then WScript.Quit fatalExitCode
+If noDataResult Then
+   WScript.Echo "INFO: skip save/export because SAP returned no ALV data"
+Else
+   WScript.Echo "INFO: start ALV export before SAP save"
+   alvResult = ExportAlvIfConfigured(alvExportDir, alvExportFilename, exportTimeoutMs)
+   StopIfFatal "after ExportAlvIfConfigured"
+   If fatalError Then WScript.Quit fatalExitCode
+   If Not alvResult Then
+      If Not fatalError Then FailAndQuit "ALV export returned false", 8
+      WScript.Quit fatalExitCode
+   End If
+   If Not alvExportReady Then
+      FailAndQuit "ALV export did not reach ready marker", 8
+      StopIfFatal "after missing ALV ready marker"
+      WScript.Quit fatalExitCode
+   End If
+   WScript.Echo "INFO: ALV export completed; skip SAP save for ZFI072A report output"
+End If
+
+If Not noDataResult Then
+   If Not alvExportReady Then
+      FailAndQuit "ALV export did not reach ready marker before final success", 8
+      StopIfFatal "before final success missing ALV marker"
+      WScript.Quit fatalExitCode
+   End If
+   If Not FileExistsAndNotEmpty(alvOutputFile) Then
+      FailAndQuit "ALV export file is missing or empty before final success: " & alvOutputFile, 8
+      StopIfFatal "before final success missing ALV file"
+      WScript.Quit fatalExitCode
+   End If
+End If
+
+If fatalError Then WScript.Quit fatalExitCode
 
 Err.Clear
 statusType = session.findById("wnd[0]/sbar").MessageType
 statusText = session.findById("wnd[0]/sbar").Text
-If Err.Number = 0 Then
+If noDataResult Then
+   statusType = "W"
+   statusText = NoDataStatusText()
+   WScript.Echo "STATUS_TYPE=" & statusType
+   WScript.Echo "STATUS_TEXT=" & statusText
+ElseIf Err.Number = 0 Then
+   If statusType = "E" Or statusType = "A" Then
+      FailAndQuit "SAP final status error - " & statusText, 8
+      StopIfFatal "after SAP final status error"
+      WScript.Quit fatalExitCode
+   End If
    If Trim(CStr(statusText)) = "" Then
       statusType = "S"
       statusText = DoneStatusText()
@@ -890,17 +1434,21 @@ If Err.Number = 0 Then
    WScript.Echo "STATUS_TYPE=" & statusType
    WScript.Echo "STATUS_TEXT=" & statusText
 Else
-   statusType = "S"
-   statusText = DoneStatusText()
-   WScript.Echo "STATUS_TYPE=" & statusType
-   WScript.Echo "STATUS_TEXT=" & statusText
+   FailAndQuit "SAP final status could not be read after save - " & Err.Description, 8
+   StopIfFatal "after SAP final status read failure"
+   WScript.Quit fatalExitCode
 End If
 Err.Clear
 
-WScript.Echo "OUTPUT_FILE="
-sapCloseOk = CloseSapSession()
-If Not sapCloseOk Then
-   WScript.Echo "WARN: SAP GUI cleanup did not confirm /nex close"
+If fatalError Then WScript.Quit fatalExitCode
+
+If shouldCloseSapAtEnd Then
+   sapCloseOk = CloseSapSession()
+   If Not sapCloseOk Then
+      WScript.Echo "WARN: SAP GUI cleanup did not confirm /nex close"
+   End If
+Else
+   WScript.Echo "INFO: skip /nex inside batch child; parent run will cleanup SAP after all plants"
 End If
 WScript.Echo "INFO: transaction script executed"
 WScript.Quit 0

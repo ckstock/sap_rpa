@@ -395,10 +395,11 @@
       },
       {
         title: "周结完工成本明细表",
-        summary: "ZFI019NL、ZFI019NA",
+        summary: "ZFI019NL、ZFI019NA、ZFI148",
         entries: [
           { code: "ZFI019NL" },
-          { code: "ZFI019NA" }
+          { code: "ZFI019NA" },
+          { code: "ZFI148" }
         ]
       }
     ];
@@ -441,6 +442,8 @@
     function renderTransactionCard(item) {
       const displayCode = item.displayCode || item.code;
       const displayName = item.displayName || item.name || item.code;
+      const saveAction = isSaveActionTransaction(item);
+      const displayNameText = saveAction && !String(displayName).includes("保存") ? `${displayName}（保存）` : displayName;
       const runCode = item.runCode || item.code;
       return `
         <div class="transaction-card">
@@ -449,7 +452,7 @@
             <div class="action-icon">${icon(item.icon || "terminal")}</div>
             <div class="transaction-meta">
               <div class="transaction-code">${esc(displayCode)}</div>
-              <div class="transaction-name">${esc(displayName)}</div>
+              <div class="transaction-name">${renderSaveName(displayNameText)}</div>
               ${item.dashboardNote ? `<div class="transaction-note">${esc(item.dashboardNote)}</div>` : ""}
               <div class="transaction-tags">
                 <span class="tag ${item.automation === "script" ? "ok" : "info"}">${item.automation === "script" ? "脚本" : "打开"}</span>
@@ -459,6 +462,24 @@
           <button class="btn primary small" data-action="go-execute" data-tcode="${esc(runCode)}">${icon("send")}提交</button>
         </div>
       `;
+    }
+
+    function renderSaveName(value) {
+      return esc(value).replaceAll("保存", '<span class="transaction-save-word">保存</span>');
+    }
+
+    function isSaveActionTransaction(item) {
+      const saveActionCodes = new Set(["ZFI072A", "ZFI072N", "ZFI080", "ZFI080B", "ZCO019", "ZCO020", "ZFI019NA", "ZFI019NL", "ZFI019NI", "ZFI148"]);
+      const code = String(item.runCode || item.code || "").trim().toUpperCase();
+      const text = [
+        item.name,
+        item.displayName,
+        item.dashboardNote,
+        item.factoryRule,
+        item.script,
+        item.scriptFile
+      ].filter(Boolean).join(" ");
+      return saveActionCodes.has(code) || /保存|导出|save\/export|save button|export/i.test(text);
     }
 
     function quickAction(code, desc, moduleName, iconName) {
@@ -495,7 +516,7 @@
 
     function renderExecute() {
       syncExecutionDefaults();
-      const executableTCodes = activeTCodes();
+      const executableTCodes = dashboardExecutableTCodes();
       const notifyBlocked = isNotifyUserBlocked();
       return `
         <section class="grid cols-2">
@@ -605,6 +626,23 @@
 
     function activeTCodes() {
       return tCodes.filter(t => t.enabled !== false);
+    }
+
+    function dashboardExecutableTCodes() {
+      const activeByCode = new Map(activeTCodes().map(item => [String(item.code || "").toUpperCase(), item]));
+      const seen = new Set();
+      const result = [];
+      dashboardWorkflowGroups.forEach(group => {
+        group.entries.forEach(entry => {
+          const key = String(entry.runCode || entry.code || "").toUpperCase();
+          const item = activeByCode.get(key);
+          const code = String(item?.code || "").toUpperCase();
+          if (!item || seen.has(code)) return;
+          seen.add(code);
+          result.push(item);
+        });
+      });
+      return result;
     }
 
     function getFactoryGroup(id) {
@@ -718,9 +756,9 @@
     }
 
     function syncExecutionDefaults(forcePlants = false) {
-      const active = activeTCodes();
+      const active = dashboardExecutableTCodes();
       if (!active.some(t => t.code === state.form.tCode)) {
-        state.form.tCode = active[0]?.code || tCodes[0]?.code || "";
+        state.form.tCode = active[0]?.code || "";
       }
       const t = getTCode(state.form.tCode);
       if (forcePlants && t?.defaultPlantGroup) {
@@ -1210,9 +1248,9 @@
         `;
       }
       if (state.modal === "schedule") {
-        const executableTCodes = activeTCodes();
+        const executableTCodes = dashboardExecutableTCodes();
         if (!executableTCodes.some(t => t.code === state.scheduleForm.tCode)) {
-          state.scheduleForm.tCode = executableTCodes[0]?.code || tCodes[0]?.code || "";
+          state.scheduleForm.tCode = executableTCodes[0]?.code || "";
         }
         const schedulePlants = normalizeRulePlantList(state.scheduleForm.plants);
         const scheduleRangeKind = getRuleRangeKind(getTCode(state.scheduleForm.tCode));
