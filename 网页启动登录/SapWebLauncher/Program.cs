@@ -5320,6 +5320,7 @@ WHERE run_id=$parentRunId
         {
             DeleteFileWithRetry(rawPath);
             DeleteEmptyParentDirectoriesUnder(GetAlvBusinessAreaRawRoot(), rawPath);
+            DeleteEmptyDirectoryIfExists(GetAlvBusinessAreaRawRoot());
         }
         catch (Exception ex)
         {
@@ -7348,6 +7349,17 @@ WHERE run_id=$runId;
                 Directory.Delete(normalized);
                 current = Path.GetDirectoryName(normalized);
             }
+        }
+        catch { }
+    }
+
+    static void DeleteEmptyDirectoryIfExists(string directory)
+    {
+        try
+        {
+            string normalized = Path.GetFullPath(directory);
+            if (Directory.Exists(normalized) && !Directory.EnumerateFileSystemEntries(normalized).Any())
+                Directory.Delete(normalized);
         }
         catch { }
     }
@@ -12007,10 +12019,11 @@ WScript.Quit 0
                 bool ok = normalizedFiles.Count == 0 &&
                           !File.Exists(rawPath) &&
                           !Directory.Exists(tempDir) &&
+                          !Directory.Exists(GetAlvBusinessAreaRawRoot()) &&
                           logs.Any(line => line.Level.Equals("WARN", StringComparison.OrdinalIgnoreCase) &&
                                            line.Message.Contains("no data rows", StringComparison.OrdinalIgnoreCase)) &&
                           logs.Any(line => line.Message.Contains("raw output removed", StringComparison.OrdinalIgnoreCase));
-                Check("ALV business-area no-data raw cleanup", ok, $"files={normalizedFiles.Count}, rawExists={File.Exists(rawPath)}, dirExists={Directory.Exists(tempDir)}");
+                Check("ALV business-area no-data raw cleanup", ok, $"files={normalizedFiles.Count}, rawExists={File.Exists(rawPath)}, dirExists={Directory.Exists(tempDir)}, rawRootExists={Directory.Exists(GetAlvBusinessAreaRawRoot())}");
             }
             finally
             {
