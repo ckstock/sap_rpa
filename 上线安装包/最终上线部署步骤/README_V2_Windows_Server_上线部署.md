@@ -19,7 +19,8 @@
 | 运行根目录 | `D:\RPA` | 线上实际运行目录。 |
 | 后端 exe | `D:\RPA\bin\SapWebLauncher.exe` | API 只能以运行目录下的 exe 为准。 |
 | 本机 API | `http://127.0.0.1:8080` | SapWebLauncher 默认只监听本机。 |
-| 对外 URL | `http://10.0.41.158:6174/rpa/` | 给用户访问的链接，网关和防火墙另行确认。 |
+| 正式对外 URL | `https://fi_automation.srv.lstech.com/rpa/` | 给用户访问的正式链接；DNS、443、证书、路径前缀和防火墙必须确认。 |
+| 兼容访问 URL | `http://10.0.41.158:6174/rpa/` | 仅用于内网 HTTP 兼容访问和排障，不是 HTTPS。 |
 | SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` | 在固定 Windows 执行账号下生成。 |
 | 本机真实配置 | `D:\RPA\config.local.json` | 包含钉钉、SAP NCo、ZFI057 memory fetch 等真实配置，只保存在服务器本机，不提交 Git。 |
 | 本机配置模板 | `D:\RPA\config.local.example.json` | 只能作为字段说明。 |
@@ -102,6 +103,8 @@ New-Item -ItemType Directory -Force -Path "D:\RPA\bin","D:\RPA\data","D:\RPA\tra
 Copy-Item "D:\RPA\RpaProject\publish\SapWebLauncher\*" "D:\RPA\bin" -Recurse -Force
 Copy-Item "D:\RPA\RpaProject\index.html" "D:\RPA\index.html" -Force
 Copy-Item "D:\RPA\RpaProject\assets" "D:\RPA\assets" -Recurse -Force
+Copy-Item "D:\RPA\RpaProject\gateway" "D:\RPA\gateway" -Recurse -Force
+Copy-Item "D:\RPA\RpaProject\启动脚本" "D:\RPA\启动脚本" -Recurse -Force
 Copy-Item "D:\RPA\RpaProject\网页启动登录\transactions\*.vbs" "D:\RPA\transactions\" -Force
 Copy-Item "D:\RPA\RpaProject\网页启动登录\transactions\transaction-config.json" "D:\RPA\transactions\" -Force
 Copy-Item "D:\RPA\RpaProject\上线安装包\config.local.example.json" "D:\RPA\config.local.example.json" -Force
@@ -176,6 +179,9 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 ```json
 {
   "multiLogonPolicy": "takeover",
+  "fileStorage": {
+    "alvExportDataDirectory": "D:\\RPA\\临时文件\\文件数据"
+  },
   "dingTalkOpenApi": {
     "baseUrl": "https://你的钉钉OpenAPI网关根地址/",
     "appKey": "你的真实AppKey",
@@ -203,6 +209,8 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
   }
 }
 ```
+
+`fileStorage.alvExportDataDirectory` 是含“保存”事务 ALV Excel 的输出根目录。生产机迁移到网络共享盘或其他数据盘时，只改真实 `D:\RPA\config.local.json` 的这个值，或临时设置环境变量 `SAP_RPA_ALV_EXPORT_DIR`；不要改 VBS 或 C# 代码。改完后只重启本项目 `SapWebLauncher.exe --serve`，再通过 health 的 `alvExportDataRoot` 和一次保存类任务落盘结果确认。
 
 `baseUrl` 只填接口根地址。程序会自动访问：
 
@@ -302,7 +310,7 @@ Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 
 必须继续做真实业务验收：
 
-1. 打开 `http://10.0.41.158:6174/rpa/`。
+1. 打开 `https://fi_automation.srv.lstech.com/rpa/`；兼容排障时再打开 `http://10.0.41.158:6174/rpa/`。
 2. 运行 `D:\RPA\启动脚本\check_sap_rpa_services.cmd`，确认 SAP GUI COM 两个 ProgID 均为 `True`，四个 URL 均为 `200 OK`。脚本对 HTTPS 使用 `curl.exe --ssl-no-revoke`，只跳过内网 CRL/OCSP 吊销查询，不跳过证书链和域名校验。
 3. 单独运行 `--test-zfi019nl-memory --businessArea 2800 --period 2026.04.27 --weekEnd 2026.05.03`，确认 ZFI057 第一步能通过 NCo/MEMORY_EXPORT 拿到 ZFI019NL 物料集合。
 4. 提交一次受控事务码任务。
@@ -311,6 +319,7 @@ Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 7. 已登录 SAP GUI 时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
 8. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
 9. 页面/API 不返回 SAP 密码、钉钉 `appSecret`、token。
+10. 含“保存”的 7 个事务码 `ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL` 跑完后，Excel 必须落在 `fileStorage.alvExportDataDirectory` 配置目录下的 `yyyy_WKnn_工厂` 文件夹；业务范围型导出按 Excel 工厂列拆分，只有表头/无数据时清理 raw 目录且不当技术失败。
 
 ## 10. 常见漏项
 
@@ -320,11 +329,13 @@ Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 4. 后端仍运行旧 exe，或协议入口指向旧的 `%LOCALAPPDATA%\SapRpaLauncher`。
 5. 只有 `config.local.example.json`，没有真实 `config.local.json`。
 6. `baseUrl` 填成 `/token` 或完整发送接口。
-7. 手工 SAP GUI 正常，但脚本组件未注册，程序检测不到 ready session。
-8. 健康检查通过，但真实任务没有写数据库、没有跑 VBS 或没有发钉钉。
-9. 整包拷贝 `D:\RPA` 时把测试机 `config.local.json`、SQLite、证书或 SAP DPAPI 登录配置覆盖到生产机。
-10. 内网服务器访问不到证书吊销服务器时，PowerShell `Invoke-WebRequest` 可能报 TLS 通道错误；验收以 `check_sap_rpa_services.cmd` 的 GET 检查和浏览器证书结果为准。
-11. ZFI057 第一步只看 health，没有单独跑 `--test-zfi019nl-memory` 确认 NCo/MEMORY_EXPORT 能按业务范围和日期拿到物料集合。
+7. 没有在真实 `config.local.json` 设置 `fileStorage.alvExportDataDirectory`，或者改完保存目录后没有重启后端，导致 Excel 仍落到旧目录。
+8. 手工 SAP GUI 正常，但脚本组件未注册，程序检测不到 ready session。
+9. 健康检查通过，但真实任务没有写数据库、没有跑 VBS、没有生成 Excel 或没有发钉钉。
+10. 整包拷贝 `D:\RPA` 时把测试机 `config.local.json`、SQLite、证书或 SAP DPAPI 登录配置覆盖到生产机。
+11. 内网服务器访问不到证书吊销服务器时，PowerShell `Invoke-WebRequest` 可能报 TLS 通道错误；验收以 `check_sap_rpa_services.cmd` 的 GET 检查和浏览器证书结果为准。
+12. ZFI057 第一步只看 health，没有单独跑 `--test-zfi019nl-memory` 确认 NCo/MEMORY_EXPORT 能按业务范围和日期拿到物料集合。
+13. 生成上线包后只看文件存在，没有从最终包/解压目录执行覆盖升级、启动、网页提交、数据库写回和 Excel 落盘验收。
 
 ## 11. 生成上线包
 
@@ -342,3 +353,5 @@ D:\RPA\RpaProject\上线安装包\00_生成上线安装包.cmd
 ```
 
 生成包只包含手工安装文档、必要脚本、发布后的 `SapWebLauncher`、前端资源、VBS 和配置模板；不包含真实 `config.local.json`、SQLite、日志、输出文件或 SAP 登录配置。
+
+交付前必须从最终包或解压目录做一次真实验收：记录包路径、生成时间和 `PACKAGE_VERSION.txt`，按 `D:\RPA` 目标路径执行一次覆盖升级，确认生产专属 `config.local.json`、SQLite、证书、日志和输出未被覆盖；启动后确认 `runtimeRoot=D:\RPA`、正式 HTTPS/兼容 HTTP 入口可用，并从网页提交一次受控任务，验证数据库写回、钉钉日志和含“保存”事务的 Excel 落盘。失败时收集 `D:\RPA\logs` 对应 stderr/log 尾部。

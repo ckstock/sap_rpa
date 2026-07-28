@@ -162,9 +162,16 @@ Copy-Item "D:\RPA\RpaProject\publish\SapWebLauncher\*" "D:\RPA\bin" -Recurse -Fo
 Copy-Item "D:\RPA\RpaProject\index.html" "D:\RPA\index.html" -Force
 Copy-Item "D:\RPA\RpaProject\assets" "D:\RPA\assets" -Recurse -Force
 Copy-Item "D:\RPA\RpaProject\gateway" "D:\RPA\gateway" -Recurse -Force
+Copy-Item "D:\RPA\RpaProject\启动脚本" "D:\RPA\启动脚本" -Recurse -Force
 Copy-Item "D:\RPA\RpaProject\网页启动登录\transactions\*.vbs" "D:\RPA\transactions\" -Force
 Copy-Item "D:\RPA\RpaProject\网页启动登录\transactions\transaction-config.json" "D:\RPA\transactions\" -Force
 Copy-Item "D:\RPA\RpaProject\上线安装包\config.local.example.json" "D:\RPA\config.local.example.json" -Force
+```
+
+首次部署或后端版本包含 SQLite 结构/默认配置变更时，复制文件后先执行迁移。升级已有生产机时不要删除数据库；`--init-db` 会在保留历史数据的前提下补齐表和默认配置：
+
+```powershell
+& "D:\RPA\bin\SapWebLauncher.exe" --init-db
 ```
 
 只重启本项目后端：
@@ -275,3 +282,16 @@ C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 11. SAP GUI 已登录复用时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
 12. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
 13. 含“保存”的 ALV 导出任务完成后，在 `fileStorage.alvExportDataDirectory` 配置目录下按运行当天服务器系统日期和工厂号生成目录，例如 `2026_WK31_6700`，并在该目录中生成工厂级 Excel，例如 `ZFI072N_维护采购价_工厂6700_20260728134553.xlsx`；不配置时默认根目录为 `D:\RPA\临时文件\文件数据`。父 run 不再生成跨工厂合并总 Excel，也不再把 child 输出临时写到 `_parts\<事务码>\<parentRunId>` 后做父级合并；父 run 的 `run_files` 只登记各 child 已落盘的最终工厂文件。ZFI072N、ZCO019 等同一工厂多结果窗口会先登记 `_part1/_part2` 中间文件，后端收尾会在同一工厂目录合并为一个最终工厂 Excel，并删除 `_part*` 文件。业务范围型保存事务验收时必须准备或确认导出 Excel 中存在 `WERKS`/`Plant Code`/`工厂`/`工厂号`/`工厂代码`/`大BU-工厂`/`业务范围-小厂` 等工厂字段，并验证最终按这些列值生成多个 `yyyy_WKnn_工厂` 目录和文件；如果本次业务范围只有表头或没有工厂数据行，应确认 raw 文件、业务范围子目录和空的 `_raw_business_area` 根目录被清理，且任务不因“没数据”失败；如果有业务行但缺工厂列或工厂值为空，应确认任务失败且 raw 文件保留供排查；不能用 `ZTSD001`、本地工厂配置或业务范围入参来替代 Excel 工厂列拆分。SAP 状态栏“已传递 xx 个字节”表示 ALV 前端导出完成，不是失败；程序应在文件落盘并按完整路径关闭对应 Excel 工作簿后才输出 `OUTPUT_FILE`、继续下一个日期段或工厂。后端兜底 helper 写入 `D:\RPA\logs\excel-close`；工厂数据目录只保留业务 Excel。排障时不要再找“合并数据”“合并异常”或父任务总表。
+
+当前前台“保存类 ALV 导出”只承诺 7 个事务码：`ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`。`ZFI148`、`ZFIR034`、`ZFI057`、`ZCO020` 不按普通保存类 ALV Excel 归档；旧 `ZFI019NI` 没有生产 VBS 和工作台入口，不作为上线保存卡片。
+
+## 最终包真实验收
+
+生成或更新上线包后，不要只检查 zip/文件是否存在。提交或发给生产机前，至少从最终交付物路径跑一遍：
+
+1. 从 `D:\RPA\安装包` 或最终解压目录开始检查，不只看 `D:\RPA\RpaProject` 源码。
+2. 记录包路径、生成时间、`PACKAGE_VERSION.txt` 或当前 git commit。
+3. 用真实目标路径 `D:\RPA` 执行一次覆盖升级流程，确认生产专属 `config.local.json`、SQLite、日志、输出和证书目录没有被覆盖。
+4. 启动后确认进程留存、`runtimeRoot=D:\RPA`、四个 URL 检查正常。
+5. 真实提交一次受控事务码，确认数据库有 run/log，含“保存”事务按 `fileStorage.alvExportDataDirectory` 落盘。
+6. 失败时收集 `D:\RPA\logs` 里对应 stderr/log 尾部，不要只记录 health failed。

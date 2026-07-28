@@ -130,7 +130,6 @@
 | `ZPP063X` | `ZPP063X.vbs` | `openOnly` | `year, week, plants` | 本次扫描目录未见对应 VBS | 不作为当前已实现 VBS 自动化 |
 | `ZFI019NC` | `ZFI019NC.vbs` | `openOnly` | `year, week, plants` | 本次扫描目录未见对应 VBS | 不作为当前已实现 VBS 自动化 |
 | `ZFI080` | `ZFI080.vbs` | `script` | `plants` | 存在 | 查 ALV 字段选择和保存结果 |
-| `ZFI019NI` | `ZFI019NI.vbs` | `openOnly` | `year, week, plants, businessAreas` | 本次扫描目录未见对应 VBS | 不作为当前已实现 VBS 自动化 |
 | `ZCO019` | `ZCO019.vbs` | `script` | `plants` | 存在 | 查 `P_RADIO2` 选项和日期 |
 | `ZFI019NA` | `ZFI019NA.vbs` | `script` | `plants` | 存在 | 查工厂与上一完整周日期 |
 | `ZFIR034` | `ZFIR034.vbs` | `script` | `period, weekEnd` | 存在 | 查 `P_WEEK` 与日期范围 |

@@ -160,25 +160,9 @@
                              "timeoutSeconds":  1200,
                              "retryCount":  2
                          },
-                         {
-                             "code":  "ZFI019NI",
-                             "name":  "实际材料结果保存",
-                             "stage":  "核心并行",
-                             "script":  "ZFI019NI.vbs",
-                             "icon":  "save",
-                             "params":  [
-                                            "year",
-                                            "week",
-                                            "plants",
-                                            "businessAreas"
-                                        ],
-                             "factoryRule":  "按选中厂区工厂执行",
-                             "defaultPlantGroup":  "PINGHU_ALL",
-                             "automation":  "openOnly"
-                         },
-                         {
-                             "code":  "ZCO019",
-                             "name":  "标准材料成本",
+                          {
+                              "code":  "ZCO019",
+                              "name":  "标准材料成本",
                              "stage":  "核心并行",
                              "script":  "ZCO019.vbs",
                              "icon":  "tag",

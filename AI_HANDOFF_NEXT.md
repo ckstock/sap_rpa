@@ -1,6 +1,6 @@
 # SAP RPA V2 下一任 AI 交接文档
 
-更新时间：2026-07-08
+更新时间：2026-07-28
 
 ## 当前项目定位
 
@@ -27,12 +27,20 @@
 - 安装包权威清单：`D:\RPA\RpaProject\上线安装包\上线安装文档清单.md`
 - Windows Server 手工部署 runbook：`D:\RPA\RpaProject\上线安装包\最终上线部署步骤\README_V2_Windows_Server_上线部署.md`
 
+## 2026-07-28 上线前最新状态
+
+- 正式用户入口是 `https://fi_automation.srv.lstech.com/rpa/`；`http://10.0.41.158:6174/rpa/` 只保留为 HTTP 兼容排障入口。
+- 含“保存”的 ALV Excel 导出只承诺 7 个事务码：`ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`。`ZFI019NI` 是无生产 VBS 的旧残留，已从默认前端 fallback 和 `transaction-config.json` 移除；后端历史 run 名称解析可以保留，不代表它是生产入口。
+- Excel 输出根目录必须由运行目录真实配置 `D:\RPA\config.local.json` 的 `fileStorage.alvExportDataDirectory` 控制，默认 `D:\RPA\临时文件\文件数据`；临时覆盖可用环境变量 `SAP_RPA_ALV_EXPORT_DIR`。生产机换网络共享盘时只改配置并重启后端，不改 VBS 或 C#。
+- 上线/升级后必须从运行目录验证：publish 输出完整复制到 `D:\RPA\bin`，`assets`、`gateway`、`启动脚本`、`transactions` 同步到 `D:\RPA`，执行 `--init-db` 保留并迁移 SQLite，只重启本项目 `SapWebLauncher.exe --serve`。
+- 生成或交付安装包后，必须从最终包或解压目录跑一次真实路径验收：启动服务、打开正式 HTTPS、提交受控任务、确认 SQLite run/log、钉钉日志和保存类 Excel 落到配置目录。
+
 ## Git 状态
 
 - GitHub 仓库：`https://github.com/ckstock/sap_rpa`
 - 当前分支：`codex/v2-local-api-sqlite`
 - 注意：`D:\RPA` 是当前运行根目录，`D:\RPA\RpaProject` 是 GitHub 源码仓库。`git pull` 后必须 publish/copy 到运行目录才会线上生效。
-- 最近提交点：
+- 历史提交点（不是当前最新提交；以 `git log -1` 和远端分支为准）：
   - `1a4728e fix: enforce token notify account mode`：当前 GitHub 远端 `origin/codex/v2-local-api-sqlite` 已到此提交，包含 `AI_HANDOFF_NEXT.md`、token 通知模式和前端身份入口调整。
   - `3bead51 fix: auto-login external token jumps`：外部门户 token 直跳后自动进入执行页。
   - `cc437a2 feat: prepare server installer for port 8080`：历史提交，曾加入服务器一键安装包和 `SapWebLauncher` 本地 API/SQLite/部署脚本；当前安装包方向已改为手工清单。
