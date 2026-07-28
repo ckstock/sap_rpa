@@ -13,8 +13,9 @@ Dim yearValue, weekValue, periodValue, weekEndValue, dateLowValue, dateHighValue
 Dim businessAreaValue
 Dim SapGuiAuto, application, connection, session
 Dim retries, sleepMs, statusType, statusText
-Dim unresolvedOkCodeToken, unresolvedAreasToken
+Dim unresolvedOkCodeToken, unresolvedAreasToken, unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
 Dim materialCsv, materialCount
+Dim alvExportDir, alvExportFilename, scriptDir, exportTimeoutMs, alvHelperLoaded
 
 tcode = "{OK_CODE}"
 businessAreasCsv = "{BUSINESS_AREAS}"
@@ -23,8 +24,15 @@ yearValue = "{YEAR}"
 weekValue = "{WEEK}"
 periodValue = "{PERIOD}"
 weekEndValue = "{WEEK_END}"
+alvExportDir = "{ALV_EXPORT_DIR}"
+alvExportFilename = "{ALV_EXPORT_FILENAME}"
+scriptDir = "{SCRIPT_DIR}"
+exportTimeoutMs = 180000
+alvHelperLoaded = False
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
 unresolvedAreasToken = "{" & "BUSINESS_AREAS" & "}"
+unresolvedAlvExportDirToken = "{" & "ALV_EXPORT_DIR" & "}"
+unresolvedAlvExportFilenameToken = "{" & "ALV_EXPORT_FILENAME" & "}"
 
 If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFI019NL"
 If UCase(Trim(CStr(tcode))) <> "ZFI019NL" Then Fail "ZFI019NL script refuses tcode=" & CStr(tcode), 10
@@ -33,6 +41,9 @@ If IsPlaceholder(yearValue, "YEAR") Then yearValue = ""
 If IsPlaceholder(weekValue, "WEEK") Then weekValue = ""
 If IsPlaceholder(periodValue, "PERIOD") Then periodValue = ""
 If IsPlaceholder(weekEndValue, "WEEK_END") Then weekEndValue = ""
+If Trim(CStr(alvExportDir)) = unresolvedAlvExportDirToken Then alvExportDir = ""
+If Trim(CStr(alvExportFilename)) = unresolvedAlvExportFilenameToken Then alvExportFilename = ""
+If IsPlaceholder(scriptDir, "SCRIPT_DIR") Then scriptDir = ""
 
 businessAreaValue = FirstCsvValue(businessAreasCsv)
 If businessAreaValue = "" Then Fail "ZFI019NL requires one business area from {BUSINESS_AREAS}", 5
@@ -57,6 +68,46 @@ Function FirstCsvValue(value)
    Next
    FirstCsvValue = ""
 End Function
+
+Function CombinePath(folderPath, fileName)
+   If Right(CStr(folderPath), 1) = "\" Then
+      CombinePath = CStr(folderPath) & CStr(fileName)
+   Else
+      CombinePath = CStr(folderPath) & "\" & CStr(fileName)
+   End If
+End Function
+
+Function LoadAlvExportHelper()
+   Dim fso, helperPath, textFile, helperText
+   On Error Resume Next
+   LoadAlvExportHelper = False
+   If alvHelperLoaded Then
+      LoadAlvExportHelper = True
+      Exit Function
+   End If
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If Trim(CStr(scriptDir)) = "" Then scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+   helperPath = CombinePath(scriptDir, "sap_alv_export_helper.vbs")
+   If Not fso.FileExists(helperPath) Then Fail "ALV export helper not found: " & helperPath, 8
+   Set textFile = fso.OpenTextFile(helperPath, 1, False, -2)
+   If Err.Number <> 0 Then Fail "open ALV export helper failed - " & Err.Description, 8
+   helperText = textFile.ReadAll
+   textFile.Close
+   ExecuteGlobal helperText
+   If Err.Number <> 0 Then Fail "load ALV export helper failed - " & Err.Description, 8
+   alvHelperLoaded = True
+   LoadAlvExportHelper = True
+   Err.Clear
+End Function
+
+Sub ExportAlvBeforeSave(label, suffix)
+   Dim exportFilename
+   If Not LoadAlvExportHelper() Then Fail "ALV export helper could not be loaded", 8
+   exportFilename = alvExportFilename
+   If Trim(CStr(suffix)) <> "" Then exportFilename = AlvBuildExportFilename(alvExportFilename, suffix)
+   If Not AlvExportIfConfigured(session, alvExportDir, exportFilename, exportTimeoutMs) Then Fail "ALV export returned false before " & label, 8
+   WScript.Echo "INFO: ALV export completed before " & label
+End Sub
 
 Function SapDate(value)
    Dim v
@@ -368,6 +419,7 @@ PressExecute
 WaitReady 600000
 EmitMaterialListFromGrid
 SelectAllGrid
+ExportAlvBeforeSave "save result", ""
 PressToolbarButton "wnd[0]/tbar[1]/btn[16]", "save/export result"
 
 CheckSapStatus "finish"

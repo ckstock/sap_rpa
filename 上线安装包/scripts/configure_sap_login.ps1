@@ -144,6 +144,12 @@ $existingSapNco = $null
 if ($runtimeExisting.PSObject.Properties["sapNco"]) {
     $existingSapNco = $runtimeExisting.PSObject.Properties["sapNco"].Value
 }
+$existingFileStorage = $null
+if ($runtimeExisting.PSObject.Properties["fileStorage"]) {
+    $existingFileStorage = $runtimeExisting.PSObject.Properties["fileStorage"].Value
+}
+$defaultAlvExportDataDirectory = Join-Path $runtimeRoot "临时文件\文件数据"
+$alvExportDataDirectory = Read-Optional "ALV/Excel export data directory" (Get-ExistingValue $existingFileStorage "alvExportDataDirectory" $defaultAlvExportDataDirectory)
 $ncoConnectionName = Read-Required "SAP NCo connection name" (Get-ExistingValue $existingSapNco "connectionName" $system)
 $ncoIpAddress = Read-Required "SAP NCo app server / ipAddress" (Get-ExistingValue $existingSapNco "ipAddress" "")
 $ncoSystemNumber = Read-Required "SAP NCo instance number / systemNumber" (Get-ExistingValue $existingSapNco "systemNumber" $sysNr)
@@ -171,6 +177,10 @@ $sapNco = [pscustomobject]@{
     router = $ncoRouter
 }
 Set-JsonProperty $runtimeExisting "sapNco" $sapNco
+if (-not $runtimeExisting.PSObject.Properties["fileStorage"]) {
+    Set-JsonProperty $runtimeExisting "fileStorage" ([pscustomobject]@{})
+}
+Set-JsonProperty $runtimeExisting.fileStorage "alvExportDataDirectory" $alvExportDataDirectory
 if (-not $runtimeExisting.PSObject.Properties["zfi057Workflow"]) {
     Set-JsonProperty $runtimeExisting "zfi057Workflow" ([pscustomobject]@{})
 }
@@ -197,7 +207,10 @@ Write-Host "SAP login config saved:" -ForegroundColor Green
 Write-Host $configFile
 Write-Host "SAP NCo runtime target saved:" -ForegroundColor Green
 Write-Host $runtimeConfigFile
+Write-Host "ALV/Excel export data directory:" -ForegroundColor Green
+Write-Host $alvExportDataDirectory
 Write-Host ""
 Write-Host "Password is protected by Windows DPAPI for the current Windows user. Do not copy config.json to another user or computer." -ForegroundColor Cyan
 Write-Host "NCo uses the same client/user/password/language unless sapNco explicitly overrides them. config.local.json stores server/SID/instance only by default." -ForegroundColor Cyan
+Write-Host "ALV/Excel export path is read when SapWebLauncher starts. Restart the service after changing config.local.json." -ForegroundColor Cyan
 Write-Host "Netlify page will not pass SAP password. SapWebLauncher reads this local config when sap-rpa:// is opened." -ForegroundColor Cyan

@@ -38,7 +38,6 @@ static class Program
     private const string Zfi057TbtcoJobName = "ZFI057";
     private const int Zfi057TbtcoPollTimeoutSeconds = 600;
     private const int Zfi057TbtcoPollIntervalSeconds = 10;
-    private const string AlvMergedFileType = "alv-merged";
     private static readonly string ExeDirectory = AppContext.BaseDirectory;
     private static readonly string LocalConfigDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -129,6 +128,12 @@ static class Program
             return;
         }
 
+        if (args.Length > 0 && args[0].Equals("test", StringComparison.OrdinalIgnoreCase))
+        {
+            Environment.Exit(RunSelfTest());
+            return;
+        }
+
         using var mutex = new Mutex(true, MutexId);
         if (!mutex.WaitOne(TimeSpan.Zero, true))
         {
@@ -152,12 +157,6 @@ static class Program
             return;
         }
 
-        if (raw.Equals("test", StringComparison.OrdinalIgnoreCase))
-        {
-            Environment.Exit(RunSelfTest());
-            return;
-        }
-
         if (raw.Equals("--register", StringComparison.OrdinalIgnoreCase) ||
             raw.Equals("/register", StringComparison.OrdinalIgnoreCase))
         {
@@ -171,7 +170,7 @@ static class Program
         Console.WriteLine($"  启动本机 Bridge API: {Process.GetCurrentProcess().ProcessName}.exe --serve");
         Console.WriteLine($"  诊断 ZFI019NL memory 取数: {Process.GetCurrentProcess().ProcessName}.exe --test-zfi019nl-memory --businessArea 2800 --period 2026.04.27 --weekEnd 2026.05.03");
         Console.WriteLine($"  诊断 ZFI057 业务范围工厂: {Process.GetCurrentProcess().ProcessName}.exe --test-zfi057-get-gs03 --businessArea 2800 --setName Z31");
-        Console.WriteLine($"  或从浏览器跳转 {PrimaryProtocolName}://run?action=run&tcode=ZFI019NL&script=openOnly&plants=1022,1024");
+        Console.WriteLine($"  或从浏览器跳转 {PrimaryProtocolName}://run?action=run&tcode=ZFI019NL&script=ZFI019NL.vbs&businessAreas=2800");
     }
 
     static bool IsSupportedUri(string raw)
@@ -5024,23 +5023,17 @@ WHERE child_run_id=$childRunId;
             if (SupportsAlvExport(parentTransactionCode))
             {
                 CloseExportedExcelWindowsForTransaction(parentTransactionCode, parentRunId);
-                bool requireFragments = parentStatus.Equals("failed", StringComparison.OrdinalIgnoreCase);
-                var mergedAlvFile = BuildMergedBatchAlvWorkbook(parentRunId, latestItems, requireFragments);
-                if (mergedAlvFile != null)
+                parentFiles.AddRange(CollectBatchAlvFiles(parentRunId, latestItems, parentTransactionCode));
+                if (parentFiles.Count > 0)
                 {
-                    parentFiles.Add(mergedAlvFile);
-                    exportMessage = $"\uFF1BALV\u5408\u5E76\u6587\u4EF6\uFF1A{mergedAlvFile.Name}";
-                }
-                else if (requireFragments)
-                {
-                    AppendRunLog(parentRunId, "WARN", "skip ALV merged workbook because no child ALV fragment exists");
+                    exportMessage = $"\uFF1BALV\u6587\u4EF6\uFF1A{parentFiles.Count}\u4E2A";
                 }
             }
         }
         catch (Exception ex)
         {
-            AppendRunLog(parentRunId, "ERROR", $"ALV merged workbook failed: {ex.Message}");
-            exportMessage = $"\uFF1BALV\u5408\u5E76\u5931\u8D25\uFF1A{ex.Message}";
+            AppendRunLog(parentRunId, "ERROR", $"ALV output collection failed: {ex.Message}");
+            exportMessage = $"\uFF1BALV\u6587\u4EF6\u6536\u96C6\u5931\u8D25\uFF1A{ex.Message}";
             if (parentStatus.Equals("success", StringComparison.OrdinalIgnoreCase))
                 parentStatus = "partial_failed";
         }
@@ -5075,6 +5068,235 @@ WHERE run_id=$parentRunId
             UpdateScheduleRunStatusForRun(parentRunId, parentStatus, message);
             NotifyRunEvent(parentRunId, parentStatus.Equals("success", StringComparison.OrdinalIgnoreCase) ? "success" : "failure", message);
         }
+    }
+
+    static List<RunFile> CollectBatchAlvFiles(string parentRunId, List<BatchItemStatus> latestItems, string transactionCode)
+    {
+        var files = new List<RunFile>();
+        var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        bool normalizeDirectPlantOutput = UsesDirectPlantAlvOutput(transactionCode);
+        bool normalizeBusinessAreaOutput = UsesBusinessAreaAlvOutput(transactionCode);
+
+        foreach (var item in latestItems.OrderBy(i => i.BatchIndex))
+        {
+            var childFiles = LoadRunFiles(item.ChildRunId)
+                .Where(file =>
+                {
+                    string expanded = Environment.ExpandEnvironmentVariables(file.Path ?? "");
+                    return !string.IsNullOrWhiteSpace(expanded) &&
+                           File.Exists(expanded) &&
+                           IsExcelWorkbookPath(expanded);
+                })
+                .ToList();
+
+            if (normalizeDirectPlantOutput)
+            {
+                childFiles = NormalizeDirectPlantAlvFiles(
+                    parentRunId,
+                    item.Plant,
+                    item.ChildRunId,
+                    childFiles,
+                    logs: null,
+                    updateStoredRunFiles: true);
+            }
+            else if (normalizeBusinessAreaOutput)
+            {
+                childFiles = NormalizeBusinessAreaAlvFiles(
+                    parentRunId,
+                    item.Plant,
+                    item.ChildRunId,
+                    transactionCode,
+                    childFiles,
+                    logs: null,
+                    updateStoredRunFiles: true);
+            }
+
+            foreach (var file in childFiles)
+            {
+                string expanded = Environment.ExpandEnvironmentVariables(file.Path ?? "");
+                if (string.IsNullOrWhiteSpace(expanded) || !File.Exists(expanded) || !IsExcelWorkbookPath(expanded))
+                    continue;
+
+                if (!seenPaths.Add(Path.GetFullPath(expanded)))
+                    continue;
+
+                files.Add(new RunFile
+                {
+                    Type = FirstNonEmpty(file.Type, "output"),
+                    Name = FirstNonEmpty(file.Name, Path.GetFileName(expanded)),
+                    Path = file.Path ?? expanded,
+                    Size = file.Size > 0 ? file.Size : new FileInfo(expanded).Length,
+                    CreatedAt = file.CreatedAt
+                });
+            }
+        }
+
+        AppendRunLog(parentRunId, "INFO", $"ALV output files collected after plant normalization: {files.Count}");
+        return files;
+    }
+
+    static List<RunFile> NormalizeDirectPlantAlvFiles(
+        string logRunId,
+        string plant,
+        string childRunId,
+        List<RunFile> childFiles,
+        List<RunLogLine>? logs,
+        bool updateStoredRunFiles)
+    {
+        if (childFiles.Count == 0)
+            return childFiles;
+
+        var normalized = new List<RunFile>();
+        bool changed = false;
+        var partGroups = new Dictionary<string, List<RunFile>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var file in childFiles)
+        {
+            string expanded = Environment.ExpandEnvironmentVariables(file.Path ?? "");
+            if (TryGetAlvWindowPartBasePath(expanded, out string basePath))
+            {
+                if (!partGroups.TryGetValue(basePath, out var group))
+                {
+                    group = new List<RunFile>();
+                    partGroups[basePath] = group;
+                }
+
+                group.Add(file);
+                continue;
+            }
+
+            normalized.Add(file);
+        }
+
+        foreach (var group in partGroups.OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            var parts = group.Value
+                .OrderBy(f => ExtractAlvWindowPartNumber(Environment.ExpandEnvironmentVariables(f.Path ?? "")))
+                .ThenBy(f => f.Name, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (parts.Count == 0)
+                continue;
+
+            string finalPath = group.Key;
+            Directory.CreateDirectory(Path.GetDirectoryName(finalPath) ?? AlvExportDataDirectory);
+            if (parts.Count == 1)
+            {
+                string partPath = Environment.ExpandEnvironmentVariables(parts[0].Path ?? "");
+                if (!Path.GetFullPath(partPath).Equals(Path.GetFullPath(finalPath), StringComparison.OrdinalIgnoreCase))
+                {
+                    MoveAlvPartToFinalFile(partPath, finalPath);
+                    AddAlvNormalizationLog(logRunId, logs, "INFO", $"ALV single part normalized: plant={plant}, child={childRunId}, final={finalPath}");
+                    changed = true;
+                }
+            }
+            else
+            {
+                MergeAlvPartFilesToFinalWorkbook(finalPath, parts);
+                DeleteAlvPartFiles(parts, finalPath, logRunId, logs);
+                AddAlvNormalizationLog(logRunId, logs, "INFO", $"ALV plant parts merged: plant={plant}, child={childRunId}, parts={parts.Count}, final={finalPath}");
+                changed = true;
+            }
+
+            var finalFile = BuildRunFile(finalPath);
+            finalFile.Type = FirstNonEmpty(parts[0].Type, "output");
+            normalized.Add(finalFile);
+        }
+
+        normalized = normalized
+            .Where(f =>
+            {
+                string expanded = Environment.ExpandEnvironmentVariables(f.Path ?? "");
+                return !string.IsNullOrWhiteSpace(expanded) && File.Exists(expanded) && IsExcelWorkbookPath(expanded);
+            })
+            .GroupBy(f => Path.GetFullPath(Environment.ExpandEnvironmentVariables(f.Path ?? "")), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (changed && updateStoredRunFiles)
+            ReplaceRunFiles(childRunId, normalized);
+
+        return normalized;
+    }
+
+    static List<RunFile> NormalizeBusinessAreaAlvFiles(
+        string logRunId,
+        string businessArea,
+        string childRunId,
+        string transactionCode,
+        List<RunFile> rawFiles,
+        List<RunLogLine>? logs,
+        bool updateStoredRunFiles)
+    {
+        if (rawFiles.Count == 0)
+            return rawFiles;
+
+        var normalized = new List<RunFile>();
+        bool changed = false;
+
+        foreach (var file in rawFiles)
+        {
+            string rawPath = Environment.ExpandEnvironmentVariables(file.Path ?? "");
+            if (string.IsNullOrWhiteSpace(rawPath) || !File.Exists(rawPath) || !IsExcelWorkbookPath(rawPath))
+                continue;
+
+            var splitFiles = SplitAlvWorkbookByFactory(
+                rawPath,
+                transactionCode,
+                businessArea,
+                DateTime.Now,
+                outputRoot: null,
+                logRunId,
+                logs);
+
+            if (splitFiles.Count == 0)
+            {
+                AddAlvNormalizationLog(logRunId, logs, "WARN", $"ALV business-area split produced no factory files; keep raw output: businessArea={businessArea}, child={childRunId}, raw={rawPath}");
+                normalized.Add(file);
+                continue;
+            }
+
+            normalized.AddRange(splitFiles);
+            changed = true;
+            AddAlvNormalizationLog(logRunId, logs, "INFO", $"ALV business-area output split by factory: businessArea={businessArea}, child={childRunId}, factories={splitFiles.Count}, raw={rawPath}");
+
+            try
+            {
+                DeleteFileWithRetry(rawPath);
+                DeleteEmptyParentDirectoriesUnder(GetAlvBusinessAreaRawRoot(), rawPath);
+            }
+            catch (Exception ex)
+            {
+                AddAlvNormalizationLog(logRunId, logs, "WARN", $"ALV business-area raw cleanup failed: {rawPath}; {ex.Message}");
+            }
+        }
+
+        normalized = normalized
+            .Where(f =>
+            {
+                string expanded = Environment.ExpandEnvironmentVariables(f.Path ?? "");
+                return !string.IsNullOrWhiteSpace(expanded) && File.Exists(expanded) && IsExcelWorkbookPath(expanded);
+            })
+            .GroupBy(f => Path.GetFullPath(Environment.ExpandEnvironmentVariables(f.Path ?? "")), StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .OrderBy(f => f.Path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (changed && updateStoredRunFiles)
+            ReplaceRunFiles(childRunId, normalized);
+
+        return normalized;
+    }
+
+    static void AddAlvNormalizationLog(string runId, List<RunLogLine>? logs, string level, string message)
+    {
+        if (logs != null)
+        {
+            logs.Add(new RunLogLine { Level = level, Message = message });
+            return;
+        }
+
+        AppendRunLog(runId, level, message);
     }
 
     static void CloseExportedExcelWindowsForTransaction(string transactionCode, string runId)
@@ -6653,7 +6875,12 @@ WHERE run_id=$runId;
     static bool SupportsAlvExport(string tcode)
     {
         return tcode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) ||
-               tcode.Equals("ZFI072N", StringComparison.OrdinalIgnoreCase);
+               tcode.Equals("ZFI072N", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI080", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI080B", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZCO019", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase);
     }
 
     static AlvExportTarget BuildAlvExportTarget(SapRunParams p, string effectivePlants)
@@ -6663,13 +6890,30 @@ WHERE run_id=$runId;
 
         try
         {
-            string tcodePart = SafeFileNamePart(p.TCode.ToUpperInvariant());
-            string parentPart = SafeFileNamePart(FirstNonEmpty(p.ParentRunId, p.RunId, "single"));
-            string plantPart = SafeFileNamePart(FirstNonEmpty(FirstCsvValue(effectivePlants), p.Plant, "plant"));
-            string runPart = SafeFileNamePart(FirstNonEmpty(p.RunId, Guid.NewGuid().ToString("N")));
-            string directory = GetAlvFragmentDirectory(tcodePart, parentPart);
+            string plantValue = FirstNonEmpty(
+                FirstCsvValue(effectivePlants),
+                p.Plant,
+                FirstCsvValue(p.BusinessAreas),
+                p.BusinessArea,
+                p.FactoryGroup,
+                "scope");
+            string transactionName = ResolveTransactionDisplayName(p.TCode);
+            DateTime archiveDate = DateTime.Now;
+            string directory;
+            string fileName;
+            if (UsesBusinessAreaAlvOutput(p.TCode))
+            {
+                string businessArea = FirstNonEmpty(FirstCsvValue(p.BusinessAreas), p.BusinessArea, plantValue);
+                directory = GetAlvBusinessAreaRawOutputDirectory(archiveDate, businessArea);
+                fileName = BuildAlvBusinessAreaRawFileName(p.TCode, transactionName, businessArea, archiveDate);
+            }
+            else
+            {
+                string plantPart = SafeFileNamePart(plantValue);
+                directory = GetAlvFactoryOutputDirectory(archiveDate, plantPart);
+                fileName = BuildAlvDirectPlantFileName(p.TCode, transactionName, plantValue, archiveDate);
+            }
             Directory.CreateDirectory(directory);
-            string fileName = $"{tcodePart}_{plantPart}_{runPart}.xlsx";
             return new AlvExportTarget(directory, fileName, Path.Combine(directory, fileName));
         }
         catch (Exception ex)
@@ -6679,150 +6923,93 @@ WHERE run_id=$runId;
         }
     }
 
-    static string GetAlvWeekFolderName(DateTime date)
+    static bool UsesDirectPlantAlvOutput(string tcode)
     {
-        int week = ISOWeek.GetWeekOfYear(date);
-        return $"{date.Year.ToString(CultureInfo.InvariantCulture)}_WK{week.ToString("00", CultureInfo.InvariantCulture)}";
+        return tcode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI072N", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI080", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI080B", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZCO019", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase);
     }
 
-    static string GetAlvMergedOutputDirectory(DateTime date)
+    static bool UsesBusinessAreaAlvOutput(string tcode)
     {
-        return Path.Combine(AlvExportDataDirectory, GetAlvWeekFolderName(date));
+        return tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase);
     }
 
-    static string GetAlvFragmentDirectory(string transactionCode, string parentRunId)
+    static string BuildAlvDirectPlantFileName(string tcode, string transactionName, string plant, DateTime at)
     {
-        string tcodePart = SafeFileNamePart(transactionCode.ToUpperInvariant());
-        string parentPart = SafeFileNamePart(parentRunId);
-        return Path.Combine(AlvExportDataDirectory, "_parts", tcodePart, parentPart);
-    }
-
-    static bool IsPathUnderDirectory(string rootDirectory, string candidatePath)
-    {
-        string root = Path.GetFullPath(rootDirectory)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        string candidate = Path.GetFullPath(candidatePath)
-            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
-        return candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase);
-    }
-
-    static void CleanupAlvFragmentDirectory(string parentRunId, string transactionCode)
-    {
-        if (string.IsNullOrWhiteSpace(parentRunId) || string.IsNullOrWhiteSpace(transactionCode))
-            return;
-
-        string partsRoot = Path.Combine(AlvExportDataDirectory, "_parts");
-        string fragmentDirectory = GetAlvFragmentDirectory(transactionCode, parentRunId);
-        string? transactionDirectory = Path.GetDirectoryName(fragmentDirectory);
-        try
-        {
-            if (!Directory.Exists(fragmentDirectory))
-                return;
-
-            if (!IsPathUnderDirectory(partsRoot, fragmentDirectory))
-            {
-                Log($"skip ALV fragment cleanup outside parts root: {fragmentDirectory}");
-                AppendRunLog(parentRunId, "WARN", $"skip ALV fragment cleanup outside parts root: {fragmentDirectory}");
-                return;
-            }
-
-            Directory.Delete(fragmentDirectory, recursive: true);
-            AppendRunLog(parentRunId, "INFO", $"ALV fragment directory cleaned: {fragmentDirectory}");
-            TryDeleteEmptyAlvDirectory(transactionDirectory, partsRoot, parentRunId, "transaction parts");
-            TryDeleteEmptyAlvDirectory(partsRoot, partsRoot, parentRunId, "parts root");
-        }
-        catch (Exception ex)
-        {
-            Log($"ALV fragment cleanup failed: runId={parentRunId}, path={fragmentDirectory}, {ex.Message}");
-            AppendRunLog(parentRunId, "WARN", $"ALV fragment cleanup failed: {fragmentDirectory}; {ex.Message}");
-        }
-    }
-
-    static void TryDeleteEmptyAlvDirectory(string? directory, string allowedRoot, string parentRunId, string label)
-    {
-        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
-            return;
-
-        try
-        {
-            if (!IsPathUnderDirectory(allowedRoot, directory))
-            {
-                Log($"skip ALV empty directory cleanup outside parts root: {directory}");
-                AppendRunLog(parentRunId, "WARN", $"skip ALV empty directory cleanup outside parts root: {directory}");
-                return;
-            }
-
-            if (Directory.EnumerateFileSystemEntries(directory).Any())
-                return;
-
-            Directory.Delete(directory, recursive: false);
-            AppendRunLog(parentRunId, "INFO", $"ALV empty {label} directory cleaned: {directory}");
-        }
-        catch (Exception ex)
-        {
-            Log($"ALV empty directory cleanup failed: runId={parentRunId}, path={directory}, {ex.Message}");
-            AppendRunLog(parentRunId, "WARN", $"ALV empty directory cleanup failed: {directory}; {ex.Message}");
-        }
-    }
-
-    static RunFile? BuildMergedBatchAlvWorkbook(string parentRunId, List<BatchItemStatus> latestItems, bool requireFragments = false)
-    {
-        var parent = LoadRun(parentRunId, includeDetails: false);
-        if (parent == null || !SupportsAlvExport(parent.TransactionCode))
-            return null;
-
-        string finalDirectory = GetAlvMergedOutputDirectory(DateTime.Now);
-        Directory.CreateDirectory(finalDirectory);
         string transactionPart = SafeDisplayFileNamePart(string.Join("_",
-            new[] { parent.TransactionCode, parent.TransactionName }.Where(v => !string.IsNullOrWhiteSpace(v))));
-        string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
-        string finalPath = Path.Combine(finalDirectory, $"{transactionPart}_{timestamp}.xlsx");
-
-        var fragments = latestItems
-            .OrderBy(i => i.BatchIndex)
-            .SelectMany(i => LoadRunFiles(i.ChildRunId)
-                .Where(f => File.Exists(Environment.ExpandEnvironmentVariables(f.Path ?? "")))
-                .Select(f => new AlvMergeFragment(
-                    i.Plant,
-                    i.ChildRunId,
-                    i.Status,
-                    f.Name,
-                    Environment.ExpandEnvironmentVariables(f.Path ?? ""),
-                    f.Size)))
-            .ToList();
-
-        if (requireFragments && fragments.Count == 0)
-            return null;
-
-        CreateMergedAlvWorkbook(finalPath, parentRunId, parent.TransactionCode, parent.TransactionName, latestItems, fragments);
-        var file = BuildRunFile(finalPath);
-        file.Type = AlvMergedFileType;
-        AppendRunLog(parentRunId, "INFO", $"ALV merged workbook generated: {finalPath}; fragments={fragments.Count}");
-        CleanupAlvFragmentDirectory(parentRunId, parent.TransactionCode);
-        return file;
+            new[] { (tcode ?? "").Trim().ToUpperInvariant(), transactionName }.Where(v => !string.IsNullOrWhiteSpace(v))));
+        string displayPlant = SafeDisplayFileNamePart(plant);
+        string timestamp = at.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+        return $"{transactionPart}_\u5DE5\u5382{displayPlant}_{timestamp}.xlsx";
     }
 
-    static void CreateMergedAlvWorkbook(
-        string finalPath,
-        string parentRunId,
-        string transactionCode,
-        string transactionName,
-        List<BatchItemStatus> latestItems,
-        List<AlvMergeFragment> fragments)
+    static string BuildAlvBusinessAreaRawFileName(string tcode, string transactionName, string businessArea, DateTime at)
     {
-        using var output = new XLWorkbook();
-        var merged = output.Worksheets.Add("\u5408\u5E76\u6570\u636E");
+        string transactionPart = SafeDisplayFileNamePart(string.Join("_",
+            new[] { (tcode ?? "").Trim().ToUpperInvariant(), transactionName }.Where(v => !string.IsNullOrWhiteSpace(v))));
+        string displayArea = SafeDisplayFileNamePart(businessArea);
+        string timestamp = at.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+        return $"{transactionPart}_\u4E1A\u52A1\u8303\u56F4{displayArea}_{timestamp}.xlsx";
+    }
 
-        int outputRow = 1;
-        bool headerWritten = false;
-        int copiedDataRows = 0;
-        var readErrors = new List<string>();
+    static bool TryGetAlvWindowPartBasePath(string path, out string basePath)
+    {
+        basePath = "";
+        if (string.IsNullOrWhiteSpace(path) || !IsExcelWorkbookPath(path))
+            return false;
 
-        foreach (var fragment in fragments)
+        string directory = Path.GetDirectoryName(path) ?? "";
+        string fileName = Path.GetFileName(path);
+        var match = Regex.Match(fileName, @"^(?<stem>.+)_part(?<index>[1-9][0-9]*)(?<ext>\.xlsx?)$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!match.Success)
+            return false;
+
+        basePath = Path.Combine(directory, match.Groups["stem"].Value + match.Groups["ext"].Value);
+        return true;
+    }
+
+    static int ExtractAlvWindowPartNumber(string path)
+    {
+        string fileName = Path.GetFileName(path ?? "");
+        var match = Regex.Match(fileName, @"_part(?<index>[1-9][0-9]*)\.xlsx?$", RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        return match.Success && int.TryParse(match.Groups["index"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out int index)
+            ? index
+            : int.MaxValue;
+    }
+
+    static void MoveAlvPartToFinalFile(string partPath, string finalPath)
+    {
+        byte[] bytes = ReadAlvFragmentBytesForMerge(partPath);
+        if (File.Exists(finalPath))
+            File.Delete(finalPath);
+        File.WriteAllBytes(finalPath, bytes);
+        DeleteFileWithRetry(partPath);
+    }
+
+    static void MergeAlvPartFilesToFinalWorkbook(string finalPath, List<RunFile> parts)
+    {
+        string tempPath = Path.Combine(
+            Path.GetDirectoryName(finalPath) ?? AlvExportDataDirectory,
+            $"{Path.GetFileNameWithoutExtension(finalPath)}_merge_{Guid.NewGuid():N}{Path.GetExtension(finalPath)}");
+
+        try
         {
-            try
+            using var output = new XLWorkbook();
+            var merged = output.Worksheets.Add("ALV");
+
+            int outputRow = 1;
+            bool headerWritten = false;
+            int copiedRows = 0;
+            int maxColumns = 0;
+
+            foreach (var part in parts)
             {
-                byte[] sourceBytes = ReadAlvFragmentBytesForMerge(fragment.Path);
+                string partPath = Environment.ExpandEnvironmentVariables(part.Path ?? "");
+                byte[] sourceBytes = ReadAlvFragmentBytesForMerge(partPath);
                 using var sourceStream = new MemoryStream(sourceBytes, writable: false);
                 using var source = new XLWorkbook(sourceStream);
                 var sheet = source.Worksheets.FirstOrDefault();
@@ -6835,55 +7022,338 @@ WHERE run_id=$runId;
                     continue;
 
                 int sourceColumnCount = range.ColumnCount();
+                maxColumns = Math.Max(maxColumns, sourceColumnCount);
                 if (!headerWritten)
                 {
-                    for (int col = 1; col <= sourceColumnCount; col++)
-                        merged.Cell(outputRow, col).Value = rows[0].Cell(col).Value;
+                    CopyAlvRowValues(rows[0], merged, outputRow, sourceColumnCount);
                     outputRow++;
                     headerWritten = true;
                 }
 
                 foreach (var row in rows.Skip(1))
                 {
-                    for (int col = 1; col <= sourceColumnCount; col++)
-                        merged.Cell(outputRow, col).Value = row.Cell(col).Value;
+                    CopyAlvRowValues(row, merged, outputRow, sourceColumnCount);
                     outputRow++;
-                    copiedDataRows++;
+                    copiedRows++;
                 }
+            }
+
+            if (!headerWritten)
+                merged.Cell(1, 1).Value = "";
+
+            if (maxColumns > 0)
+                merged.Columns(1, maxColumns).AdjustToContents();
+
+            output.Properties.Title = Path.GetFileNameWithoutExtension(finalPath);
+            output.Properties.Subject = $"SAP RPA ALV plant data; rows={copiedRows}";
+            output.SaveAs(tempPath);
+
+            if (File.Exists(finalPath))
+                File.Delete(finalPath);
+            File.Move(tempPath, finalPath);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(tempPath))
+                    File.Delete(tempPath);
+            }
+            catch { }
+        }
+    }
+
+    static List<RunFile> SplitAlvWorkbookByFactory(
+        string rawPath,
+        string transactionCode,
+        string businessArea,
+        DateTime archiveDate,
+        string? outputRoot,
+        string logRunId,
+        List<RunLogLine>? logs)
+    {
+        var outputFiles = new List<RunFile>();
+        byte[] sourceBytes = ReadAlvFragmentBytesForMerge(rawPath);
+        using var sourceStream = new MemoryStream(sourceBytes, writable: false);
+        using var source = new XLWorkbook(sourceStream);
+        var sheet = source.Worksheets.FirstOrDefault();
+        var range = sheet?.RangeUsed();
+        if (sheet == null || range == null)
+            return outputFiles;
+
+        var rows = range.RowsUsed().ToList();
+        if (rows.Count == 0)
+            return outputFiles;
+
+        int sourceColumnCount = range.ColumnCount();
+        var factoryColumn = FindAlvFactoryColumn(rows, sourceColumnCount);
+        if (factoryColumn.RowIndex < 0 || factoryColumn.ColumnIndex <= 0)
+            throw new InvalidOperationException($"ALV factory column not found in exported workbook: {rawPath}");
+
+        var groupedRows = new Dictionary<string, List<IXLRangeRow>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var row in rows.Skip(factoryColumn.RowIndex + 1))
+        {
+            string factory = NormalizeAlvFactoryValue(row.Cell(factoryColumn.ColumnIndex).GetString());
+            if (string.IsNullOrWhiteSpace(factory))
+                continue;
+
+            if (!groupedRows.TryGetValue(factory, out var list))
+            {
+                list = new List<IXLRangeRow>();
+                groupedRows[factory] = list;
+            }
+
+            list.Add(row);
+        }
+
+        if (groupedRows.Count == 0)
+        {
+            AddAlvNormalizationLog(logRunId, logs, "WARN", $"ALV business-area workbook has no data rows with factory value: businessArea={businessArea}, raw={rawPath}");
+            return outputFiles;
+        }
+
+        string transactionName = ResolveTransactionDisplayName(transactionCode);
+        foreach (var group in groupedRows.OrderBy(g => g.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            string factory = group.Key;
+            string directory = GetAlvFactoryOutputDirectory(archiveDate, factory, outputRoot);
+            Directory.CreateDirectory(directory);
+            string fileName = BuildAlvDirectPlantFileName(transactionCode, transactionName, factory, archiveDate);
+            string finalPath = EnsureUniqueAlvOutputPath(Path.Combine(directory, fileName));
+            string tempPath = Path.Combine(
+                directory,
+                $"{Path.GetFileNameWithoutExtension(finalPath)}_split_{Guid.NewGuid():N}{Path.GetExtension(finalPath)}");
+
+            try
+            {
+                using var output = new XLWorkbook();
+                var target = output.Worksheets.Add("ALV");
+                int outputRow = 1;
+                CopyAlvRowValues(rows[factoryColumn.RowIndex], target, outputRow++, sourceColumnCount);
+                foreach (var sourceRow in group.Value)
+                    CopyAlvRowValues(sourceRow, target, outputRow++, sourceColumnCount);
+
+                target.Columns(1, sourceColumnCount).AdjustToContents();
+                output.Properties.Title = Path.GetFileNameWithoutExtension(finalPath);
+                output.Properties.Subject = $"SAP RPA ALV factory split; businessArea={businessArea}; factory={factory}; rows={group.Value.Count}";
+                output.SaveAs(tempPath);
+
+                if (File.Exists(finalPath))
+                    File.Delete(finalPath);
+                File.Move(tempPath, finalPath);
+                outputFiles.Add(BuildRunFile(finalPath));
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                }
+                catch { }
+            }
+        }
+
+        return outputFiles;
+    }
+
+    static (int RowIndex, int ColumnIndex) FindAlvFactoryColumn(List<IXLRangeRow> rows, int sourceColumnCount)
+    {
+        int rowsToScan = Math.Min(rows.Count, 10);
+        for (int rowIndex = 0; rowIndex < rowsToScan; rowIndex++)
+        {
+            for (int col = 1; col <= sourceColumnCount; col++)
+            {
+                if (IsAlvFactoryHeader(rows[rowIndex].Cell(col).GetString()))
+                    return (rowIndex, col);
+            }
+        }
+
+        return (-1, 0);
+    }
+
+    static bool IsAlvFactoryHeader(string value)
+    {
+        string normalized = Regex.Replace(FirstNonEmpty(value, ""), "[\\s\\u3000:\\uFF1A_\\-]+", "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(normalized))
+            return false;
+
+        return normalized.Equals("WERKS", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("WERK", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("PLANT", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("PLANTCODE", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("PLANTNO", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("PLANTNUMBER", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("FACTORY", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("FACTORYCODE", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("\u5DE5\u5382", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("\u5DE5\u5382\u53F7", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("\u5DE5\u5382\u4EE3\u7801", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("\u5DE5\u5382\u7F16\u7801", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("\u751F\u4EA7\u5DE5\u5382", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static string NormalizeAlvFactoryValue(string value)
+    {
+        string factory = FirstNonEmpty(value, "").Trim();
+        if (decimal.TryParse(factory, NumberStyles.Number, CultureInfo.InvariantCulture, out decimal numeric) &&
+            numeric == Math.Truncate(numeric))
+        {
+            factory = numeric.ToString("0", CultureInfo.InvariantCulture);
+        }
+
+        return Regex.Replace(factory, @"\s+", "");
+    }
+
+    static string EnsureUniqueAlvOutputPath(string path)
+    {
+        if (!File.Exists(path))
+            return path;
+
+        string directory = Path.GetDirectoryName(path) ?? AlvExportDataDirectory;
+        string stem = Path.GetFileNameWithoutExtension(path);
+        string extension = Path.GetExtension(path);
+        for (int index = 2; index < 1000; index++)
+        {
+            string candidate = Path.Combine(directory, $"{stem}_{index}{extension}");
+            if (!File.Exists(candidate))
+                return candidate;
+        }
+
+        return Path.Combine(directory, $"{stem}_{Guid.NewGuid():N}{extension}");
+    }
+
+    static void CopyAlvRowValues(IXLRangeRow sourceRow, IXLWorksheet targetSheet, int targetRow, int columnCount)
+    {
+        for (int col = 1; col <= columnCount; col++)
+            targetSheet.Cell(targetRow, col).Value = sourceRow.Cell(col).Value;
+    }
+
+    static void DeleteAlvPartFiles(List<RunFile> parts, string finalPath, string logRunId, List<RunLogLine>? logs)
+    {
+        string normalizedFinalPath = Path.GetFullPath(finalPath);
+        foreach (var part in parts)
+        {
+            string partPath = Environment.ExpandEnvironmentVariables(part.Path ?? "");
+            if (string.IsNullOrWhiteSpace(partPath) || !File.Exists(partPath))
+                continue;
+
+            if (Path.GetFullPath(partPath).Equals(normalizedFinalPath, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            try
+            {
+                DeleteFileWithRetry(partPath);
             }
             catch (Exception ex)
             {
-                readErrors.Add($"{fragment.FileName}: {ex.Message}");
+                AddAlvNormalizationLog(logRunId, logs, "WARN", $"ALV part cleanup failed: {partPath}; {ex.Message}");
             }
         }
+    }
 
-        if (!headerWritten)
+    static void DeleteFileWithRetry(string path)
+    {
+        Exception? lastException = null;
+        DateTime deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow <= deadline)
         {
-            merged.Cell(1, 1).Value = "\u4EFB\u52A1";
-            merged.Cell(1, 2).Value = "\u8BF4\u660E";
-            merged.Cell(2, 1).Value = parentRunId;
-            merged.Cell(2, 2).Value = "\u65E0\u53EF\u5408\u5E76 ALV \u6570\u636E";
-            outputRow = 3;
-        }
-
-        if (readErrors.Count > 0)
-        {
-            var errors = output.Worksheets.Add("\u5408\u5E76\u5F02\u5E38");
-            errors.Cell(1, 1).Value = "\u6587\u4EF6";
-            errors.Cell(1, 2).Value = "\u9519\u8BEF";
-            for (int i = 0; i < readErrors.Count; i++)
+            try
             {
-                string[] parts = readErrors[i].Split(new[] { ": " }, 2, StringSplitOptions.None);
-                errors.Cell(i + 2, 1).Value = parts.ElementAtOrDefault(0) ?? "";
-                errors.Cell(i + 2, 2).Value = parts.ElementAtOrDefault(1) ?? readErrors[i];
+                if (File.Exists(path))
+                    File.Delete(path);
+                return;
             }
-            errors.Columns().AdjustToContents();
+            catch (IOException ex)
+            {
+                lastException = ex;
+                Thread.Sleep(500);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                lastException = ex;
+                Thread.Sleep(500);
+            }
         }
 
-        merged.Cell(Math.Max(outputRow, 2), 1).Worksheet.Columns().AdjustToContents();
-        output.Properties.Title = $"{transactionCode} {transactionName}".Trim();
-        output.Properties.Subject = $"SAP RPA ALV merged data; parentRunId={parentRunId}; rows={copiedDataRows}";
-        output.SaveAs(finalPath);
+        throw new IOException($"file remained locked before delete: {path}", lastException);
+    }
+
+    static void DeleteEmptyParentDirectoriesUnder(string rootDirectory, string deletedFilePath)
+    {
+        try
+        {
+            string root = Path.GetFullPath(rootDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            string? current = Path.GetDirectoryName(Path.GetFullPath(deletedFilePath));
+            while (!string.IsNullOrWhiteSpace(current))
+            {
+                string normalized = current.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+                if (!normalized.StartsWith(root, StringComparison.OrdinalIgnoreCase) ||
+                    normalized.Equals(root, StringComparison.OrdinalIgnoreCase))
+                {
+                    break;
+                }
+
+                if (Directory.EnumerateFileSystemEntries(normalized).Any())
+                    break;
+
+                Directory.Delete(normalized);
+                current = Path.GetDirectoryName(normalized);
+            }
+        }
+        catch { }
+    }
+
+    static string ResolveTransactionDisplayName(string tcode)
+    {
+        string normalized = (tcode ?? "").Trim().ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(normalized))
+            return "";
+
+        try
+        {
+            InitializeDatabase(seedFromScripts: true);
+            using var connection = OpenDatabaseConnection();
+            using var command = connection.CreateCommand();
+            command.CommandText = "SELECT name FROM transactions WHERE tcode=$tcode LIMIT 1";
+            command.Parameters.AddWithValue("$tcode", normalized);
+            string name = command.ExecuteScalar() as string ?? "";
+            return name.Trim();
+        }
+        catch (Exception ex)
+        {
+            Log($"resolve transaction display name failed: tcode={normalized}, {ex.Message}");
+            return "";
+        }
+    }
+
+    static string GetAlvWeekFolderName(DateTime date)
+    {
+        int week = ISOWeek.GetWeekOfYear(date);
+        return $"{date.Year.ToString(CultureInfo.InvariantCulture)}_WK{week.ToString("00", CultureInfo.InvariantCulture)}";
+    }
+
+    static string GetAlvFactoryOutputDirectory(DateTime date, string plant)
+    {
+        return GetAlvFactoryOutputDirectory(date, plant, outputRoot: null);
+    }
+
+    static string GetAlvFactoryOutputDirectory(DateTime date, string plant, string? outputRoot)
+    {
+        string plantPart = SafeFileNamePart(FirstNonEmpty(plant, "scope"));
+        string root = string.IsNullOrWhiteSpace(outputRoot) ? AlvExportDataDirectory : Path.GetFullPath(outputRoot);
+        return Path.Combine(root, $"{GetAlvWeekFolderName(date)}_{plantPart}");
+    }
+
+    static string GetAlvBusinessAreaRawRoot()
+    {
+        return Path.Combine(AlvExportDataDirectory, "_raw_business_area");
+    }
+
+    static string GetAlvBusinessAreaRawOutputDirectory(DateTime date, string businessArea)
+    {
+        string areaPart = SafeFileNamePart(FirstNonEmpty(businessArea, "scope"));
+        return Path.Combine(GetAlvBusinessAreaRawRoot(), $"{GetAlvWeekFolderName(date)}_{areaPart}");
     }
 
     static byte[] ReadAlvFragmentBytesForMerge(string path)
@@ -6912,58 +7382,6 @@ WHERE run_id=$runId;
         }
 
         throw new IOException($"ALV fragment remained locked before merge: {path}", lastException);
-    }
-
-    static void WriteAlvManifestSheet(
-        IXLWorksheet manifest,
-        string parentRunId,
-        string transactionCode,
-        string transactionName,
-        List<BatchItemStatus> latestItems,
-        List<AlvMergeFragment> fragments)
-    {
-        manifest.Cell(1, 1).Value = "\u7236\u4EFB\u52A1";
-        manifest.Cell(1, 2).Value = parentRunId;
-        manifest.Cell(2, 1).Value = "\u4E8B\u52A1";
-        manifest.Cell(2, 2).Value = $"{transactionCode} {transactionName}".Trim();
-        manifest.Cell(3, 1).Value = "\u751F\u6210\u65F6\u95F4";
-        manifest.Cell(3, 2).Value = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
-
-        int row = 5;
-        manifest.Cell(row, 1).Value = "\u5DE5\u5382";
-        manifest.Cell(row, 2).Value = "\u5B50\u4EFB\u52A1";
-        manifest.Cell(row, 3).Value = "\u72B6\u6001";
-        manifest.Cell(row, 4).Value = "\u5206\u7247\u6587\u4EF6";
-        manifest.Cell(row, 5).Value = "\u5206\u7247\u8DEF\u5F84";
-        manifest.Cell(row, 6).Value = "\u5927\u5C0F";
-
-        var byChild = fragments.GroupBy(f => f.ChildRunId, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(g => g.Key, g => g.ToList(), StringComparer.OrdinalIgnoreCase);
-        foreach (var item in latestItems.OrderBy(i => i.BatchIndex))
-        {
-            if (!byChild.TryGetValue(item.ChildRunId, out var itemFragments) || itemFragments.Count == 0)
-            {
-                row++;
-                manifest.Cell(row, 1).Value = item.Plant;
-                manifest.Cell(row, 2).Value = item.ChildRunId;
-                manifest.Cell(row, 3).Value = item.Status;
-                manifest.Cell(row, 4).Value = "\u672A\u751F\u6210\u5206\u7247";
-                manifest.Cell(row, 5).Value = "";
-                manifest.Cell(row, 6).Value = 0;
-                continue;
-            }
-
-            foreach (var fragment in itemFragments)
-            {
-                row++;
-                manifest.Cell(row, 1).Value = item.Plant;
-                manifest.Cell(row, 2).Value = item.ChildRunId;
-                manifest.Cell(row, 3).Value = item.Status;
-                manifest.Cell(row, 4).Value = fragment.FileName;
-                manifest.Cell(row, 5).Value = fragment.Path;
-                manifest.Cell(row, 6).Value = fragment.Size;
-            }
-        }
     }
 
     static string CsvCell(string value)
@@ -10737,7 +11155,7 @@ WScript.Quit 0
     static RunResultRequest ExecuteViaGuiScripting(SapRunParams p)
     {
         var started = DateTime.UtcNow;
-        string template = ReadTransactionScript(p);
+        string template = ReadTransactionScript(p, out string scriptDirectory);
         string effectivePlants = p.Plants;
         string scriptFixedPlants = ExtractScriptMetadataValue(template, "fixedPlants");
         if (!p.TCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) &&
@@ -10791,7 +11209,8 @@ WScript.Quit 0
             .Replace("{ALV_EXPORT_FILENAME}", VbsEscape(alvExportTarget.FileName))
             .Replace("{ALV_EXPORT_PATH}", VbsEscape(alvExportTarget.FullPath))
             .Replace("{CARET_POS}", string.IsNullOrWhiteSpace(p.CaretPos) ? "0" : p.CaretPos)
-            .Replace("{BUTTON_ID}", VbsEscape(p.ButtonId));
+            .Replace("{BUTTON_ID}", VbsEscape(p.ButtonId))
+            .Replace("{SCRIPT_DIR}", VbsEscape(scriptDirectory));
 
         string tmpFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_{p.TCode}_{Guid.NewGuid():N}.vbs");
         bool keepTempFile = false;
@@ -10906,6 +11325,30 @@ WScript.Quit 0
             }
 
             var parsed = BuildRunResultFromVbs(stdOut, stdErr, proc?.ExitCode ?? 0, started);
+            if (UsesDirectPlantAlvOutput(p.TCode) && parsed.Files.Count > 0)
+            {
+                string plantForLog = FirstNonEmpty(FirstCsvValue(effectivePlants), p.Plant, p.BusinessArea, p.FactoryGroup, "scope");
+                parsed.Files = NormalizeDirectPlantAlvFiles(
+                    p.RunId,
+                    plantForLog,
+                    p.RunId,
+                    parsed.Files,
+                    parsed.Logs,
+                    updateStoredRunFiles: false);
+            }
+            else if (UsesBusinessAreaAlvOutput(p.TCode) && parsed.Files.Count > 0)
+            {
+                string businessAreaForLog = FirstNonEmpty(FirstCsvValue(p.BusinessAreas), p.BusinessArea, p.FactoryGroup, "scope");
+                parsed.Files = NormalizeBusinessAreaAlvFiles(
+                    p.RunId,
+                    businessAreaForLog,
+                    p.RunId,
+                    p.TCode,
+                    parsed.Files,
+                    parsed.Logs,
+                    updateStoredRunFiles: false);
+            }
+
             if (SupportsAlvExport(p.TCode) &&
                 !parsed.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
             {
@@ -11088,10 +11531,17 @@ WScript.Quit 0
 
     static string ReadTransactionScript(SapRunParams p)
     {
+        return ReadTransactionScript(p, out _);
+    }
+
+    static string ReadTransactionScript(SapRunParams p, out string scriptDirectory)
+    {
+        scriptDirectory = "";
         string? externalScript = FindExternalScript(p.Script, p.TCode);
         if (!string.IsNullOrWhiteSpace(externalScript))
         {
             Log($"加载外部事务码脚本: {externalScript}");
+            scriptDirectory = Path.GetDirectoryName(externalScript) ?? "";
             return ReadTextFileWithFallbackEncoding(externalScript);
         }
 
@@ -11292,69 +11742,192 @@ WScript.Quit 0
         }
 
         {
-            string fragment1 = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_1_{Guid.NewGuid():N}.xlsx");
-            string fragment2 = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_2_{Guid.NewGuid():N}.xlsx");
-            string finalPath = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_merged_{Guid.NewGuid():N}.xlsx");
-            string emptyPath = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_empty_{Guid.NewGuid():N}.xlsx");
+            bool weekFolderOk = Regex.IsMatch(GetAlvWeekFolderName(new DateTime(2026, 8, 4)), @"^2026_WK\d{2}$", RegexOptions.CultureInvariant);
+            Check("ALV output week folder name", weekFolderOk, GetAlvWeekFolderName(new DateTime(2026, 8, 4)));
+
+            string factoryDirectory = GetAlvFactoryOutputDirectory(new DateTime(2026, 7, 28), "6700");
+            bool factoryDirectoryOk = Path.GetFileName(factoryDirectory).Equals("2026_WK31_6700", StringComparison.OrdinalIgnoreCase);
+            Check("ALV factory output directory name", factoryDirectoryOk, factoryDirectory);
+
+            string plantFileName = BuildAlvDirectPlantFileName("ZFI072N", "\u7EF4\u62A4\u91C7\u8D2D\u4EF7", "6700", new DateTime(2026, 7, 28, 13, 45, 53));
+            bool plantFileNameOk = plantFileName.Equals("ZFI072N_\u7EF4\u62A4\u91C7\u8D2D\u4EF7_\u5DE5\u53826700_20260728134553.xlsx", StringComparison.Ordinal);
+            Check("ALV direct plant file name", plantFileNameOk, plantFileName);
+
+            bool factoryHeaderAliasesOk =
+                IsAlvFactoryHeader("WERKS") &&
+                IsAlvFactoryHeader("Plant Code") &&
+                IsAlvFactoryHeader("\u5DE5\u5382\u53F7") &&
+                IsAlvFactoryHeader("\u5DE5\u5382\u4EE3\u7801") &&
+                !IsAlvFactoryHeader("\u4E1A\u52A1\u8303\u56F4");
+            Check("ALV factory header aliases", factoryHeaderAliasesOk, "WERKS/Plant Code/factory Chinese headers");
+        }
+
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_parts_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            string finalPath = Path.Combine(tempRoot, "ZFI072N_buy_plant6700_20260728134553.xlsx");
+            string part1 = Path.Combine(tempRoot, "ZFI072N_buy_plant6700_20260728134553_part1.xlsx");
+            string part2 = Path.Combine(tempRoot, "ZFI072N_buy_plant6700_20260728134553_part2.xlsx");
             try
             {
                 using (var wb = new XLWorkbook())
                 {
                     var ws = wb.Worksheets.Add("ALV");
                     ws.Cell(1, 1).Value = "MATNR";
-                    ws.Cell(1, 2).Value = "AMOUNT";
-                    ws.Cell(2, 1).Value = "MAT001";
-                    ws.Cell(2, 2).Value = 10;
-                    wb.SaveAs(fragment1);
+                    ws.Cell(1, 2).Value = "WERKS";
+                    ws.Cell(2, 1).Value = "M1";
+                    ws.Cell(2, 2).Value = "6700";
+                    wb.SaveAs(part1);
                 }
+
                 using (var wb = new XLWorkbook())
                 {
                     var ws = wb.Worksheets.Add("ALV");
                     ws.Cell(1, 1).Value = "MATNR";
-                    ws.Cell(1, 2).Value = "AMOUNT";
-                    ws.Cell(2, 1).Value = "MAT002";
-                    ws.Cell(2, 2).Value = 20;
-                    wb.SaveAs(fragment2);
+                    ws.Cell(1, 2).Value = "WERKS";
+                    ws.Cell(2, 1).Value = "M2";
+                    ws.Cell(2, 2).Value = "6700";
+                    wb.SaveAs(part2);
                 }
 
-                var items = new List<BatchItemStatus>
-                {
-                    new() { Plant = "1011", ChildRunId = "RUN-CHILD-1", Status = "success", BatchIndex = 1 },
-                    new() { Plant = "1022", ChildRunId = "RUN-CHILD-2", Status = "success", BatchIndex = 2 }
-                };
-                var fragments = new List<AlvMergeFragment>
-                {
-                    new("1011", "RUN-CHILD-1", "success", Path.GetFileName(fragment1), fragment1, new FileInfo(fragment1).Length),
-                    new("1022", "RUN-CHILD-2", "success", Path.GetFileName(fragment2), fragment2, new FileInfo(fragment2).Length)
-                };
-                CreateMergedAlvWorkbook(finalPath, "RUN-SELFTEST-ZFI072A-ALV", "ZFI072A", "\u91C7\u8D2D\u4EF7\u6708\u8868", items, fragments);
+                var logs = new List<RunLogLine>();
+                var normalizedFiles = NormalizeDirectPlantAlvFiles(
+                    "RUN-SELFTEST-ALV-PARTS",
+                    "6700",
+                    "RUN-SELFTEST-ALV-PARTS",
+                    new List<RunFile>
+                    {
+                        BuildRunFile(part1),
+                        BuildRunFile(part2)
+                    },
+                    logs,
+                    updateStoredRunFiles: false);
+
+                bool baseDetected = TryGetAlvWindowPartBasePath(part1, out string detectedBase) &&
+                                    detectedBase.Equals(finalPath, StringComparison.OrdinalIgnoreCase) &&
+                                    ExtractAlvWindowPartNumber(part2) == 2;
+
                 using var merged = new XLWorkbook(finalPath);
-                var mergedSheet = merged.Worksheet("\u5408\u5E76\u6570\u636E");
-                bool ok = File.Exists(finalPath) &&
-                          !merged.Worksheets.Any(s => s.Name == "\u5206\u7247\u6E05\u5355") &&
-                          mergedSheet.Cell(1, 1).GetString() == "MATNR" &&
-                          mergedSheet.Cell(1, 2).GetString() == "AMOUNT" &&
-                          mergedSheet.Cell(2, 1).GetString() == "MAT001" &&
-                          mergedSheet.Cell(2, 2).GetDouble() == 10 &&
-                          mergedSheet.Cell(3, 1).GetString() == "MAT002" &&
-                          mergedSheet.Cell(3, 2).GetDouble() == 20;
-                Check("ZFI072A ALV fragment merge workbook", ok, $"final={finalPath}");
-
-                CreateMergedAlvWorkbook(emptyPath, "RUN-SELFTEST-ZFI072A-EMPTY", "ZFI072A", "\u91C7\u8D2D\u4EF7\u6708\u8868", items, new List<AlvMergeFragment>());
-                using var empty = new XLWorkbook(emptyPath);
-                bool emptyOk = File.Exists(emptyPath) &&
-                               empty.Worksheet("\u5408\u5E76\u6570\u636E").Cell(2, 2).GetString().Contains("ALV", StringComparison.OrdinalIgnoreCase);
-                Check("ZFI072A ALV empty merge workbook", emptyOk, $"empty={emptyPath}");
-
-                bool weekFolderOk = Regex.IsMatch(GetAlvWeekFolderName(new DateTime(2026, 8, 4)), @"^2026_WK\d{2}$", RegexOptions.CultureInvariant);
-                Check("ALV merged output week folder name", weekFolderOk, GetAlvWeekFolderName(new DateTime(2026, 8, 4)));
+                var rows = merged.Worksheets.First().RangeUsed()?.RowsUsed().ToList() ?? new List<IXLRangeRow>();
+                bool mergedOk = baseDetected &&
+                                normalizedFiles.Count == 1 &&
+                                normalizedFiles[0].Path.Equals(finalPath, StringComparison.OrdinalIgnoreCase) &&
+                                File.Exists(finalPath) &&
+                                !File.Exists(part1) &&
+                                !File.Exists(part2) &&
+                                rows.Count == 3 &&
+                                rows[0].Cell(1).GetString().Equals("MATNR", StringComparison.OrdinalIgnoreCase) &&
+                                rows[1].Cell(1).GetString().Equals("M1", StringComparison.OrdinalIgnoreCase) &&
+                                rows[2].Cell(1).GetString().Equals("M2", StringComparison.OrdinalIgnoreCase) &&
+                                merged.Worksheets.Count == 1 &&
+                                logs.Any(line => line.Message.Contains("ALV plant parts merged", StringComparison.OrdinalIgnoreCase));
+                Check("ALV plant part merge keeps raw rows", mergedOk, $"rows={rows.Count}, files={normalizedFiles.Count}, file={finalPath}");
             }
             finally
             {
-                foreach (string path in new[] { fragment1, fragment2, finalPath, emptyPath })
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_single_part_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            string finalPath = Path.Combine(tempRoot, "ZFI072N_buy_plant6700_20260728134553.xlsx");
+            string part1 = Path.Combine(tempRoot, "ZFI072N_buy_plant6700_20260728134553_part1.xlsx");
+            try
+            {
+                using (var wb = new XLWorkbook())
                 {
-                    try { if (File.Exists(path)) File.Delete(path); } catch { }
+                    var ws = wb.Worksheets.Add("ALV");
+                    ws.Cell(1, 1).Value = "MATNR";
+                    ws.Cell(2, 1).Value = "M1";
+                    wb.SaveAs(part1);
                 }
+
+                var normalizedFiles = NormalizeDirectPlantAlvFiles(
+                    "RUN-SELFTEST-ALV-SINGLE-PART",
+                    "6700",
+                    "RUN-SELFTEST-ALV-SINGLE-PART",
+                    new List<RunFile> { BuildRunFile(part1) },
+                    new List<RunLogLine>(),
+                    updateStoredRunFiles: false);
+
+                bool singleOk = normalizedFiles.Count == 1 &&
+                                normalizedFiles[0].Path.Equals(finalPath, StringComparison.OrdinalIgnoreCase) &&
+                                File.Exists(finalPath) &&
+                                !File.Exists(part1);
+                Check("ALV single part normalized to final file", singleOk, $"files={normalizedFiles.Count}, final={finalPath}");
+            }
+            finally
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_factory_split_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            string rawPath = Path.Combine(tempRoot, "ZFI019NL_raw.xlsx");
+            try
+            {
+                using (var wb = new XLWorkbook())
+                {
+                    var ws = wb.Worksheets.Add("ALV");
+                    ws.Cell(1, 1).Value = "MATNR";
+                    ws.Cell(1, 2).Value = "WERKS";
+                    ws.Cell(1, 3).Value = "AMOUNT";
+                    ws.Cell(2, 1).Value = "M1";
+                    ws.Cell(2, 2).Value = "6700";
+                    ws.Cell(2, 3).Value = 10;
+                    ws.Cell(3, 1).Value = "M2";
+                    ws.Cell(3, 2).Value = "6800";
+                    ws.Cell(3, 3).Value = 20;
+                    ws.Cell(4, 1).Value = "M3";
+                    ws.Cell(4, 2).Value = "6700";
+                    ws.Cell(4, 3).Value = 30;
+                    wb.SaveAs(rawPath);
+                }
+
+                var logs = new List<RunLogLine>();
+                var splitFiles = SplitAlvWorkbookByFactory(
+                    rawPath,
+                    "ZFI019NL",
+                    "2800",
+                    new DateTime(2026, 7, 28, 13, 45, 53),
+                    tempRoot,
+                    "RUN-SELFTEST-ALV-FACTORY-SPLIT",
+                    logs);
+
+                string? file6700 = splitFiles.FirstOrDefault(f => f.Path.Contains("2026_WK31_6700", StringComparison.OrdinalIgnoreCase))?.Path;
+                string? file6800 = splitFiles.FirstOrDefault(f => f.Path.Contains("2026_WK31_6800", StringComparison.OrdinalIgnoreCase))?.Path;
+                int rows6700 = 0;
+                int rows6800 = 0;
+                int columns6700 = 0;
+                if (!string.IsNullOrWhiteSpace(file6700))
+                {
+                    using var wb6700 = new XLWorkbook(file6700);
+                    var range6700 = wb6700.Worksheets.First().RangeUsed();
+                    rows6700 = range6700?.RowsUsed().Count() ?? 0;
+                    columns6700 = range6700?.ColumnCount() ?? 0;
+                }
+                if (!string.IsNullOrWhiteSpace(file6800))
+                {
+                    using var wb6800 = new XLWorkbook(file6800);
+                    rows6800 = wb6800.Worksheets.First().RangeUsed()?.RowsUsed().Count() ?? 0;
+                }
+
+                bool ok = splitFiles.Count == 2 &&
+                          File.Exists(file6700 ?? "") &&
+                          File.Exists(file6800 ?? "") &&
+                          rows6700 == 3 &&
+                          rows6800 == 2 &&
+                          columns6700 == 3 &&
+                          splitFiles.All(f => Path.GetFileName(f.Path).StartsWith("ZFI019NL_", StringComparison.OrdinalIgnoreCase));
+                Check("ALV business-area workbook split by factory", ok, $"files={splitFiles.Count}, rows6700={rows6700}, rows6800={rows6800}, root={tempRoot}");
+            }
+            finally
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
             }
         }
 
@@ -12473,8 +13046,10 @@ Item1=test888
             if (!IsExcelWorkbookPath(expanded))
                 return;
 
-            ScheduleExcelCloseHelper(expanded);
-            logs.Add(new RunLogLine { Level = "INFO", Message = $"scheduled delayed Excel close for output workbook: {Path.GetFileName(expanded)}" });
+            if (ScheduleExcelCloseHelper(expanded))
+                logs.Add(new RunLogLine { Level = "INFO", Message = $"scheduled delayed Excel close for output workbook: {Path.GetFileName(expanded)}" });
+            else
+                logs.Add(new RunLogLine { Level = "INFO", Message = $"skipped delayed Excel close because no Excel process is open: {Path.GetFileName(expanded)}" });
         }
         catch (Exception ex)
         {
@@ -12490,8 +13065,10 @@ Item1=test888
             if (string.IsNullOrWhiteSpace(expanded) || !File.Exists(expanded) || !IsExcelWorkbookPath(expanded))
                 return;
 
-            ScheduleExcelCloseHelper(expanded);
-            AppendRunLog(runId, "INFO", $"scheduled safe Excel close for exported workbook: {Path.GetFileName(expanded)}");
+            if (ScheduleExcelCloseHelper(expanded))
+                AppendRunLog(runId, "INFO", $"scheduled safe Excel close for exported workbook: {Path.GetFileName(expanded)}");
+            else
+                AppendRunLog(runId, "INFO", $"skipped safe Excel close because no Excel process is open: {Path.GetFileName(expanded)}");
         }
         catch (Exception ex)
         {
@@ -12506,11 +13083,14 @@ Item1=test888
             extension.Equals(".xls", StringComparison.OrdinalIgnoreCase);
     }
 
-    static void ScheduleExcelCloseHelper(string fullPath)
+    static bool ScheduleExcelCloseHelper(string fullPath)
     {
         string workbookName = Path.GetFileName(fullPath);
         if (string.IsNullOrWhiteSpace(workbookName))
-            return;
+            return false;
+
+        if (Process.GetProcessesByName("EXCEL").Length == 0)
+            return false;
 
         string helperDir = Path.Combine(LogDirectory, "excel-close");
         Directory.CreateDirectory(helperDir);
@@ -12532,6 +13112,7 @@ Item1=test888
         psi.ArgumentList.Add(Path.GetFullPath(fullPath));
 
         Process.Start(psi);
+        return true;
     }
 
     static string[] BuildExcelCloseHelperScript()
@@ -12561,6 +13142,7 @@ Item1=test888
             "    If closed > 0 Then",
             "      WScript.Sleep 500",
             "      If app.Workbooks.Count = 0 Then app.Quit",
+            "      CreateObject(\"Scripting.FileSystemObject\").DeleteFile WScript.ScriptFullName, True",
             "      WScript.Quit 0",
             "    End If",
             "  End If",
@@ -12574,6 +13156,7 @@ Item1=test888
             "        If Not IsNull(proc.CommandLine) Then cmd = LCase(Replace(CStr(proc.CommandLine), \"/\", \"\\\"))",
             "        If InStr(cmd, target) > 0 Then",
             "          proc.Terminate()",
+            "          CreateObject(\"Scripting.FileSystemObject\").DeleteFile WScript.ScriptFullName, True",
             "          WScript.Quit 0",
             "        End If",
             "        Err.Clear",
@@ -12584,6 +13167,7 @@ Item1=test888
             "  WScript.Sleep 1000",
             "  waited = waited + 1000",
             "Loop",
+            "CreateObject(\"Scripting.FileSystemObject\").DeleteFile WScript.ScriptFullName, True",
             "WScript.Quit 0"
         };
     }
@@ -12745,8 +13329,6 @@ record AlvExportTarget(string Directory, string FileName, string FullPath)
 {
     public static readonly AlvExportTarget Empty = new("", "", "");
 }
-
-record AlvMergeFragment(string Plant, string ChildRunId, string Status, string FileName, string Path, long Size);
 
 record Zfi057WorkflowScope(string BusinessArea, string[] Plants);
 

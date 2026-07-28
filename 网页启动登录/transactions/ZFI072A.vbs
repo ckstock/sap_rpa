@@ -591,16 +591,63 @@ Function WaitForFileReady(filePath, timeoutMs)
    Loop
 End Function
 
-Sub CloseExportedExcelWorkbook(filePath)
-   Dim excelApp, wb, i, targetPath, workbookPath, targetName, closedCount, fso, waited
+Function ExportedWorkbookIsOpen(filePath)
+   Dim excelApp, wb, i, targetPath, workbookPath, wmi, procs, proc, cmd
    On Error Resume Next
-   closedCount = 0
-   If Trim(CStr(filePath)) = "" Then Exit Sub
-   Set fso = CreateObject("Scripting.FileSystemObject")
+   ExportedWorkbookIsOpen = False
+   If Trim(CStr(filePath)) = "" Then Exit Function
    targetPath = LCase(Replace(CStr(filePath), "/", "\"))
-   targetName = LCase(fso.GetFileName(CStr(filePath)))
+
+   Err.Clear
+   Set excelApp = GetObject(, "Excel.Application")
+   If Err.Number = 0 And IsObject(excelApp) Then
+      For i = excelApp.Workbooks.Count To 1 Step -1
+         Err.Clear
+         Set wb = excelApp.Workbooks.Item(CInt(i))
+         If Err.Number = 0 And IsObject(wb) Then
+            workbookPath = LCase(Replace(CStr(wb.FullName), "/", "\"))
+            If workbookPath = targetPath Then
+               ExportedWorkbookIsOpen = True
+               Err.Clear
+               Exit Function
+            End If
+         End If
+         Err.Clear
+      Next
+   End If
+
+   Err.Clear
+   Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+   If Err.Number = 0 And IsObject(wmi) Then
+      Set procs = wmi.ExecQuery("SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='EXCEL.EXE'")
+      If Err.Number = 0 Then
+         For Each proc In procs
+            cmd = ""
+            If Not IsNull(proc.CommandLine) Then cmd = LCase(Replace(CStr(proc.CommandLine), "/", "\"))
+            If InStr(cmd, targetPath) > 0 Then
+               ExportedWorkbookIsOpen = True
+               Err.Clear
+               Exit Function
+            End If
+            Err.Clear
+         Next
+      End If
+   End If
+   Err.Clear
+End Function
+
+Function CloseExportedExcelWorkbook(filePath)
+   Dim excelApp, wb, i, targetPath, workbookPath, closedCount, waited
+   Dim wmi, procs, proc, cmd, terminatedCount
+   On Error Resume Next
+   CloseExportedExcelWorkbook = False
+   If Trim(CStr(filePath)) = "" Then Exit Function
+   targetPath = LCase(Replace(CStr(filePath), "/", "\"))
    waited = 0
-   Do While waited <= 10000 And closedCount = 0
+
+   Do While waited <= 30000
+      closedCount = 0
+      terminatedCount = 0
       Err.Clear
       Set excelApp = GetObject(, "Excel.Application")
       If Err.Number = 0 And IsObject(excelApp) Then
@@ -611,7 +658,6 @@ Sub CloseExportedExcelWorkbook(filePath)
             If Err.Number = 0 And IsObject(wb) Then
                workbookPath = LCase(Replace(CStr(wb.FullName), "/", "\"))
                If workbookPath = targetPath Then
-                  Err.Clear
                   wb.Close False
                   If Err.Number = 0 Then
                      closedCount = closedCount + 1
@@ -624,24 +670,51 @@ Sub CloseExportedExcelWorkbook(filePath)
             Err.Clear
          Next
       End If
-      If closedCount = 0 Then
-         WScript.Sleep 500
-         waited = waited + 500
-      End If
-   Loop
-   If closedCount > 0 Then
-      WScript.Sleep 1000
+
       Err.Clear
-      If excelApp.Workbooks.Count = 0 Then
-         excelApp.Quit
-         WScript.Echo "INFO: quit Excel after exported workbook close"
+      Set wmi = GetObject("winmgmts:\\.\root\cimv2")
+      If Err.Number = 0 And IsObject(wmi) Then
+         Set procs = wmi.ExecQuery("SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='EXCEL.EXE'")
+         If Err.Number = 0 Then
+            For Each proc In procs
+               cmd = ""
+               If Not IsNull(proc.CommandLine) Then cmd = LCase(Replace(CStr(proc.CommandLine), "/", "\"))
+               If InStr(cmd, targetPath) > 0 Then
+                  proc.Terminate()
+                  terminatedCount = terminatedCount + 1
+               End If
+               Err.Clear
+            Next
+         End If
       End If
+
+      If terminatedCount > 0 Then WScript.Echo "INFO: terminated exported Excel process count=" & CStr(terminatedCount)
+      WScript.Sleep 500
+
+      If Not ExportedWorkbookIsOpen(filePath) Then
+         Err.Clear
+         If IsObject(excelApp) And excelApp.Workbooks.Count = 0 Then
+            excelApp.Quit
+            WScript.Echo "INFO: quit Excel after exported workbook close"
+         End If
+         WScript.Echo "INFO: exported Excel workbook closed or was not open=" & CStr(filePath)
+         CloseExportedExcelWorkbook = True
+         Err.Clear
+         Exit Function
+      End If
+
+      WScript.Sleep 500
+      waited = waited + 1000
+   Loop
+
+   If Not ExportedWorkbookIsOpen(filePath) Then
+      WScript.Echo "INFO: exported Excel workbook closed after final check=" & CStr(filePath)
+      CloseExportedExcelWorkbook = True
    Else
-      ScheduleExcelCloseHelper filePath
-      WScript.Echo "INFO: exported Excel workbook not visible yet; scheduled delayed close for " & targetName
+      WScript.Echo "WARN: exported Excel workbook still appears open after cleanup timeout=" & CStr(filePath)
    End If
    Err.Clear
-End Sub
+End Function
 
 Sub ScheduleExcelCloseHelper(targetPath)
    Dim fso, sh, helperDir, helperPath, ts, commandLine, targetName
@@ -650,7 +723,7 @@ Sub ScheduleExcelCloseHelper(targetPath)
    Set fso = CreateObject("Scripting.FileSystemObject")
    Set sh = CreateObject("WScript.Shell")
    targetName = fso.GetFileName(CStr(targetPath))
-   helperDir = fso.BuildPath(fso.GetParentFolderName(CStr(targetPath)), "_excel_close")
+   helperDir = fso.BuildPath(fso.GetSpecialFolder(2), "sap_rpa_excel_close")
    If Not fso.FolderExists(helperDir) Then fso.CreateFolder helperDir
    helperPath = fso.BuildPath(helperDir, "sap_rpa_close_excel_" & Replace(Replace(CStr(targetName), ".", "_"), "-", "_") & ".vbs")
    Set ts = fso.CreateTextFile(helperPath, True, False)
@@ -682,6 +755,7 @@ Sub ScheduleExcelCloseHelper(targetPath)
    ts.WriteLine "    If closed > 0 Then"
    ts.WriteLine "      WScript.Sleep 500"
    ts.WriteLine "      If app.Workbooks.Count = 0 Then app.Quit"
+   ts.WriteLine "      CreateObject(""Scripting.FileSystemObject"").DeleteFile WScript.ScriptFullName, True"
    ts.WriteLine "      WScript.Quit 0"
    ts.WriteLine "    End If"
    ts.WriteLine "  End If"
@@ -689,6 +763,7 @@ Sub ScheduleExcelCloseHelper(targetPath)
    ts.WriteLine "  WScript.Sleep 500"
    ts.WriteLine "  waited = waited + 500"
    ts.WriteLine "Loop"
+   ts.WriteLine "CreateObject(""Scripting.FileSystemObject"").DeleteFile WScript.ScriptFullName, True"
    ts.WriteLine "WScript.Quit 0"
    ts.Close
    commandLine = """" & WScript.FullName & """ //B //Nologo """ & helperPath & """ """ & CStr(targetPath) & """"
@@ -816,8 +891,11 @@ Function ExportAlvIfConfigured(exportDir, exportFilename, timeoutMs)
    End If
 
    WScript.Echo "INFO: ALV export file ready=" & alvOutputFile
+   If Not CloseExportedExcelWorkbook(alvOutputFile) Then
+      FailAndQuit "ALV export workbook could not be closed safely: " & alvOutputFile, 8
+      Exit Function
+   End If
    WScript.Echo "OUTPUT_FILE=" & alvOutputFile
-   CloseExportedExcelWorkbook alvOutputFile
    alvExportReady = True
    ExportAlvIfConfigured = True
 End Function

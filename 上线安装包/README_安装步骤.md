@@ -92,7 +92,7 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 
 `baseUrl` 只填接口根地址，不要把 `/token` 或 `asyncsend_v2` 写进去。`sapNco` 使用目标 SAP 系统的应用服务器、实例编号和系统标识；SAP 密码仍只保存在 `%LOCALAPPDATA%\SapWebLauncher\config.json`，不要写进 `config.local.json`。真实 `config.local.json`、SAP 密码、SQLite、日志和输出文件都不能提交到 GitHub。
 
-`fileStorage.alvExportDataDirectory` 控制 ZFI072A/ZFI072N 等 ALV 导出分片和父任务合并总 Excel 的输出根目录；不配置时默认 `D:\RPA\临时文件\文件数据`。父任务最终 Excel 会按运行时服务器系统日期落到该目录下的周目录，例如 `D:\RPA\临时文件\文件数据\2026_WK32\事务码_卡片名称_yyyyMMddHHmmss.xlsx`；周目录已存在则复用。生产机如要放到网络共享盘或其他数据盘，只改真实 `D:\RPA\config.local.json` 里的这个值即可；临时覆盖也可设置环境变量 `SAP_RPA_ALV_EXPORT_DIR`。
+`fileStorage.alvExportDataDirectory` 控制含“保存”事务的 ALV 导出 Excel 输出根目录；不配置时默认 `D:\RPA\临时文件\文件数据`。工厂型事务每个工厂直接按运行时服务器系统日期落到独立目录，例如 `D:\RPA\临时文件\文件数据\2026_WK31_6700\ZFI072N_维护采购价_工厂6700_20260728134553.xlsx`；周目录加工厂号已存在则复用。ZFI072N、ZCO019 等同一工厂需要执行两段结果的场景，会先导出 `_part1/_part2` 中间文件，再在该工厂目录内合并为一个最终工厂 Excel 并删除 part 文件。业务范围型保存事务先导出原始 ALV，再按 Excel 中的 `WERKS`、`Plant Code`、`工厂`、`工厂号`、`工厂代码` 等工厂字段拆分到各自工厂目录；拆分依据只允许使用导出 Excel 的工厂列实际值，缺列或工厂值为空应按 ALV 布局/导出结果排查，不得用 `ZTSD001`、SQLite `plants`、`config.local.json`、业务范围入参或本地映射推断。拆分后的 Excel 只保留 ALV 原始列，不额外加来源、子任务或源文件列。Excel 导出 helper 会在文件存在、非空且大小稳定后，继续按完整路径关闭本次工作簿，确认关闭后才输出 `OUTPUT_FILE` 并进入后续工厂或日期段。生产机如要放到网络共享盘或其他数据盘，只改真实 `D:\RPA\config.local.json` 里的这个值即可；临时覆盖也可设置环境变量 `SAP_RPA_ALV_EXPORT_DIR`。
 `multiLogonPolicy` 控制 SAP 多重登录弹窗处理。默认值是 `takeover`：服务器登录同一 SAP 账号时，如果 SAP 弹出“该账号已在其他终端登录”的多重登录确认，程序会选择继续本次登录并终止该账号其他登录，让服务器任务继续执行。若生产策略不允许踢掉其他终端，把它改成 `fail`，或设置环境变量 `SAP_RPA_MULTI_LOGON_POLICY=fail`，程序会遇到多重登录弹窗直接失败并写日志。
 
 多重登录验收不能只看日志里是否出现 `selected MULTI_LOGON_OPT1`。那只代表程序选中了“继续本次登录并终止其他登录”的单选项，还必须继续按确认按钮或发送 Enter，并等待弹窗关闭或 `session.Info.User` 变成目标用户。若日志仍停在 `SAPMSYST screen=500`、`NO: scripting engine or connection not ready`，并且没有 `加载外部事务码脚本`、`INFO: transaction=<事务码>`，说明还没有真正进入事务码。发布版本里处理该弹窗的 `cscript //T` 超时必须长于内部确认等待时间。
@@ -106,7 +106,7 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 | 项目 | 要求 |
 | --- | --- |
 | NCo 依赖源 | `D:\RPA\依赖\SapNco\sapnco.dll`、`sapnco_utils.dll`、`ijwhost.dll`、`cpc4n.dll` |
-| 运行目录 DLL | `D:\RPA\bin\` 必须包含上述四个 DLL，以及 `System.Configuration.ConfigurationManager.dll`、`System.Security.Permissions.dll`；ZFI072A/ZFI072N 总 Excel 合并还依赖 publish 输出中的 `ClosedXML*.dll`、`DocumentFormat.OpenXml*.dll`、`ExcelNumberFormat.dll`、`RBush.dll`、`SixLabors.Fonts.dll`。后端升级必须完整复制 publish 输出到 `D:\RPA\bin\`，不能只替换 `SapWebLauncher.exe` |
+| 运行目录 DLL | `D:\RPA\bin\` 必须包含上述四个 DLL，以及 `System.Configuration.ConfigurationManager.dll`、`System.Security.Permissions.dll`；后端升级必须完整复制 publish 输出到 `D:\RPA\bin\`，不能只替换 `SapWebLauncher.exe`。即使当前采购价链路不再合并总 Excel，仍需完整复制 `ClosedXML*.dll`、`DocumentFormat.OpenXml*.dll`、`ExcelNumberFormat.dll`、`RBush.dll`、`SixLabors.Fonts.dll` 等 publish 依赖，避免其他诊断/后续报表处理功能缺 DLL |
 | 本机配置 | `D:\RPA\config.local.json` 必须包含 `sapNco`、`zfi057Workflow.gs03SetName` 和 `zfi057Workflow.zfi019nlMemory`；`gs03SetName` 默认 `Z31` |
 | SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` 仍由 `04_配置SAP登录信息.bat` 在固定 Windows 执行账号下生成 |
 | SAP 网关对象 | `ZFI_SAP_API_GATEWAY` 必须支持 `GET_GS03`；调用时传 `IV_SET_NAME=Z31`，返回表按 `TITLE=业务范围` 过滤，同一 `TITLE` 多行时取全部 `FROM` 为工厂；上线前必须跑下面的 `--test-zfi057-get-gs03` |
@@ -144,7 +144,7 @@ Get-Content $out
 | 网关 | `gateway\rpa-gateway.js`、`gateway\start-rpa-gateway.ps1` |
 | 启动脚本 | `启动脚本\00_register_sap_gui_components.cmd`、`00_register_sap_gui_components.ps1`、`start_sap_rpa_services.cmd`、`check_sap_rpa_services.cmd`、`01_start_sap_rpa_services.ps1`、`02_check_sap_rpa_services.ps1`、`gitnexus.cmd`、`gitnexus.ps1` |
 | NCo 依赖源 | `依赖\SapNco\sapnco.dll`、`sapnco_utils.dll`、`ijwhost.dll`、`cpc4n.dll` |
-| 后端 | `dotnet publish` 后的全部输出复制到 `D:\RPA\bin\`，不能只替换 `SapWebLauncher.exe` 或单个 dll；否则 NCo 或 ZFI072A Excel 合并依赖可能缺失 |
+| 后端 | `dotnet publish` 后的全部输出复制到 `D:\RPA\bin\`，不能只替换 `SapWebLauncher.exe` 或单个 dll；否则 NCo、Excel 文件处理或后续报表处理依赖可能缺失 |
 | 事务脚本 | `网页启动登录\transactions\*.vbs` 和 `transaction-config.json` 复制到 `D:\RPA\transactions\` |
 | 配置模板 | `上线安装包\config.local.example.json` 复制到 `D:\RPA\config.local.example.json` |
 
@@ -274,4 +274,4 @@ C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 10. VBS 从运行目录 `transactions` 读取的是最新脚本。
 11. SAP GUI 已登录复用时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
 12. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
-13. ZFI072A/ZFI072N 多工厂任务完成后，在 `fileStorage.alvExportDataDirectory` 配置目录下按运行当天服务器系统日期生成周目录，例如 `2026_WK32`，并在该周目录中生成一个 `事务码_卡片名称_yyyyMMddHHmmss.xlsx` 总文件；不配置时默认根目录为 `D:\RPA\临时文件\文件数据`。每个 child 分片先临时写到 `_parts\<事务码>\<parentRunId>` 下，父 run 的 `run_files` 只登记总文件；总 Excel 生成并登记成功后自动删除本次 parentRunId 对应的分片目录，如果事务码目录和根 `_parts` 目录已空，也会继续删除空目录。ZFI072N 跨月时同一个 child 可能登记 `_part1/_part2` 多个分片。合并后的总 Excel 只保留 ALV 原始报表列和数据，不再追加“来源工厂、子任务、源文件”，也不再生成“分片清单”。SAP 状态栏“已传递 xx 个字节”表示 ALV 前端导出完成，不是失败；SAP GUI 标准导出可能短暂打开 Excel，程序应在分片落盘后按完整路径关闭对应工作簿，父 run 合并前先释放这些导出窗口，并用允许 `ReadWrite/Delete` 共享的内存流读取分片，避免分片仍被 Excel 占用时总表只生成“合并异常”。父 run 收尾也只根据 child run 的 `run_files` 分片路径调度安全关闭 helper。若 Excel COM 无法附着，最多只对标题匹配当前事务码前缀（如 `ZFI072A_*.xls*`、`ZFI072N_*.xls*`）的可见窗口发送一次非破坏性关闭请求；关闭失败只记录 `WARN`，不得按进程名直接 kill Excel，避免误关用户手工打开的其他 Excel。
+13. 含“保存”的 ALV 导出任务完成后，在 `fileStorage.alvExportDataDirectory` 配置目录下按运行当天服务器系统日期和工厂号生成目录，例如 `2026_WK31_6700`，并在该目录中生成工厂级 Excel，例如 `ZFI072N_维护采购价_工厂6700_20260728134553.xlsx`；不配置时默认根目录为 `D:\RPA\临时文件\文件数据`。父 run 不再生成跨工厂合并总 Excel，也不再把 child 输出临时写到 `_parts\<事务码>\<parentRunId>` 后做父级合并；父 run 的 `run_files` 只登记各 child 已落盘的最终工厂文件。ZFI072N、ZCO019 等同一工厂多结果窗口会先登记 `_part1/_part2` 中间文件，后端收尾会在同一工厂目录合并为一个最终工厂 Excel，并删除 `_part*` 文件。业务范围型保存事务验收时必须准备或确认导出 Excel 中存在 `WERKS`/`Plant Code`/`工厂`/`工厂号`/`工厂代码` 等工厂字段，并验证最终按这些列值生成多个 `yyyy_WKnn_工厂` 目录和文件；不能用 `ZTSD001`、本地工厂配置或业务范围入参来替代 Excel 工厂列拆分。SAP 状态栏“已传递 xx 个字节”表示 ALV 前端导出完成，不是失败；程序应在文件落盘并按完整路径关闭对应 Excel 工作簿后才输出 `OUTPUT_FILE`、继续下一个日期段或工厂。后端兜底 helper 写入 `D:\RPA\logs\excel-close`；工厂数据目录只保留业务 Excel。排障时不要再找“合并数据”“合并异常”或父任务总表。

@@ -454,9 +454,6 @@
               <div class="transaction-code">${esc(displayCode)}</div>
               <div class="transaction-name">${renderSaveName(displayNameText)}</div>
               ${item.dashboardNote ? `<div class="transaction-note">${esc(item.dashboardNote)}</div>` : ""}
-              <div class="transaction-tags">
-                <span class="tag ${item.automation === "script" ? "ok" : "info"}">${item.automation === "script" ? "脚本" : "打开"}</span>
-              </div>
             </div>
           </div>
           <button class="btn primary small" data-action="go-execute" data-tcode="${esc(runCode)}">${icon("send")}提交</button>
@@ -469,7 +466,7 @@
     }
 
     function isSaveActionTransaction(item) {
-      const saveActionCodes = new Set(["ZFI072A", "ZFI072N", "ZFI080", "ZFI080B", "ZCO019", "ZCO020", "ZFI019NA", "ZFI019NL", "ZFI019NI", "ZFI148"]);
+      const saveActionCodes = new Set(["ZFI072A", "ZFI072N", "ZFI080", "ZFI080B", "ZCO019", "ZFI019NA", "ZFI019NL"]);
       const code = String(item.runCode || item.code || "").trim().toUpperCase();
       const text = [
         item.name,
