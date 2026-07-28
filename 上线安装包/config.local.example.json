@@ -1,5 +1,8 @@
 {
   "multiLogonPolicy": "takeover",
+  "fileStorage": {
+    "alvExportDataDirectory": "D:\\RPA\\临时文件\\文件数据"
+  },
   "dingTalkOpenApi": {
     "baseUrl": "https://你的钉钉OpenAPI网关根地址/",
     "appKey": "你的真实AppKey",

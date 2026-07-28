@@ -59,6 +59,9 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 ```json
 {
   "multiLogonPolicy": "takeover",
+  "fileStorage": {
+    "alvExportDataDirectory": "D:\\RPA\\临时文件\\文件数据"
+  },
   "dingTalkOpenApi": {
     "baseUrl": "https://你的钉钉OpenAPI网关根地址/",
     "appKey": "你的真实AppKey",
@@ -89,6 +92,7 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 
 `baseUrl` 只填接口根地址，不要把 `/token` 或 `asyncsend_v2` 写进去。`sapNco` 使用目标 SAP 系统的应用服务器、实例编号和系统标识；SAP 密码仍只保存在 `%LOCALAPPDATA%\SapWebLauncher\config.json`，不要写进 `config.local.json`。真实 `config.local.json`、SAP 密码、SQLite、日志和输出文件都不能提交到 GitHub。
 
+`fileStorage.alvExportDataDirectory` 控制 ZFI072A/ZFI072N 等 ALV 导出分片和父任务合并总 Excel 的落盘目录；不配置时默认 `D:\RPA\临时文件\文件数据`。生产机如要放到网络共享盘或其他数据盘，只改真实 `D:\RPA\config.local.json` 里的这个值即可；临时覆盖也可设置环境变量 `SAP_RPA_ALV_EXPORT_DIR`。
 `multiLogonPolicy` 控制 SAP 多重登录弹窗处理。默认值是 `takeover`：服务器登录同一 SAP 账号时，如果 SAP 弹出“该账号已在其他终端登录”的多重登录确认，程序会选择继续本次登录并终止该账号其他登录，让服务器任务继续执行。若生产策略不允许踢掉其他终端，把它改成 `fail`，或设置环境变量 `SAP_RPA_MULTI_LOGON_POLICY=fail`，程序会遇到多重登录弹窗直接失败并写日志。
 
 多重登录验收不能只看日志里是否出现 `selected MULTI_LOGON_OPT1`。那只代表程序选中了“继续本次登录并终止其他登录”的单选项，还必须继续按确认按钮或发送 Enter，并等待弹窗关闭或 `session.Info.User` 变成目标用户。若日志仍停在 `SAPMSYST screen=500`、`NO: scripting engine or connection not ready`，并且没有 `加载外部事务码脚本`、`INFO: transaction=<事务码>`，说明还没有真正进入事务码。发布版本里处理该弹窗的 `cscript //T` 超时必须长于内部确认等待时间。
@@ -102,7 +106,7 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 | 项目 | 要求 |
 | --- | --- |
 | NCo 依赖源 | `D:\RPA\依赖\SapNco\sapnco.dll`、`sapnco_utils.dll`、`ijwhost.dll`、`cpc4n.dll` |
-| 运行目录 DLL | `D:\RPA\bin\` 必须包含上述四个 DLL，以及 `System.Configuration.ConfigurationManager.dll`、`System.Security.Permissions.dll`；ZFI072A 总 Excel 合并还依赖 publish 输出中的 `ClosedXML*.dll`、`DocumentFormat.OpenXml*.dll`、`ExcelNumberFormat.dll`、`RBush.dll`、`SixLabors.Fonts.dll`。后端升级必须完整复制 publish 输出到 `D:\RPA\bin\`，不能只替换 `SapWebLauncher.exe` |
+| 运行目录 DLL | `D:\RPA\bin\` 必须包含上述四个 DLL，以及 `System.Configuration.ConfigurationManager.dll`、`System.Security.Permissions.dll`；ZFI072A/ZFI072N 总 Excel 合并还依赖 publish 输出中的 `ClosedXML*.dll`、`DocumentFormat.OpenXml*.dll`、`ExcelNumberFormat.dll`、`RBush.dll`、`SixLabors.Fonts.dll`。后端升级必须完整复制 publish 输出到 `D:\RPA\bin\`，不能只替换 `SapWebLauncher.exe` |
 | 本机配置 | `D:\RPA\config.local.json` 必须包含 `sapNco`、`zfi057Workflow.gs03SetName` 和 `zfi057Workflow.zfi019nlMemory`；`gs03SetName` 默认 `Z31` |
 | SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` 仍由 `04_配置SAP登录信息.bat` 在固定 Windows 执行账号下生成 |
 | SAP 网关对象 | `ZFI_SAP_API_GATEWAY` 必须支持 `GET_GS03`；调用时传 `IV_SET_NAME=Z31`，返回表按 `TITLE=业务范围` 过滤，同一 `TITLE` 多行时取全部 `FROM` 为工厂；上线前必须跑下面的 `--test-zfi057-get-gs03` |
@@ -270,4 +274,4 @@ C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 10. VBS 从运行目录 `transactions` 读取的是最新脚本。
 11. SAP GUI 已登录复用时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
 12. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
-13. ZFI072A 多工厂任务完成后，`D:\RPA\临时文件\文件数据` 中生成一个 `ZFI072A_采购价月表_yyyyMMddHHmmss.xlsx` 总文件；每个 child 分片在 `_parts\ZFI072A\<parentRunId>` 下，父 run 的 `run_files` 登记总文件。SAP 状态栏“已传递 xx 个字节”表示 ALV 前端导出完成，不是失败；SAP GUI 标准导出可能短暂打开 Excel，程序应在分片落盘后按完整路径关闭对应工作簿，父 run 合并前先释放这些导出窗口，并用允许 `ReadWrite/Delete` 共享的内存流读取分片，避免分片仍被 Excel 占用时总表只生成“合并异常”。父 run 收尾也只根据 child run 的 `run_files` 分片路径调度安全关闭 helper。若 Excel COM 无法附着，最多只对标题匹配 `ZFI072A_*.xls*` 的可见窗口发送一次非破坏性关闭请求；关闭失败只记录 `WARN`，不得按进程名直接 kill Excel，避免误关用户手工打开的其他 Excel。
+13. ZFI072A/ZFI072N 多工厂任务完成后，在 `fileStorage.alvExportDataDirectory` 配置的目录中生成一个 `事务码_卡片名称_yyyyMMddHHmmss.xlsx` 总文件；不配置时默认 `D:\RPA\临时文件\文件数据`。每个 child 分片在 `_parts\<事务码>\<parentRunId>` 下，父 run 的 `run_files` 登记总文件。ZFI072N 跨月时同一个 child 可能登记 `_part1/_part2` 多个分片。SAP 状态栏“已传递 xx 个字节”表示 ALV 前端导出完成，不是失败；SAP GUI 标准导出可能短暂打开 Excel，程序应在分片落盘后按完整路径关闭对应工作簿，父 run 合并前先释放这些导出窗口，并用允许 `ReadWrite/Delete` 共享的内存流读取分片，避免分片仍被 Excel 占用时总表只生成“合并异常”。父 run 收尾也只根据 child run 的 `run_files` 分片路径调度安全关闭 helper。若 Excel COM 无法附着，最多只对标题匹配当前事务码前缀（如 `ZFI072A_*.xls*`、`ZFI072N_*.xls*`）的可见窗口发送一次非破坏性关闭请求；关闭失败只记录 `WARN`，不得按进程名直接 kill Excel，避免误关用户手工打开的其他 Excel。

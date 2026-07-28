@@ -48,10 +48,10 @@ static class Program
     private static readonly string LogDirectory = Path.Combine(RuntimeRoot, "logs");
     private static readonly string OutputDirectory = Path.Combine(RuntimeRoot, "outputs");
     private static readonly string RuntimeTransactionsDirectory = Path.Combine(RuntimeRoot, "transactions");
-    private static readonly string AlvExportDataDirectory = Path.Combine(RuntimeRoot, "\u4E34\u65F6\u6587\u4EF6", "\u6587\u4EF6\u6570\u636E");
     private static readonly string RuntimeLocalConfigFilePath = Path.Combine(RuntimeRoot, "config.local.json");
     private static readonly string LogFilePath = Path.Combine(LogDirectory, "launcher.log");
     private static readonly string ConfigFilePath = Path.Combine(LocalConfigDirectory, "config.json");
+    private static readonly string AlvExportDataDirectory = ResolveAlvExportDataDirectory();
     private static readonly string DatabaseFilePath = Path.Combine(DataDirectory, "sap-rpa-config.db");
     private static readonly string LegacyDatabaseFilePath = Path.Combine(LocalConfigDirectory, "sap-rpa-config.db");
     private static readonly string ExecutorId = $"{Environment.MachineName}\\{Environment.UserName}";
@@ -214,6 +214,64 @@ static class Program
         catch
         {
             return false;
+        }
+    }
+
+    static string ResolveAlvExportDataDirectory()
+    {
+        string defaultPath = Path.Combine(RuntimeRoot, "\u4E34\u65F6\u6587\u4EF6", "\u6587\u4EF6\u6570\u636E");
+        string configured = (Environment.GetEnvironmentVariable("SAP_RPA_ALV_EXPORT_DIR") ?? "").Trim();
+
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            try
+            {
+                using JsonDocument? document = LoadLocalConfigDocument();
+                if (document != null && document.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    JsonElement root = document.RootElement;
+                    JsonElement? fileStorage = TryGetObject(root, "fileStorage");
+                    JsonElement? output = TryGetObject(root, "output");
+                    JsonElement? outputs = TryGetObject(root, "outputs");
+                    configured = FirstNonEmpty(
+                        GetConfigString(fileStorage, "alvExportDataDirectory"),
+                        GetConfigString(fileStorage, "alvExportDirectory"),
+                        GetConfigString(fileStorage, "fileDataDirectory"),
+                        GetConfigString(output, "alvExportDataDirectory"),
+                        GetConfigString(output, "alvExportDirectory"),
+                        GetConfigString(outputs, "alvExportDataDirectory"),
+                        GetConfigString(outputs, "alvExportDirectory"),
+                        GetConfigString(root, "alvExportDataDirectory"),
+                        GetConfigString(root, "alvExportDirectory"));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"resolve ALV export directory from config failed: {ex.Message}");
+            }
+        }
+
+        return ResolveDirectoryPath(configured, defaultPath, "ALV export data directory");
+    }
+
+    static string ResolveDirectoryPath(string configured, string defaultPath, string label)
+    {
+        configured = Environment.ExpandEnvironmentVariables((configured ?? "").Trim());
+        if (string.IsNullOrWhiteSpace(configured))
+            return Path.GetFullPath(defaultPath);
+
+        try
+        {
+            string path = configured;
+            if (!Path.IsPathRooted(path))
+                path = Path.Combine(RuntimeRoot, path);
+
+            return Path.GetFullPath(path);
+        }
+        catch (Exception ex)
+        {
+            Log($"{label} is invalid; fallback to default. value={configured}, error={ex.Message}");
+            return Path.GetFullPath(defaultPath);
         }
     }
 
@@ -1249,6 +1307,7 @@ WHERE tcode=$tcode AND enabled=1;
                     database = DatabaseFilePath,
                     logFile = LogFilePath,
                     outputRoot = OutputDirectory,
+                    alvExportDataRoot = AlvExportDataDirectory,
                     transactionRoot = RuntimeTransactionsDirectory,
                     credentialConfig = ConfigFilePath,
                     executor = ExecutorId,
@@ -1872,6 +1931,7 @@ VALUES
             UpsertAppSetting(connection, "runtime_root", RuntimeRoot);
             UpsertAppSetting(connection, "script_root", RuntimeTransactionsDirectory);
             UpsertAppSetting(connection, "output_root", OutputDirectory);
+            UpsertAppSetting(connection, "alv_export_data_root", AlvExportDataDirectory);
             UpsertAppSetting(connection, "database_path", DatabaseFilePath);
             UpsertAppSetting(connection, "credential_config_path", ConfigFilePath);
 
@@ -6592,7 +6652,8 @@ WHERE run_id=$runId;
 
     static bool SupportsAlvExport(string tcode)
     {
-        return tcode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase);
+        return tcode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI072N", StringComparison.OrdinalIgnoreCase);
     }
 
     static AlvExportTarget BuildAlvExportTarget(SapRunParams p, string effectivePlants)
@@ -10581,10 +10642,10 @@ WScript.Quit 0
     static int ResolveVbsTimeoutSeconds(SapRunParams p, string effectivePlants)
     {
         int configured = p.TimeoutSeconds.GetValueOrDefault(0);
-        int fallback = p.TCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) ? 3900 : 300;
+        int fallback = SupportsAlvExport(p.TCode) ? 3900 : 300;
         int timeoutSeconds = configured > 0 ? configured : fallback;
 
-        if (p.TCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase))
+        if (SupportsAlvExport(p.TCode))
         {
             timeoutSeconds = Math.Max(timeoutSeconds, 3900);
             if (NormalizeStringArray(effectivePlants).Contains("9301", StringComparer.OrdinalIgnoreCase))
@@ -10766,14 +10827,14 @@ WScript.Quit 0
             }
 
             var parsed = BuildRunResultFromVbs(stdOut, stdErr, proc?.ExitCode ?? 0, started);
-            if (p.TCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) &&
+            if (SupportsAlvExport(p.TCode) &&
                 !parsed.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
             {
                 keepTempFile = true;
                 parsed.Logs.Add(new RunLogLine
                 {
                     Level = "ERROR",
-                    Message = $"ZFI072A failed result; temp script retained for ALV export diagnostics: {tmpFile}"
+                    Message = $"{p.TCode} failed result; temp script retained for ALV export diagnostics: {tmpFile}"
                 });
             }
 
@@ -12417,6 +12478,22 @@ Item1=test888
             "      WScript.Sleep 500",
             "      If app.Workbooks.Count = 0 Then app.Quit",
             "      WScript.Quit 0",
+            "    End If",
+            "  End If",
+            "  Err.Clear",
+            "  Set wmi = GetObject(\"winmgmts:\\\\.\\root\\cimv2\")",
+            "  If Err.Number = 0 And IsObject(wmi) Then",
+            "    Set procs = wmi.ExecQuery(\"SELECT ProcessId, CommandLine FROM Win32_Process WHERE Name='EXCEL.EXE'\")",
+            "    If Err.Number = 0 Then",
+            "      For Each proc In procs",
+            "        cmd = \"\"",
+            "        If Not IsNull(proc.CommandLine) Then cmd = LCase(Replace(CStr(proc.CommandLine), \"/\", \"\\\"))",
+            "        If InStr(cmd, target) > 0 Then",
+            "          proc.Terminate()",
+            "          WScript.Quit 0",
+            "        End If",
+            "        Err.Clear",
+            "      Next",
             "    End If",
             "  End If",
             "  Err.Clear",
