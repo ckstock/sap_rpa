@@ -4963,6 +4963,7 @@ WHERE child_run_id=$childRunId;
             parentTransactionCode = parentForExport?.TransactionCode ?? "";
             if (SupportsAlvExport(parentTransactionCode))
             {
+                CloseExportedExcelWindowsForTransaction(parentTransactionCode, parentRunId);
                 bool requireFragments = parentStatus.Equals("failed", StringComparison.OrdinalIgnoreCase);
                 var mergedAlvFile = BuildMergedBatchAlvWorkbook(parentRunId, latestItems, requireFragments);
                 if (mergedAlvFile != null)
@@ -6674,7 +6675,9 @@ WHERE run_id=$runId;
         {
             try
             {
-                using var source = new XLWorkbook(fragment.Path);
+                byte[] sourceBytes = ReadAlvFragmentBytesForMerge(fragment.Path);
+                using var sourceStream = new MemoryStream(sourceBytes, writable: false);
+                using var source = new XLWorkbook(sourceStream);
                 var sheet = source.Worksheets.FirstOrDefault();
                 var range = sheet?.RangeUsed();
                 if (sheet == null || range == null)
@@ -6741,6 +6744,34 @@ WHERE run_id=$runId;
         output.Properties.Title = $"{transactionCode} {transactionName}".Trim();
         output.Properties.Subject = $"SAP RPA ALV merged data; parentRunId={parentRunId}; rows={copiedDataRows}";
         output.SaveAs(finalPath);
+    }
+
+    static byte[] ReadAlvFragmentBytesForMerge(string path)
+    {
+        Exception? lastException = null;
+        DateTime deadline = DateTime.UtcNow.AddSeconds(30);
+        while (DateTime.UtcNow <= deadline)
+        {
+            try
+            {
+                using var source = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                using var buffer = new MemoryStream();
+                source.CopyTo(buffer);
+                return buffer.ToArray();
+            }
+            catch (IOException ex)
+            {
+                lastException = ex;
+                Thread.Sleep(500);
+            }
+            catch (UnauthorizedAccessException ex)
+            {
+                lastException = ex;
+                Thread.Sleep(500);
+            }
+        }
+
+        throw new IOException($"ALV fragment remained locked before merge: {path}", lastException);
     }
 
     static void WriteAlvManifestSheet(

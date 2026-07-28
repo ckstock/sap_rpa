@@ -270,4 +270,4 @@ C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 10. VBS 从运行目录 `transactions` 读取的是最新脚本。
 11. SAP GUI 已登录复用时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
 12. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
-13. ZFI072A 多工厂任务完成后，`D:\RPA\临时文件\文件数据` 中生成一个 `ZFI072A_采购价月表_yyyyMMddHHmmss.xlsx` 总文件；每个 child 分片在 `_parts\ZFI072A\<parentRunId>` 下，父 run 的 `run_files` 登记总文件。SAP 状态栏“已传递 xx 个字节”表示 ALV 前端导出完成，不是失败；SAP GUI 标准导出可能短暂打开 Excel，程序应在分片落盘后按完整路径关闭对应工作簿，父 run 收尾也只根据 child run 的 `run_files` 分片路径调度安全关闭 helper。若 Excel COM 无法附着，最多只对标题匹配 `ZFI072A_*.xls*` 的可见窗口发送一次非破坏性关闭请求；关闭失败只记录 `WARN`，不得按进程名直接 kill Excel，避免误关用户手工打开的其他 Excel。
+13. ZFI072A 多工厂任务完成后，`D:\RPA\临时文件\文件数据` 中生成一个 `ZFI072A_采购价月表_yyyyMMddHHmmss.xlsx` 总文件；每个 child 分片在 `_parts\ZFI072A\<parentRunId>` 下，父 run 的 `run_files` 登记总文件。SAP 状态栏“已传递 xx 个字节”表示 ALV 前端导出完成，不是失败；SAP GUI 标准导出可能短暂打开 Excel，程序应在分片落盘后按完整路径关闭对应工作簿，父 run 合并前先释放这些导出窗口，并用允许 `ReadWrite/Delete` 共享的内存流读取分片，避免分片仍被 Excel 占用时总表只生成“合并异常”。父 run 收尾也只根据 child run 的 `run_files` 分片路径调度安全关闭 helper。若 Excel COM 无法附着，最多只对标题匹配 `ZFI072A_*.xls*` 的可见窗口发送一次非破坏性关闭请求；关闭失败只记录 `WARN`，不得按进程名直接 kill Excel，避免误关用户手工打开的其他 Excel。
