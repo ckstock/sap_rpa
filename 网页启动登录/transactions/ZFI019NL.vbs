@@ -161,6 +161,30 @@ Sub Fail(message, code)
    WScript.Quit code
 End Sub
 
+Function IsNoDataStatusText(value)
+   Dim text
+   text = LCase(Replace(Replace(Trim(CStr(value)), " ", ""), "　", ""))
+   IsNoDataStatusText = (InStr(text, "没有符合条件数据") > 0) _
+      Or (InStr(text, "没有符合条件的数据") > 0) _
+      Or (InStr(text, "没有找到符合条件的数据") > 0) _
+      Or (InStr(text, "nodatafound") > 0) _
+      Or (InStr(text, "norecordsfound") > 0)
+End Function
+
+Function IsNoDataAllowedStage(stage)
+   IsNoDataAllowedStage = (InStr(LCase(CStr(stage)), "execute") > 0)
+End Function
+
+Sub ExitNoData(stage, message)
+   Dim text
+   text = "ZFI019NL no data after " & stage & " - " & CStr(message)
+   WScript.Echo "STATUS_TYPE=W"
+   WScript.Echo "STATUS_TEXT=" & text
+   WScript.Echo "WARN: " & text
+   WScript.Echo "INFO: transaction script executed"
+   WScript.Quit 0
+End Sub
+
 Function ObjectExists(id)
    Dim obj
    Err.Clear
@@ -198,6 +222,7 @@ Sub CheckSapStatus(stage)
    statusType = session.findById("wnd[0]/sbar").MessageType
    statusText = session.findById("wnd[0]/sbar").Text
    If Err.Number = 0 And Trim(CStr(statusText)) <> "" Then WScript.Echo "INFO: sap status after " & stage & " type=" & statusType & ", text=" & statusText
+   If Err.Number = 0 And IsNoDataAllowedStage(stage) And IsNoDataStatusText(statusText) Then ExitNoData stage, statusText
    If Err.Number = 0 And (statusType = "E" Or statusType = "A") Then Fail "SAP status error after " & stage & " - " & statusText, 6
    Err.Clear
 End Sub

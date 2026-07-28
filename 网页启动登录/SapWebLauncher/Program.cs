@@ -5251,8 +5251,9 @@ WHERE run_id=$parentRunId
 
             if (splitFiles.Count == 0)
             {
-                AddAlvNormalizationLog(logRunId, logs, "WARN", $"ALV business-area split produced no factory files; keep raw output: businessArea={businessArea}, child={childRunId}, raw={rawPath}");
-                normalized.Add(file);
+                AddAlvNormalizationLog(logRunId, logs, "WARN", $"ALV business-area split produced no factory files; raw output removed as no factory data: businessArea={businessArea}, child={childRunId}, raw={rawPath}");
+                CleanupBusinessAreaRawAlvFile(rawPath, logRunId, logs);
+                changed = true;
                 continue;
             }
 
@@ -5260,15 +5261,7 @@ WHERE run_id=$parentRunId
             changed = true;
             AddAlvNormalizationLog(logRunId, logs, "INFO", $"ALV business-area output split by factory: businessArea={businessArea}, child={childRunId}, factories={splitFiles.Count}, raw={rawPath}");
 
-            try
-            {
-                DeleteFileWithRetry(rawPath);
-                DeleteEmptyParentDirectoriesUnder(GetAlvBusinessAreaRawRoot(), rawPath);
-            }
-            catch (Exception ex)
-            {
-                AddAlvNormalizationLog(logRunId, logs, "WARN", $"ALV business-area raw cleanup failed: {rawPath}; {ex.Message}");
-            }
+            CleanupBusinessAreaRawAlvFile(rawPath, logRunId, logs);
         }
 
         normalized = normalized
@@ -5286,6 +5279,52 @@ WHERE run_id=$parentRunId
             ReplaceRunFiles(childRunId, normalized);
 
         return normalized;
+    }
+
+    static void NormalizeBusinessAreaAlvFilesForRunResult(
+        RunResultRequest result,
+        string logRunId,
+        string businessArea,
+        string childRunId,
+        string transactionCode)
+    {
+        if (result.Files.Count == 0)
+            return;
+
+        try
+        {
+            result.Files = NormalizeBusinessAreaAlvFiles(
+                logRunId,
+                businessArea,
+                childRunId,
+                transactionCode,
+                result.Files,
+                result.Logs,
+                updateStoredRunFiles: false);
+        }
+        catch (Exception ex)
+        {
+            result.Status = "failed";
+            result.Message = ex.Message;
+            result.Logs.Add(new RunLogLine
+            {
+                Level = "ERROR",
+                Message = $"ALV business-area split failed; raw output kept for diagnostics: {ex.Message}"
+            });
+        }
+    }
+
+    static void CleanupBusinessAreaRawAlvFile(string rawPath, string logRunId, List<RunLogLine>? logs)
+    {
+        try
+        {
+            DeleteFileWithRetry(rawPath);
+            DeleteEmptyParentDirectoriesUnder(GetAlvBusinessAreaRawRoot(), rawPath);
+        }
+        catch (Exception ex)
+        {
+            AddAlvNormalizationLog(logRunId, logs, "WARN", $"ALV business-area raw cleanup failed: {rawPath}; {ex.Message}");
+        }
     }
 
     static void AddAlvNormalizationLog(string runId, List<RunLogLine>? logs, string level, string message)
@@ -7085,6 +7124,12 @@ WHERE run_id=$runId;
         if (rows.Count == 0)
             return outputFiles;
 
+        if (rows.Count == 1)
+        {
+            AddAlvNormalizationLog(logRunId, logs, "WARN", $"ALV business-area workbook has header only and no data rows: businessArea={businessArea}, raw={rawPath}");
+            return outputFiles;
+        }
+
         int sourceColumnCount = range.ColumnCount();
         var factoryColumn = FindAlvFactoryColumn(rows, sourceColumnCount);
         if (factoryColumn.RowIndex < 0 || factoryColumn.ColumnIndex <= 0)
@@ -7108,8 +7153,7 @@ WHERE run_id=$runId;
 
         if (groupedRows.Count == 0)
         {
-            AddAlvNormalizationLog(logRunId, logs, "WARN", $"ALV business-area workbook has no data rows with factory value: businessArea={businessArea}, raw={rawPath}");
-            return outputFiles;
+            throw new InvalidOperationException($"ALV business-area workbook has data rows but no factory values: businessArea={businessArea}, raw={rawPath}");
         }
 
         string transactionName = ResolveTransactionDisplayName(transactionCode);
@@ -7186,10 +7230,14 @@ WHERE run_id=$runId;
                normalized.Equals("PLANTNUMBER", StringComparison.OrdinalIgnoreCase) ||
                normalized.Equals("FACTORY", StringComparison.OrdinalIgnoreCase) ||
                normalized.Equals("FACTORYCODE", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("BIGBUFACTORY", StringComparison.OrdinalIgnoreCase) ||
                normalized.Equals("\u5DE5\u5382", StringComparison.OrdinalIgnoreCase) ||
                normalized.Equals("\u5DE5\u5382\u53F7", StringComparison.OrdinalIgnoreCase) ||
                normalized.Equals("\u5DE5\u5382\u4EE3\u7801", StringComparison.OrdinalIgnoreCase) ||
                normalized.Equals("\u5DE5\u5382\u7F16\u7801", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("\u5C0F\u5382", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("\u5927BU\u5DE5\u5382", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("\u4E1A\u52A1\u8303\u56F4\u5C0F\u5382", StringComparison.OrdinalIgnoreCase) ||
                normalized.Equals("\u751F\u4EA7\u5DE5\u5382", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -11339,14 +11387,12 @@ WScript.Quit 0
             else if (UsesBusinessAreaAlvOutput(p.TCode) && parsed.Files.Count > 0)
             {
                 string businessAreaForLog = FirstNonEmpty(FirstCsvValue(p.BusinessAreas), p.BusinessArea, p.FactoryGroup, "scope");
-                parsed.Files = NormalizeBusinessAreaAlvFiles(
+                NormalizeBusinessAreaAlvFilesForRunResult(
+                    parsed,
                     p.RunId,
                     businessAreaForLog,
                     p.RunId,
-                    p.TCode,
-                    parsed.Files,
-                    parsed.Logs,
-                    updateStoredRunFiles: false);
+                    p.TCode);
             }
 
             if (SupportsAlvExport(p.TCode) &&
@@ -11758,8 +11804,10 @@ WScript.Quit 0
                 IsAlvFactoryHeader("Plant Code") &&
                 IsAlvFactoryHeader("\u5DE5\u5382\u53F7") &&
                 IsAlvFactoryHeader("\u5DE5\u5382\u4EE3\u7801") &&
+                IsAlvFactoryHeader("\u5927BU-\u5DE5\u5382") &&
+                IsAlvFactoryHeader("\u4E1A\u52A1\u8303\u56F4-\u5C0F\u5382") &&
                 !IsAlvFactoryHeader("\u4E1A\u52A1\u8303\u56F4");
-            Check("ALV factory header aliases", factoryHeaderAliasesOk, "WERKS/Plant Code/factory Chinese headers");
+            Check("ALV factory header aliases", factoryHeaderAliasesOk, "WERKS/Plant Code/factory Chinese headers/business-area export headers");
         }
 
         {
@@ -11928,6 +11976,135 @@ WScript.Quit 0
             finally
             {
                 try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+
+        {
+            string tempDir = Path.Combine(GetAlvBusinessAreaRawRoot(), $"SELFTEST_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempDir);
+            string rawPath = Path.Combine(tempDir, "ZFI019NL_header_only.xlsx");
+            try
+            {
+                using (var wb = new XLWorkbook())
+                {
+                    var ws = wb.Worksheets.Add("ALV");
+                    ws.Cell(1, 1).Value = "\u6CD5\u4EBA-\u516C\u53F8\u4EE3\u7801";
+                    ws.Cell(1, 2).Value = "\u5927BU-\u5DE5\u5382";
+                    ws.Cell(1, 3).Value = "\u4E1A\u52A1\u8303\u56F4-\u5C0F\u5382";
+                    wb.SaveAs(rawPath);
+                }
+
+                var logs = new List<RunLogLine>();
+                var normalizedFiles = NormalizeBusinessAreaAlvFiles(
+                    "RUN-SELFTEST-ALV-BUSINESS-AREA-NO-DATA",
+                    "9200",
+                    "RUN-SELFTEST-ALV-BUSINESS-AREA-NO-DATA",
+                    "ZFI019NL",
+                    new List<RunFile> { BuildRunFile(rawPath) },
+                    logs,
+                    updateStoredRunFiles: false);
+
+                bool ok = normalizedFiles.Count == 0 &&
+                          !File.Exists(rawPath) &&
+                          !Directory.Exists(tempDir) &&
+                          logs.Any(line => line.Level.Equals("WARN", StringComparison.OrdinalIgnoreCase) &&
+                                           line.Message.Contains("no data rows", StringComparison.OrdinalIgnoreCase)) &&
+                          logs.Any(line => line.Message.Contains("raw output removed", StringComparison.OrdinalIgnoreCase));
+                Check("ALV business-area no-data raw cleanup", ok, $"files={normalizedFiles.Count}, rawExists={File.Exists(rawPath)}, dirExists={Directory.Exists(tempDir)}");
+            }
+            finally
+            {
+                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        {
+            string tempDir = Path.Combine(GetAlvBusinessAreaRawRoot(), $"SELFTEST_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempDir);
+            string rawPath = Path.Combine(tempDir, "ZFI019NL_missing_factory_value.xlsx");
+            try
+            {
+                using (var wb = new XLWorkbook())
+                {
+                    var ws = wb.Worksheets.Add("ALV");
+                    ws.Cell(1, 1).Value = "MATNR";
+                    ws.Cell(1, 2).Value = "\u5927BU-\u5DE5\u5382";
+                    ws.Cell(1, 3).Value = "AMOUNT";
+                    ws.Cell(2, 1).Value = "M1";
+                    ws.Cell(2, 2).Value = "";
+                    ws.Cell(2, 3).Value = 10;
+                    wb.SaveAs(rawPath);
+                }
+
+                bool threw = false;
+                try
+                {
+                    _ = NormalizeBusinessAreaAlvFiles(
+                        "RUN-SELFTEST-ALV-BUSINESS-AREA-MISSING-FACTORY",
+                        "9200",
+                        "RUN-SELFTEST-ALV-BUSINESS-AREA-MISSING-FACTORY",
+                        "ZFI019NL",
+                        new List<RunFile> { BuildRunFile(rawPath) },
+                        new List<RunLogLine>(),
+                        updateStoredRunFiles: false);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    threw = ex.Message.Contains("no factory values", StringComparison.OrdinalIgnoreCase);
+                }
+
+                bool ok = threw && File.Exists(rawPath) && Directory.Exists(tempDir);
+                Check("ALV business-area data without factory value fails and keeps raw", ok, $"threw={threw}, rawExists={File.Exists(rawPath)}, dirExists={Directory.Exists(tempDir)}");
+            }
+            finally
+            {
+                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true); } catch { }
+            }
+        }
+
+        {
+            string tempDir = Path.Combine(GetAlvBusinessAreaRawRoot(), $"SELFTEST_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempDir);
+            string rawPath = Path.Combine(tempDir, "ZFI019NL_missing_factory_value_result.xlsx");
+            try
+            {
+                using (var wb = new XLWorkbook())
+                {
+                    var ws = wb.Worksheets.Add("ALV");
+                    ws.Cell(1, 1).Value = "MATNR";
+                    ws.Cell(1, 2).Value = "\u5927BU-\u5DE5\u5382";
+                    ws.Cell(1, 3).Value = "AMOUNT";
+                    ws.Cell(2, 1).Value = "M1";
+                    ws.Cell(2, 2).Value = "";
+                    ws.Cell(2, 3).Value = 10;
+                    wb.SaveAs(rawPath);
+                }
+
+                var result = new RunResultRequest
+                {
+                    Status = "success",
+                    Message = "script executed",
+                    Files = { BuildRunFile(rawPath) }
+                };
+
+                NormalizeBusinessAreaAlvFilesForRunResult(
+                    result,
+                    "RUN-SELFTEST-ALV-BUSINESS-AREA-MISSING-FACTORY-RESULT",
+                    "9200",
+                    "RUN-SELFTEST-ALV-BUSINESS-AREA-MISSING-FACTORY-RESULT",
+                    "ZFI019NL");
+
+                bool ok = result.Status.Equals("failed", StringComparison.OrdinalIgnoreCase) &&
+                          result.Files.Count == 1 &&
+                          Path.GetFullPath(Environment.ExpandEnvironmentVariables(result.Files[0].Path ?? "")).Equals(Path.GetFullPath(rawPath), StringComparison.OrdinalIgnoreCase) &&
+                          File.Exists(rawPath) &&
+                          result.Logs.Any(line => line.Level.Equals("ERROR", StringComparison.OrdinalIgnoreCase) &&
+                                                   line.Message.Contains("raw output kept", StringComparison.OrdinalIgnoreCase));
+                Check("ALV business-area split failure keeps raw in run result", ok, $"status={result.Status}, files={result.Files.Count}, rawExists={File.Exists(rawPath)}");
+            }
+            finally
+            {
+                try { if (Directory.Exists(tempDir)) Directory.Delete(tempDir, recursive: true); } catch { }
             }
         }
 

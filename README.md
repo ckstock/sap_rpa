@@ -6,7 +6,7 @@
 
 - 工作区源码目录是 `D:\RPA\RpaProject`，服务器运行目录是 `D:\RPA`。
 - `ZFI019NL` 周损益执行链路展示。
-- 含“保存”的 ALV 导出已按工厂归档：Excel 输出根目录由 `D:\RPA\config.local.json` 的 `fileStorage.alvExportDataDirectory` 或环境变量 `SAP_RPA_ALV_EXPORT_DIR` 控制；默认 `D:\RPA\临时文件\文件数据`。工厂型事务按 `yyyy_WKnn_工厂` 分目录，目录已存在则复用；跨月等同一工厂多窗口只在该工厂目录内合并成一个最终 Excel，不生成跨工厂总表。业务范围型事务先导出原始 ALV，再读取 Excel 中的 `WERKS`/`Plant Code`/`工厂`/`工厂号`/`工厂代码` 等工厂字段，按字段值拆分到各工厂目录；拆分依据只允许使用导出 Excel 的工厂列实际值，缺列或工厂值为空应按 ALV 布局/导出结果排查，不得用 `ZTSD001`、SQLite `plants`、`config.local.json`、业务范围入参或本地映射推断。
+- 含“保存”的 ALV 导出已按工厂归档：Excel 输出根目录由 `D:\RPA\config.local.json` 的 `fileStorage.alvExportDataDirectory` 或环境变量 `SAP_RPA_ALV_EXPORT_DIR` 控制；默认 `D:\RPA\临时文件\文件数据`。工厂型事务按 `yyyy_WKnn_工厂` 分目录，目录已存在则复用；跨月等同一工厂多窗口只在该工厂目录内合并成一个最终 Excel，不生成跨工厂总表。业务范围型事务先导出原始 ALV，再读取 Excel 中的 `WERKS`/`Plant Code`/`工厂`/`工厂号`/`工厂代码`/`大BU-工厂`/`业务范围-小厂` 等工厂字段，按字段值拆分到各工厂目录；拆分依据只允许使用导出 Excel 的工厂列实际值。只有表头或无工厂数据行时视为本业务范围无导出数据，程序会删除 `_raw_business_area` 临时文件和空目录，不登记无用文件且不把该情况当技术失败；有数据但缺工厂列或工厂值为空时任务失败并保留 raw 文件，按 ALV 布局/导出结果排查，不得用 `ZTSD001`、SQLite `plants`、`config.local.json`、业务范围入参或本地映射推断。
 - 通过 `sap-rpa://` 唤醒本机 `SapWebLauncher`。
 - 正式协议只保留 `sap-rpa://`。
 - SAP 系统、客户端、账号和密码只保存在本机执行器配置中，网页只传事务码、工厂和业务范围等业务参数。
