@@ -6667,7 +6667,7 @@ WHERE run_id=$runId;
             string parentPart = SafeFileNamePart(FirstNonEmpty(p.ParentRunId, p.RunId, "single"));
             string plantPart = SafeFileNamePart(FirstNonEmpty(FirstCsvValue(effectivePlants), p.Plant, "plant"));
             string runPart = SafeFileNamePart(FirstNonEmpty(p.RunId, Guid.NewGuid().ToString("N")));
-            string directory = Path.Combine(AlvExportDataDirectory, "_parts", tcodePart, parentPart);
+            string directory = GetAlvFragmentDirectory(tcodePart, parentPart);
             Directory.CreateDirectory(directory);
             string fileName = $"{tcodePart}_{plantPart}_{runPart}.xlsx";
             return new AlvExportTarget(directory, fileName, Path.Combine(directory, fileName));
@@ -6679,17 +6679,104 @@ WHERE run_id=$runId;
         }
     }
 
+    static string GetAlvWeekFolderName(DateTime date)
+    {
+        int week = ISOWeek.GetWeekOfYear(date);
+        return $"{date.Year.ToString(CultureInfo.InvariantCulture)}_WK{week.ToString("00", CultureInfo.InvariantCulture)}";
+    }
+
+    static string GetAlvMergedOutputDirectory(DateTime date)
+    {
+        return Path.Combine(AlvExportDataDirectory, GetAlvWeekFolderName(date));
+    }
+
+    static string GetAlvFragmentDirectory(string transactionCode, string parentRunId)
+    {
+        string tcodePart = SafeFileNamePart(transactionCode.ToUpperInvariant());
+        string parentPart = SafeFileNamePart(parentRunId);
+        return Path.Combine(AlvExportDataDirectory, "_parts", tcodePart, parentPart);
+    }
+
+    static bool IsPathUnderDirectory(string rootDirectory, string candidatePath)
+    {
+        string root = Path.GetFullPath(rootDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        string candidate = Path.GetFullPath(candidatePath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        return candidate.StartsWith(root, StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void CleanupAlvFragmentDirectory(string parentRunId, string transactionCode)
+    {
+        if (string.IsNullOrWhiteSpace(parentRunId) || string.IsNullOrWhiteSpace(transactionCode))
+            return;
+
+        string partsRoot = Path.Combine(AlvExportDataDirectory, "_parts");
+        string fragmentDirectory = GetAlvFragmentDirectory(transactionCode, parentRunId);
+        string? transactionDirectory = Path.GetDirectoryName(fragmentDirectory);
+        try
+        {
+            if (!Directory.Exists(fragmentDirectory))
+                return;
+
+            if (!IsPathUnderDirectory(partsRoot, fragmentDirectory))
+            {
+                Log($"skip ALV fragment cleanup outside parts root: {fragmentDirectory}");
+                AppendRunLog(parentRunId, "WARN", $"skip ALV fragment cleanup outside parts root: {fragmentDirectory}");
+                return;
+            }
+
+            Directory.Delete(fragmentDirectory, recursive: true);
+            AppendRunLog(parentRunId, "INFO", $"ALV fragment directory cleaned: {fragmentDirectory}");
+            TryDeleteEmptyAlvDirectory(transactionDirectory, partsRoot, parentRunId, "transaction parts");
+            TryDeleteEmptyAlvDirectory(partsRoot, partsRoot, parentRunId, "parts root");
+        }
+        catch (Exception ex)
+        {
+            Log($"ALV fragment cleanup failed: runId={parentRunId}, path={fragmentDirectory}, {ex.Message}");
+            AppendRunLog(parentRunId, "WARN", $"ALV fragment cleanup failed: {fragmentDirectory}; {ex.Message}");
+        }
+    }
+
+    static void TryDeleteEmptyAlvDirectory(string? directory, string allowedRoot, string parentRunId, string label)
+    {
+        if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+            return;
+
+        try
+        {
+            if (!IsPathUnderDirectory(allowedRoot, directory))
+            {
+                Log($"skip ALV empty directory cleanup outside parts root: {directory}");
+                AppendRunLog(parentRunId, "WARN", $"skip ALV empty directory cleanup outside parts root: {directory}");
+                return;
+            }
+
+            if (Directory.EnumerateFileSystemEntries(directory).Any())
+                return;
+
+            Directory.Delete(directory, recursive: false);
+            AppendRunLog(parentRunId, "INFO", $"ALV empty {label} directory cleaned: {directory}");
+        }
+        catch (Exception ex)
+        {
+            Log($"ALV empty directory cleanup failed: runId={parentRunId}, path={directory}, {ex.Message}");
+            AppendRunLog(parentRunId, "WARN", $"ALV empty directory cleanup failed: {directory}; {ex.Message}");
+        }
+    }
+
     static RunFile? BuildMergedBatchAlvWorkbook(string parentRunId, List<BatchItemStatus> latestItems, bool requireFragments = false)
     {
         var parent = LoadRun(parentRunId, includeDetails: false);
         if (parent == null || !SupportsAlvExport(parent.TransactionCode))
             return null;
 
-        Directory.CreateDirectory(AlvExportDataDirectory);
+        string finalDirectory = GetAlvMergedOutputDirectory(DateTime.Now);
+        Directory.CreateDirectory(finalDirectory);
         string transactionPart = SafeDisplayFileNamePart(string.Join("_",
             new[] { parent.TransactionCode, parent.TransactionName }.Where(v => !string.IsNullOrWhiteSpace(v))));
         string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
-        string finalPath = Path.Combine(AlvExportDataDirectory, $"{transactionPart}_{timestamp}.xlsx");
+        string finalPath = Path.Combine(finalDirectory, $"{transactionPart}_{timestamp}.xlsx");
 
         var fragments = latestItems
             .OrderBy(i => i.BatchIndex)
@@ -6711,6 +6798,7 @@ WHERE run_id=$runId;
         var file = BuildRunFile(finalPath);
         file.Type = AlvMergedFileType;
         AppendRunLog(parentRunId, "INFO", $"ALV merged workbook generated: {finalPath}; fragments={fragments.Count}");
+        CleanupAlvFragmentDirectory(parentRunId, parent.TransactionCode);
         return file;
     }
 
@@ -6724,8 +6812,6 @@ WHERE run_id=$runId;
     {
         using var output = new XLWorkbook();
         var merged = output.Worksheets.Add("\u5408\u5E76\u6570\u636E");
-        var manifest = output.Worksheets.Add("\u5206\u7247\u6E05\u5355");
-        WriteAlvManifestSheet(manifest, parentRunId, transactionCode, transactionName, latestItems, fragments);
 
         int outputRow = 1;
         bool headerWritten = false;
@@ -6751,22 +6837,16 @@ WHERE run_id=$runId;
                 int sourceColumnCount = range.ColumnCount();
                 if (!headerWritten)
                 {
-                    merged.Cell(outputRow, 1).Value = "\u6765\u6E90\u5DE5\u5382";
-                    merged.Cell(outputRow, 2).Value = "\u5B50\u4EFB\u52A1";
-                    merged.Cell(outputRow, 3).Value = "\u6E90\u6587\u4EF6";
                     for (int col = 1; col <= sourceColumnCount; col++)
-                        merged.Cell(outputRow, col + 3).Value = rows[0].Cell(col).Value;
+                        merged.Cell(outputRow, col).Value = rows[0].Cell(col).Value;
                     outputRow++;
                     headerWritten = true;
                 }
 
                 foreach (var row in rows.Skip(1))
                 {
-                    merged.Cell(outputRow, 1).Value = fragment.Plant;
-                    merged.Cell(outputRow, 2).Value = fragment.ChildRunId;
-                    merged.Cell(outputRow, 3).Value = fragment.FileName;
                     for (int col = 1; col <= sourceColumnCount; col++)
-                        merged.Cell(outputRow, col + 3).Value = row.Cell(col).Value;
+                        merged.Cell(outputRow, col).Value = row.Cell(col).Value;
                     outputRow++;
                     copiedDataRows++;
                 }
@@ -6801,7 +6881,6 @@ WHERE run_id=$runId;
         }
 
         merged.Cell(Math.Max(outputRow, 2), 1).Worksheet.Columns().AdjustToContents();
-        manifest.Columns().AdjustToContents();
         output.Properties.Title = $"{transactionCode} {transactionName}".Trim();
         output.Properties.Subject = $"SAP RPA ALV merged data; parentRunId={parentRunId}; rows={copiedDataRows}";
         output.SaveAs(finalPath);
@@ -11252,11 +11331,13 @@ WScript.Quit 0
                 using var merged = new XLWorkbook(finalPath);
                 var mergedSheet = merged.Worksheet("\u5408\u5E76\u6570\u636E");
                 bool ok = File.Exists(finalPath) &&
-                          mergedSheet.Cell(1, 1).GetString() == "\u6765\u6E90\u5DE5\u5382" &&
-                          mergedSheet.Cell(2, 1).GetString() == "1011" &&
-                          mergedSheet.Cell(2, 4).GetString() == "MAT001" &&
-                          mergedSheet.Cell(3, 1).GetString() == "1022" &&
-                          mergedSheet.Cell(3, 4).GetString() == "MAT002";
+                          !merged.Worksheets.Any(s => s.Name == "\u5206\u7247\u6E05\u5355") &&
+                          mergedSheet.Cell(1, 1).GetString() == "MATNR" &&
+                          mergedSheet.Cell(1, 2).GetString() == "AMOUNT" &&
+                          mergedSheet.Cell(2, 1).GetString() == "MAT001" &&
+                          mergedSheet.Cell(2, 2).GetDouble() == 10 &&
+                          mergedSheet.Cell(3, 1).GetString() == "MAT002" &&
+                          mergedSheet.Cell(3, 2).GetDouble() == 20;
                 Check("ZFI072A ALV fragment merge workbook", ok, $"final={finalPath}");
 
                 CreateMergedAlvWorkbook(emptyPath, "RUN-SELFTEST-ZFI072A-EMPTY", "ZFI072A", "\u91C7\u8D2D\u4EF7\u6708\u8868", items, new List<AlvMergeFragment>());
@@ -11264,6 +11345,9 @@ WScript.Quit 0
                 bool emptyOk = File.Exists(emptyPath) &&
                                empty.Worksheet("\u5408\u5E76\u6570\u636E").Cell(2, 2).GetString().Contains("ALV", StringComparison.OrdinalIgnoreCase);
                 Check("ZFI072A ALV empty merge workbook", emptyOk, $"empty={emptyPath}");
+
+                bool weekFolderOk = Regex.IsMatch(GetAlvWeekFolderName(new DateTime(2026, 8, 4)), @"^2026_WK\d{2}$", RegexOptions.CultureInvariant);
+                Check("ALV merged output week folder name", weekFolderOk, GetAlvWeekFolderName(new DateTime(2026, 8, 4)));
             }
             finally
             {
