@@ -20,7 +20,7 @@
 | 后端 exe | `D:\RPA\bin\SapWebLauncher.exe` | API 只能以运行目录下的 exe 为准。 |
 | 本机 API | `http://127.0.0.1:8080` | SapWebLauncher 默认只监听本机。 |
 | 正式对外 URL | `https://fi_automation.srv.lstech.com/rpa/` | 给用户访问的正式链接；DNS、443、证书、路径前缀和防火墙必须确认。 |
-| 兼容访问 URL | `http://10.0.41.158:6174/rpa/` | 仅用于内网 HTTP 兼容访问和排障，不是 HTTPS。 |
+| 兼容访问 URL | `http://<服务器IP>:6174/rpa/` | 仅用于内网 HTTP 兼容访问和排障，不是 HTTPS。当前联调服务器是 `10.0.41.158`，正式系统 IP 是 `10.0.2.120`。 |
 | HTTPS 证书目录 | `D:\RPA\certs\lstech.com` | 全新生产机放置生产证书；升级已有生产机保留现有证书；证书不进 Git 或普通安装包。 |
 | SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` | 在固定 Windows 执行账号下生成。 |
 | 本机真实配置 | `D:\RPA\config.local.json` | 包含钉钉、SAP NCo、ZFI057 memory fetch 等真实配置，只保存在服务器本机，不提交 Git。 |
@@ -301,6 +301,18 @@ Get-CimInstance Win32_Process |
 Start-Process -FilePath "D:\RPA\bin\SapWebLauncher.exe" -ArgumentList "--serve" -WorkingDirectory "D:\RPA"
 ```
 
+服务器重启或完整启动本项目时，优先使用总入口脚本：
+
+```text
+D:\RPA\启动脚本\start_sap_rpa_services.cmd
+```
+
+脚本默认会自动识别本机 IPv4 作为 HTTP 兼容入口。如果正式机有多块网卡或需要强制指定正式系统 IP，运行：
+
+```text
+D:\RPA\启动脚本\start_sap_rpa_services.cmd -HttpCompatibilityHost 10.0.2.120
+```
+
 不要停止其他项目的 `node.exe`，不要改别人的 80、6173 等端口。
 
 ## 9. 验收
@@ -314,8 +326,8 @@ Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 
 必须继续做真实业务验收：
 
-1. 打开 `https://fi_automation.srv.lstech.com/rpa/`；兼容排障时再打开 `http://10.0.41.158:6174/rpa/`。
-2. 运行 `D:\RPA\启动脚本\check_sap_rpa_services.cmd`，确认 SAP GUI COM 两个 ProgID 均为 `True`，四个 URL 均为 `200 OK`。脚本对 HTTPS 使用 `curl.exe --ssl-no-revoke`，只跳过内网 CRL/OCSP 吊销查询，不跳过证书链和域名校验。
+1. 打开 `https://fi_automation.srv.lstech.com/rpa/`；兼容排障时再打开 `http://<服务器IP>:6174/rpa/`。当前联调服务器用 `http://10.0.41.158:6174/rpa/`，正式系统用 `http://10.0.2.120:6174/rpa/`。
+2. 运行 `D:\RPA\启动脚本\check_sap_rpa_services.cmd`，确认 SAP GUI COM 两个 ProgID 均为 `True`，四个 URL 均为 `200 OK`。正式系统可运行 `D:\RPA\启动脚本\check_sap_rpa_services.cmd -HttpCompatibilityHost 10.0.2.120` 强制验收生产 IP。脚本对 HTTPS 使用 `curl.exe --ssl-no-revoke`，只跳过内网 CRL/OCSP 吊销查询，不跳过证书链和域名校验。
 3. 单独运行 `--test-zfi019nl-memory --businessArea 2800 --period 2026.04.27 --weekEnd 2026.05.03`，确认 ZFI057 第一步能通过 NCo/MEMORY_EXPORT 拿到 ZFI019NL 物料集合。
 4. 提交一次受控事务码任务。
 5. 确认 `runs` 有记录，`run_logs` 或 `run_result_logs` 有日志。

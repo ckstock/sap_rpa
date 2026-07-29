@@ -31,7 +31,9 @@ https://fi_automation.srv.lstech.com/rpa/
   -> SAP GUI / SAP NCo / DingTalk OpenAPI
 ```
 
-The HTTP compatibility URL `http://10.0.41.158:6174/rpa/` is kept for intranet troubleshooting. Do not document it as the primary production URL.
+The HTTP compatibility URL is server-specific: `http://<server-ip>:6174/rpa/`. The current integration server uses `http://10.0.41.158:6174/rpa/`; the production system IP is `10.0.2.120`, so its compatibility URL should be `http://10.0.2.120:6174/rpa/`. Do not document the compatibility URL as the primary production URL, and do not copy the integration-server IP into production scripts.
+
+`D:\RPA\启动脚本\start_sap_rpa_services.cmd` and `check_sap_rpa_services.cmd` pass arguments through to PowerShell. They auto-detect the local IPv4 by default; on production, use `-HttpCompatibilityHost 10.0.2.120` or set `RPA_HTTP_COMPATIBILITY_HOST=10.0.2.120` when the host has multiple NICs.
 
 `sap-rpa://` is only a historical compatibility path. It is not the production user entry for the current server deployment.
 
@@ -127,7 +129,7 @@ Minimum verification after deployment or upgrade:
 Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 curl.exe --ssl-no-revoke -s -o NUL -w "HTTPS portal %{http_code}\n" https://fi_automation.srv.lstech.com/rpa/
 curl.exe --ssl-no-revoke -s -o NUL -w "HTTPS API %{http_code}\n" https://fi_automation.srv.lstech.com/rpa/api/health
-curl.exe -s -o NUL -w "HTTP portal %{http_code}\n" http://10.0.41.158:6174/rpa/
+curl.exe -s -o NUL -w "HTTP portal %{http_code}\n" http://<server-ip>:6174/rpa/
 ```
 
 Health checks are necessary but not sufficient. Before production release, submit a controlled transaction from the real page and verify:

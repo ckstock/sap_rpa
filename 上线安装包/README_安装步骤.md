@@ -45,7 +45,7 @@
 | SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` | 必须在固定 Windows 执行账号下生成。 |
 | 本机真实配置 | `D:\RPA\config.local.json` | 必须手工填写钉钉、SAP NCo、ZFI057 memory fetch 等真实值，不提交 Git。 |
 | 对外访问地址 | `https://fi_automation.srv.lstech.com/rpa/` | 正式用户链接；DNS、443、证书、路径前缀、防火墙和网关需要单独确认。 |
-| 兼容访问地址 | `http://10.0.41.158:6174/rpa/` | 保留给内网端口访问和排障；这是 HTTP，不是 HTTPS。 |
+| 兼容访问地址 | `http://<服务器IP>:6174/rpa/` | 保留给内网端口访问和排障；这是 HTTP，不是 HTTPS。当前联调服务器是 `10.0.41.158`，正式系统 IP 是 `10.0.2.120`。 |
 | HTTPS 证书目录 | `D:\RPA\certs\lstech.com` | 只能放服务器本机，不提交 Git；权限限制为执行账号、Administrators、SYSTEM。 |
 
 ## 本机 JSON 配置
@@ -191,7 +191,7 @@ Start-Process -FilePath "D:\RPA\bin\SapWebLauncher.exe" -ArgumentList "--serve" 
 powershell -ExecutionPolicy Bypass -File "D:\RPA\gateway\start-rpa-gateway.ps1"
 ```
 
-这个脚本只匹配 `D:\RPA\gateway\rpa-gateway.js`，会启动 `http://0.0.0.0:6174/rpa/` 和 `https://0.0.0.0:443/rpa/`。不要停止其他项目的 `node.exe`，不要占用别人已有的 80、6173 等端口。
+这个脚本只匹配 `D:\RPA\gateway\rpa-gateway.js`，会启动 `http://0.0.0.0:6174/rpa/` 和 `https://0.0.0.0:443/rpa/`。不要停止其他项目的 `node.exe`，不要占用别人已有的 80、6173 等端口。HTTP 兼容入口的展示 IP 必须取目标服务器本机 IPv4；可用 `ipconfig` 或 `Get-NetIPAddress -AddressFamily IPv4` 查看。当前联调服务器是 `10.0.41.158`，正式系统是 `10.0.2.120`。
 
 注意：`D:\RPA\启动脚本` 是线上运行入口；`D:\RPA\RpaProject\启动脚本` 是 Git 源码副本。两处脚本默认 `RuntimeRoot = D:\RPA`，从源码目录双击也会操作线上运行目录，不是独立测试环境。
 
@@ -204,6 +204,15 @@ D:\RPA\启动脚本\start_sap_rpa_services.cmd
 ```text
 D:\RPA\启动脚本\check_sap_rpa_services.cmd
 ```
+
+这两个 `.cmd` 默认会自动识别本机 IPv4 作为 HTTP 兼容入口。如果生产机有多块网卡或需要强制指定正式系统 IP，使用：
+
+```text
+D:\RPA\启动脚本\start_sap_rpa_services.cmd -HttpCompatibilityHost 10.0.2.120
+D:\RPA\启动脚本\check_sap_rpa_services.cmd -HttpCompatibilityHost 10.0.2.120
+```
+
+也可以在运行前设置环境变量 `RPA_HTTP_COMPATIBILITY_HOST=10.0.2.120`。
 
 GitNexus 影响分析入口：
 ```text
@@ -218,7 +227,7 @@ D:\RPA\启动脚本\gitnexus.cmd detect-changes
 | 服务 | 进程/端口 | 说明 |
 | --- | --- | --- |
 | 本地 API | `D:\RPA\bin\SapWebLauncher.exe --serve`，`127.0.0.1:8080` | 负责队列、SQLite、SAP GUI/VBS 执行和钉钉发送。 |
-| HTTP 兼容网关 | `node.exe D:\RPA\gateway\rpa-gateway.js`，`0.0.0.0:6174` | 提供 `http://10.0.41.158:6174/rpa/`。 |
+| HTTP 兼容网关 | `node.exe D:\RPA\gateway\rpa-gateway.js`，`0.0.0.0:6174` | 提供 `http://<服务器IP>:6174/rpa/`；联调示例 `http://10.0.41.158:6174/rpa/`，正式系统示例 `http://10.0.2.120:6174/rpa/`。 |
 | HTTPS 正式网关 | `node.exe D:\RPA\gateway\rpa-gateway.js`，`0.0.0.0:443` | 提供 `https://fi_automation.srv.lstech.com/rpa/`。 |
 
 ## SAP 登录配置
@@ -273,7 +282,7 @@ C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 
 1. 页面 `https://fi_automation.srv.lstech.com/rpa/` 能打开。
 2. `https://fi_automation.srv.lstech.com/rpa/api/health` 返回正常。
-3. 兼容入口 `http://10.0.41.158:6174/rpa/` 能打开。
+3. 兼容入口 `http://<服务器IP>:6174/rpa/` 能打开；正式系统按 `http://10.0.2.120:6174/rpa/` 验收，当前联调服务器按 `http://10.0.41.158:6174/rpa/` 验收。
 4. `D:\RPA\启动脚本\check_sap_rpa_services.cmd` 输出四个 URL 检查均为 `200 OK`。脚本对 HTTPS 使用 `curl.exe --ssl-no-revoke`，只跳过内网 CRL/OCSP 吊销查询，不跳过证书链和域名校验。
 5. 浏览器从正式域名打开时，API 请求走 `https://fi_automation.srv.lstech.com/rpa/api/*`，不是旧的 `127.0.0.1`、旧 IP 或旧 `/charge`。
 6. 证书域名匹配 `fi_automation.srv.lstech.com`，有效期未过期，浏览器无证书告警。

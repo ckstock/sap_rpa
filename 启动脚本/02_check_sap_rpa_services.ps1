@@ -1,5 +1,6 @@
 param(
-    [string]$RuntimeRoot = "D:\RPA"
+    [string]$RuntimeRoot = "D:\RPA",
+    [string]$HttpCompatibilityHost = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -51,6 +52,36 @@ function Invoke-UrlStatus {
     return [int]$response.StatusCode
 }
 
+function Resolve-HttpCompatibilityHost {
+    param([string]$ConfiguredHost)
+
+    if (-not [string]::IsNullOrWhiteSpace($ConfiguredHost)) {
+        return $ConfiguredHost.Trim()
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($env:RPA_HTTP_COMPATIBILITY_HOST)) {
+        return $env:RPA_HTTP_COMPATIBILITY_HOST.Trim()
+    }
+
+    try {
+        $address = [System.Net.Dns]::GetHostAddresses([System.Net.Dns]::GetHostName()) |
+            Where-Object {
+                $_.AddressFamily -eq [System.Net.Sockets.AddressFamily]::InterNetwork -and
+                $_.IPAddressToString -notlike "127.*" -and
+                $_.IPAddressToString -notlike "169.254.*"
+            } |
+            Select-Object -First 1
+
+        if ($address) {
+            return $address.IPAddressToString
+        }
+    } catch {
+        Write-Warning "Unable to auto-detect local IPv4 for HTTP compatibility URL: $($_.Exception.Message)"
+    }
+
+    return "127.0.0.1"
+}
+
 Write-Host "SAP GUI COM check:"
 $sapComResults = @("SapROTWr.SapROTWrapper", "Sapgui.ScriptingCtrl.1") | ForEach-Object {
     $registered = $false
@@ -81,11 +112,15 @@ Write-Host "Port check:"
 netstat -ano | Select-String -Pattern "0\.0\.0\.0:443\s|0\.0\.0\.0:6174\s|127\.0\.0\.1:8080\s"
 
 Write-Host "URL check:"
+$resolvedHttpCompatibilityHost = Resolve-HttpCompatibilityHost -ConfiguredHost $HttpCompatibilityHost
+$httpCompatibilityUrl = "http://${resolvedHttpCompatibilityHost}:6174/rpa/"
+Write-Host "HTTP compatibility host: $resolvedHttpCompatibilityHost"
+
 $checks = @(
     @{ Name = "Local API"; Uri = "http://127.0.0.1:8080/api/health" },
     @{ Name = "HTTPS portal"; Uri = "https://fi_automation.srv.lstech.com/rpa/" },
     @{ Name = "HTTPS API proxy"; Uri = "https://fi_automation.srv.lstech.com/rpa/api/health" },
-    @{ Name = "HTTP compatibility portal"; Uri = "http://10.0.41.158:6174/rpa/" }
+    @{ Name = "HTTP compatibility portal"; Uri = $httpCompatibilityUrl }
 )
 
 $results = foreach ($check in $checks) {
