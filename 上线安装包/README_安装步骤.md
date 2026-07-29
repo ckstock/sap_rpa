@@ -10,6 +10,7 @@
 
 ```text
 上线安装文档清单.md
+生产部署拷贝清单.md
 最终上线部署步骤\README_V2_Windows_Server_上线部署.md
 ```
 
@@ -18,6 +19,7 @@
 | 文件 | 用途 |
 | --- | --- |
 | `上线安装文档清单.md` | 上线前、上线中、上线后的人工核对清单。 |
+| `生产部署拷贝清单.md` | 生产机整包拷贝、状态保留、证书 `D:\RPA\certs` 处理规则。 |
 | `最终上线部署步骤\README_V2_Windows_Server_上线部署.md` | Windows Server 手工部署 runbook。 |
 | `config.local.example.json` | 本机配置模板，覆盖钉钉 OpenAPI、SAP NCo 和 ZFI057/ZFI019NL memory fetch，只能作为字段说明。 |
 | `00_生成上线安装包.cmd` | 在开发/打包机生成发布包。 |
@@ -148,9 +150,9 @@ Get-Content $out
 | 事务脚本 | `网页启动登录\transactions\*.vbs` 和 `transaction-config.json` 复制到 `D:\RPA\transactions\` |
 | 配置模板 | `上线安装包\config.local.example.json` 复制到 `D:\RPA\config.local.example.json` |
 
-生产机本地生成或保留的内容不要从开发机覆盖：`D:\RPA\config.local.json`、`D:\RPA\data\sap-rpa-config.db`、`D:\RPA\logs\`、`D:\RPA\outputs\`、`D:\RPA\certs\lstech.com\`、`%LOCALAPPDATA%\SapWebLauncher\config.json`。
+生产机本地生成或保留的内容不要从开发机覆盖：`D:\RPA\config.local.json`、`D:\RPA\data\sap-rpa-config.db`、`D:\RPA\logs\`、`D:\RPA\outputs\`、`D:\RPA\certs\lstech.com\`、`%LOCALAPPDATA%\SapWebLauncher\config.json`。详细拷贝边界和证书处理规则见 `生产部署拷贝清单.md`。
 
-可以把当前 `D:\RPA` 整包拷贝到生产机，但只把它当作程序包。全新生产机拷贝后必须重新填写真实 `config.local.json`、重新生成 SAP 登录配置、重新放置生产证书；升级已有生产机时必须先备份并保留生产机自己的 `config.local.json`、SQLite 数据库和证书目录，不要被测试机文件覆盖。
+可以把当前 `D:\RPA` 整包拷贝到生产机，但只把它当作程序包。全新生产机拷贝后必须重新填写真实 `config.local.json`、重新生成 SAP 登录配置、重新放置生产证书；升级已有生产机时必须先备份并保留生产机自己的 `config.local.json`、SQLite 数据库和证书目录，不要被测试机文件覆盖。`D:\RPA\certs` 可以作为受控生产证书备份/迁移材料复制，但不能跟普通程序包、GitHub 或公开 zip 包一起流转。
 
 ```powershell
 Set-Location "D:\RPA\RpaProject"

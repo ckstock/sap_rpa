@@ -1,6 +1,6 @@
 # SAP RPA V2 下一任 AI 交接文档
 
-更新时间：2026-07-28
+更新时间：2026-07-29
 
 ## 当前项目定位
 
@@ -25,11 +25,15 @@
 - SQLite 运行库：`D:\RPA\data\sap-rpa-config.db`
 - 功能说明书：`D:\RPA\RpaProject\SapRpa_V2_功能说明书.html`
 - 安装包权威清单：`D:\RPA\RpaProject\上线安装包\上线安装文档清单.md`
+- 生产部署拷贝清单：`D:\RPA\RpaProject\上线安装包\生产部署拷贝清单.md`
 - Windows Server 手工部署 runbook：`D:\RPA\RpaProject\上线安装包\最终上线部署步骤\README_V2_Windows_Server_上线部署.md`
 
-## 2026-07-28 上线前最新状态
+## 2026-07-29 上线/生产部署最新状态
 
 - 正式用户入口是 `https://fi_automation.srv.lstech.com/rpa/`；`http://10.0.41.158:6174/rpa/` 只保留为 HTTP 兼容排障入口。
+- 生产部署拷贝边界以 `上线安装包\生产部署拷贝清单.md` 为准：可以把 `D:\RPA` 当作程序包整体拷贝到生产机，但只能带走 `index.html`、`assets`、`gateway`、`启动脚本`、`bin`、`transactions`、`依赖\SapNco`、`config.local.example.json` 和运维文档。
+- 生产机专属状态不能被测试机覆盖：`D:\RPA\config.local.json`、`D:\RPA\data\sap-rpa-config.db`、`D:\RPA\logs\`、`D:\RPA\outputs\`、`D:\RPA\certs\lstech.com\`、`%LOCALAPPDATA%\SapWebLauncher\config.json`。全新生产机要重新填写/放置/生成这些内容；已有生产机升级要先备份并默认保留。
+- `D:\RPA\certs` 不是技术上只能安装不能复制；它可以作为受控生产证书备份/迁移材料复制。但它是 secret，不能进 GitHub、普通安装包、公开 zip 或聊天明文附件；全新生产机放生产证书，升级已有生产机保留现有证书，复制/替换后必须重设 ACL 并验收 HTTPS。
 - 含“保存”的 ALV Excel 导出只承诺 7 个事务码：`ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`。`ZFI019NI` 是无生产 VBS 的旧残留，已从默认前端 fallback 和 `transaction-config.json` 移除；后端历史 run 名称解析可以保留，不代表它是生产入口。
 - Excel 输出根目录必须由运行目录真实配置 `D:\RPA\config.local.json` 的 `fileStorage.alvExportDataDirectory` 控制，默认 `D:\RPA\临时文件\文件数据`；临时覆盖可用环境变量 `SAP_RPA_ALV_EXPORT_DIR`。生产机换网络共享盘时只改配置并重启后端，不改 VBS 或 C#。
 - 上线/升级后必须从运行目录验证：publish 输出完整复制到 `D:\RPA\bin`，`assets`、`gateway`、`启动脚本`、`transactions` 同步到 `D:\RPA`，执行 `--init-db` 保留并迁移 SQLite，只重启本项目 `SapWebLauncher.exe --serve`。

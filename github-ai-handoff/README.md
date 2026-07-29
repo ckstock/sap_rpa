@@ -1,6 +1,6 @@
 # SAP RPA Project AI Handoff
 
-Last updated: 2026-07-28
+Last updated: 2026-07-29
 
 This folder is for project handoff between computers, maintainers, and AI coding agents. It must not contain SAP passwords, DingTalk secrets, GitHub tokens, OAuth tickets, certificates, SQLite databases, logs, exported Excel files, or personal credentials.
 
@@ -13,6 +13,7 @@ The current project authority is no longer the old Netlify + `sap-rpa://` handof
 - `SapRpa_V2_功能说明书.html`: user-visible behavior and operation guide.
 - `SAP_直接调用清单.md`: SAP table/report/function/VBS direct-call inventory.
 - `上线安装包/上线安装文档清单.md`: production installation checklist.
+- `上线安装包/生产部署拷贝清单.md`: production copy, local-state preservation, and certificate handling checklist.
 - `上线安装包/README_安装步骤.md`: manual installation and upgrade guide.
 - `上线安装包/最终上线部署步骤/README_V2_Windows_Server_上线部署.md`: Windows Server runbook.
 
@@ -47,6 +48,7 @@ The HTTP compatibility URL `http://10.0.41.158:6174/rpa/` is kept for intranet t
 - Runtime startup scripts: `D:\RPA\启动脚本`
 - Real local config: `D:\RPA\config.local.json`
 - Config template: `D:\RPA\config.local.example.json`
+- HTTPS certificate directory: `D:\RPA\certs\lstech.com`
 
 After any source change that affects frontend, transactions, gateway, scripts, docs, or backend code, copy or publish to the runtime directory before testing the public URL. A green source build does not prove the deployed server is running the new version.
 
@@ -56,10 +58,25 @@ Production-specific values stay on the machine:
 
 - SAP GUI login config: `%LOCALAPPDATA%\SapWebLauncher\config.json`, protected by Windows DPAPI for the current Windows user.
 - DingTalk and SAP NCo config: `D:\RPA\config.local.json`.
-- Certificates under `D:\RPA\certs`.
+- Certificates under `D:\RPA\certs\lstech.com`.
 - SQLite, logs, and exported Excel output under `D:\RPA`.
 
 Do not commit these runtime-private files.
+
+## Production Copy Rule
+
+`D:\RPA` can be copied to a production server as a program package, but production-local state must not be overwritten by test-server state. Program files include `index.html`, `assets`, `gateway`, `启动脚本`, `bin`, `transactions`, `依赖\SapNco`, `config.local.example.json`, and docs.
+
+Preserve or recreate production-local state on the target machine:
+
+- `D:\RPA\config.local.json`
+- `D:\RPA\data\sap-rpa-config.db`
+- `D:\RPA\logs\`
+- `D:\RPA\outputs\`
+- `D:\RPA\certs\lstech.com\`
+- `%LOCALAPPDATA%\SapWebLauncher\config.json`
+
+`D:\RPA\certs` is not technically install-only; it can be copied only as controlled production certificate backup/migration material. It must not be included in GitHub, public zip packages, normal program packages, or plaintext chat attachments. After certificate copy or replacement, reset ACLs and verify HTTPS.
 
 The ALV Excel output root is controlled by:
 

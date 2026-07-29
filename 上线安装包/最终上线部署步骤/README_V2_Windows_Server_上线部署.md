@@ -21,6 +21,7 @@
 | 本机 API | `http://127.0.0.1:8080` | SapWebLauncher 默认只监听本机。 |
 | 正式对外 URL | `https://fi_automation.srv.lstech.com/rpa/` | 给用户访问的正式链接；DNS、443、证书、路径前缀和防火墙必须确认。 |
 | 兼容访问 URL | `http://10.0.41.158:6174/rpa/` | 仅用于内网 HTTP 兼容访问和排障，不是 HTTPS。 |
+| HTTPS 证书目录 | `D:\RPA\certs\lstech.com` | 全新生产机放置生产证书；升级已有生产机保留现有证书；证书不进 Git 或普通安装包。 |
 | SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` | 在固定 Windows 执行账号下生成。 |
 | 本机真实配置 | `D:\RPA\config.local.json` | 包含钉钉、SAP NCo、ZFI057 memory fetch 等真实配置，只保存在服务器本机，不提交 Git。 |
 | 本机配置模板 | `D:\RPA\config.local.example.json` | 只能作为字段说明。 |
@@ -51,6 +52,7 @@ D:\RPA\
   data\sap-rpa-config.db
   logs\
   outputs\
+  certs\lstech.com\
   config.local.example.json
   config.local.json
 ```
@@ -61,15 +63,17 @@ D:\RPA\
 D:\RPA\data\sap-rpa-config.db
 D:\RPA\logs\
 D:\RPA\outputs\
+D:\RPA\certs\lstech.com\
 D:\RPA\config.local.json
 %LOCALAPPDATA%\SapWebLauncher\config.json
 ```
 
-可以把当前 `D:\RPA` 整包拷贝到生产机，但要把它当作程序包，而不是直接把测试机状态搬成生产状态：
+可以把当前 `D:\RPA` 整包拷贝到生产机，但要把它当作程序包，而不是直接把测试机状态搬成生产状态。详细规则见 `..\生产部署拷贝清单.md`：
 
 1. 可以直接带走 `index.html`、`assets`、`gateway`、`启动脚本`、`bin`、`transactions`、`config.local.example.json`。
 2. 全新生产机拷贝后必须重新填写真实 `D:\RPA\config.local.json`、重新生成 `%LOCALAPPDATA%\SapWebLauncher\config.json`、重新放置生产证书。
 3. 升级已有生产机时，先备份并保留生产机自己的 `config.local.json`、`data\sap-rpa-config.db` 和 `certs\lstech.com`，不要被测试机文件覆盖。
+4. `D:\RPA\certs` 可以作为受控生产证书备份/迁移材料复制，但不能跟普通程序包、GitHub 或公开 zip 包一起流转；复制后必须重设 ACL。
 
 ## 4. 拉取源码并发布
 
@@ -352,6 +356,6 @@ $script = Get-Content -LiteralPath "D:\RPA\RpaProject\上线安装包\scripts\ma
 D:\RPA\RpaProject\上线安装包\00_生成上线安装包.cmd
 ```
 
-生成包只包含手工安装文档、必要脚本、发布后的 `SapWebLauncher`、前端资源、VBS 和配置模板；不包含真实 `config.local.json`、SQLite、日志、输出文件或 SAP 登录配置。
+生成包只包含手工安装文档、必要脚本、发布后的 `SapWebLauncher`、前端资源、VBS 和配置模板；不包含真实 `config.local.json`、SQLite、日志、输出文件、`D:\RPA\certs` 证书目录或 SAP 登录配置。
 
 交付前必须从最终包或解压目录做一次真实验收：记录包路径、生成时间和 `PACKAGE_VERSION.txt`，按 `D:\RPA` 目标路径执行一次覆盖升级，确认生产专属 `config.local.json`、SQLite、证书、日志和输出未被覆盖；启动后确认 `runtimeRoot=D:\RPA`、正式 HTTPS/兼容 HTTP 入口可用，并从网页提交一次受控任务，验证数据库写回、钉钉日志和含“保存”事务的 Excel 落盘。失败时收集 `D:\RPA\logs` 对应 stderr/log 尾部。
