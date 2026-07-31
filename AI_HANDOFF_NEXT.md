@@ -31,6 +31,7 @@
 ## 2026-07-29 上线/生产部署最新状态
 
 - 正式用户入口是 `https://fi_automation.srv.lstech.com/rpa/`；HTTP 兼容排障入口按目标服务器 IP 生成，格式为 `http://<服务器IP>:6174/rpa/`。当前联调服务器示例是 `http://10.0.41.158:6174/rpa/`，正式系统 IP 是 `10.0.2.120`，正式系统兼容入口应为 `http://10.0.2.120:6174/rpa/`，不要把测试 IP 照抄到生产机。
+- 端口口径：`SapWebLauncher.exe --serve` 只作为本机 API 监听 `127.0.0.1:8080`；`gateway\rpa-gateway.js` 默认监听 `0.0.0.0:6174`，路径前缀固定 `/rpa/`，并把 `/rpa/api/*` 代理到本机 API；正式 HTTPS 用户入口仍是 `https://fi_automation.srv.lstech.com/rpa/`。不要占用或修改别人项目使用的 80、6173 等端口。
 - `D:\RPA\启动脚本\start_sap_rpa_services.cmd` 和 `check_sap_rpa_services.cmd` 已支持把参数透传给 PowerShell。默认自动识别本机 IPv4；正式机有多网卡或要强制指定时，用 `-HttpCompatibilityHost 10.0.2.120`，或设置环境变量 `RPA_HTTP_COMPATIBILITY_HOST=10.0.2.120`。
 - 生产部署拷贝边界以 `上线安装包\生产部署拷贝清单.md` 为准：可以把 `D:\RPA` 当作程序包整体拷贝到生产机，但只能带走 `index.html`、`assets`、`gateway`、`启动脚本`、`bin`、`transactions`、`依赖\SapNco`、`config.local.example.json` 和运维文档。
 - GitHub 仓库只保留 `D:\RPA\RpaProject\上线安装包` 这一套最终上线资料；运行根目录下旧 `安装包`、旧 `上线安装包`、`临时文件`、`vp` 都不是源码交付物，不应提交。`D:\RPA\临时文件\文件数据` 可能被运行时按默认导出路径自动重建，生产以 `config.local.json` 的 `fileStorage.alvExportDataDirectory` 为准。
