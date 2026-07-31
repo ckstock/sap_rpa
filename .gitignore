@@ -2,6 +2,9 @@
 **/obj/
 dist/
 publish/
+安装包/
+临时文件/
+vp/
 *.user
 *.suo
 *.log

@@ -300,7 +300,7 @@ C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 
 生成或更新上线包后，不要只检查 zip/文件是否存在。提交或发给生产机前，至少从最终交付物路径跑一遍：
 
-1. 从 `D:\RPA\安装包` 或最终解压目录开始检查，不只看 `D:\RPA\RpaProject` 源码。
+1. 从 `D:\RPA\RpaProject\上线安装包` 或最终解压目录开始检查，不只看 `D:\RPA\RpaProject` 源码。
 2. 记录包路径、生成时间、`PACKAGE_VERSION.txt` 或当前 git commit。
 3. 用真实目标路径 `D:\RPA` 执行一次覆盖升级流程，确认生产专属 `config.local.json`、SQLite、日志、输出和证书目录没有被覆盖。
 4. 启动后确认进程留存、`runtimeRoot=D:\RPA`、四个 URL 检查正常。
