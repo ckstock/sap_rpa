@@ -624,7 +624,7 @@
             </label>
             <div class="week-range-inputs">
               <label>类型<select id="testDateKind" ${disabled}><option value="week" ${kind === "week" ? "selected" : ""}>ISO 周</option><option value="range" ${kind === "range" ? "selected" : ""}>日期范围</option></select></label>
-              <label ${kind === "range" ? "hidden" : ""}>测试周<input id="testIsoWeek" type="week" value="${esc(normalizeIsoWeekText(state.form.testIsoWeek) || defaults.testIsoWeek)}" ${disabled}></label>
+              <label ${kind === "range" ? "hidden" : ""}>测试周<input id="testIsoWeek" type="text" inputmode="numeric" value="${esc(normalizeIsoWeekText(state.form.testIsoWeek) || defaults.testIsoWeek)}" ${disabled}></label>
               <label ${kind === "week" ? "hidden" : ""}>开始日期<input id="testDateStart" type="date" value="${esc(state.form.testDateStart || defaults.testDateStart)}" ${disabled}></label>
               <label ${kind === "week" ? "hidden" : ""}>截止日期<input id="testDateEnd" type="date" value="${esc(state.form.testDateEnd || defaults.testDateEnd)}" ${disabled}></label>
               <span class="table-hint">本次入参：${esc(inputText)}</span>
@@ -656,7 +656,7 @@
                     </label>
                     <div class="week-range-inputs">
                       <label>类型<select id="scheduleTestDateKind" ${disabled}><option value="week" ${kind === "week" ? "selected" : ""}>ISO 周</option><option value="range" ${kind === "range" ? "selected" : ""}>日期范围</option></select></label>
-                      <label ${kind === "range" ? "hidden" : ""}>测试周<input id="scheduleTestIsoWeek" type="week" value="${esc(normalizeIsoWeekText(state.scheduleForm.testIsoWeek) || defaults.testIsoWeek)}" ${disabled}></label>
+                      <label ${kind === "range" ? "hidden" : ""}>测试周<input id="scheduleTestIsoWeek" type="text" inputmode="numeric" value="${esc(normalizeIsoWeekText(state.scheduleForm.testIsoWeek) || defaults.testIsoWeek)}" ${disabled}></label>
                       <label ${kind === "week" ? "hidden" : ""}>开始日期<input id="scheduleTestDateStart" type="date" value="${esc(state.scheduleForm.testDateStart || defaults.testDateStart)}" ${disabled}></label>
                       <label ${kind === "week" ? "hidden" : ""}>截止日期<input id="scheduleTestDateEnd" type="date" value="${esc(state.scheduleForm.testDateEnd || defaults.testDateEnd)}" ${disabled}></label>
                       <span class="table-hint">本次入参：${esc(previewRange.period)} 至 ${esc(previewRange.weekEnd)}</span>

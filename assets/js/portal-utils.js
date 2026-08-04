@@ -120,9 +120,12 @@
     }
 
     function normalizeIsoWeekText(value) {
-      const match = String(value || "").trim().toUpperCase().match(/^(\d{4})-?W(\d{1,2})$/);
+      const text = String(value || "").trim().toUpperCase();
+      const match = text.match(/^(?:(\d{4})\s*(?:-|\s)?\s*(?:W\s*)?(\d{1,2})(?:\s*年?\s*周)?|(\d{4})年\s*(\d{1,2})周)$/);
       if (!match) return "";
-      return `${match[1]}-W${String(Number(match[2])).padStart(2, "0")}`;
+      const year = match[1] || match[3];
+      const week = match[2] || match[4];
+      return `${year}-W${String(Number(week)).padStart(2, "0")}`;
     }
 
     function isoWeekStartDate(year, week) {

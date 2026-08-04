@@ -58,9 +58,10 @@ static class Program
     private static readonly string ExecutorId = $"{Environment.MachineName}\\{Environment.UserName}";
     private static readonly string[] TestDateOverrideClearKeys =
     {
-        "dateMode", "testDateMode", "testDateKind", "testIsoWeek", "testDateStart", "testDateEnd",
-        "period", "weekEnd", "year", "week",
-        "startDate", "endDate", "fromDate", "toDate", "dateFrom", "dateTo", "beginDate", "dateBegin", "dateEnd"
+        "dateMode", "date_mode", "testDateMode", "test_date_mode", "testDateKind", "test_date_kind",
+        "testIsoWeek", "test_iso_week", "testDateStart", "test_date_start", "testDateEnd", "test_date_end",
+        "dateRangeSource", "dateRule", "period", "weekEnd", "week_end", "year", "gjahr", "week", "weekno", "weekNo", "wk",
+        "startDate", "endDate", "dateEnd", "fromDate", "toDate", "dateFrom", "dateTo", "beginDate", "dateBegin"
     };
     private static readonly object DatabaseInitLock = new();
     private static bool DatabaseInitialized;
@@ -1006,16 +1007,16 @@ static class Program
             Plants = First(query, "plants", "werkslist", "plantlist") ?? "",
             Year = First(query, "year", "gjahr") ?? "",
             Week = First(query, "week", "weekno", "wk") ?? "",
-            Period = First(query, "period", "periodtext", "startDate", "fromDate", "dateFrom", "beginDate", "dateBegin") ?? "",
+            Period = First(query, "period", "periodtext", "startDate", "start_date", "fromDate", "dateFrom", "beginDate", "dateBegin") ?? "",
             BusinessArea = First(query, "businessarea", "gsber") ?? "",
             BusinessAreas = First(query, "businessareas", "gsberlist", "businessarealist") ?? "",
-            WeekEnd = First(query, "weekend", "week_end", "date", "endDate", "toDate", "dateTo", "dateEnd") ?? "",
-            DateMode = First(query, "dateMode", "datemode") ?? "",
-            TestDateMode = First(query, "testDateMode", "testdatemode") ?? "",
-            TestDateKind = First(query, "testDateKind", "testdatekind") ?? "",
-            TestIsoWeek = First(query, "testIsoWeek", "testisoweek", "isoWeek", "isoweek") ?? "",
-            TestDateStart = First(query, "testDateStart", "testdatestart") ?? "",
-            TestDateEnd = First(query, "testDateEnd", "testdateend") ?? "",
+            WeekEnd = First(query, "weekend", "week_end", "date", "endDate", "end_date", "toDate", "dateTo", "dateEnd") ?? "",
+            DateMode = First(query, "dateMode", "date_mode", "datemode") ?? "",
+            TestDateMode = First(query, "testDateMode", "test_date_mode", "testdatemode") ?? "",
+            TestDateKind = First(query, "testDateKind", "test_date_kind", "testdatekind") ?? "",
+            TestIsoWeek = First(query, "testIsoWeek", "test_iso_week", "testisoweek", "isoWeek", "isoweek") ?? "",
+            TestDateStart = First(query, "testDateStart", "test_date_start", "testdatestart") ?? "",
+            TestDateEnd = First(query, "testDateEnd", "test_date_end", "testdateend") ?? "",
             Materials = First(query, "materials", "materiallist", "matnrs", "matnrlist", "s_matnr") ?? "",
             FactoryGroup = First(query, "factorygroup", "plantgroup") ?? "",
             RunStrategy = First(query, "runstrategy", "strategy") ?? "",
@@ -4653,6 +4654,8 @@ WHERE run_id=$runId;
             }
             else
             {
+                if (!allowTestDateOverride)
+                    Log($"test date override ignored outside test888: tcode={tcode}");
                 ClearTestDateOverrideParams(values);
             }
         }
@@ -4664,7 +4667,9 @@ WHERE run_id=$runId;
     static bool HasTestDateOverrideMarker(Dictionary<string, string> values)
     {
         return IsTestDateOverrideMarkerValue(GetParamValue(values, "dateMode")) ||
-               IsTestDateOverrideMarkerValue(GetParamValue(values, "testDateMode"));
+               IsTestDateOverrideMarkerValue(GetParamValue(values, "date_mode")) ||
+               IsTestDateOverrideMarkerValue(GetParamValue(values, "testDateMode")) ||
+               IsTestDateOverrideMarkerValue(GetParamValue(values, "test_date_mode"));
     }
 
     static bool IsTestDateOverrideMarkerValue(string value)
@@ -4722,17 +4727,20 @@ WHERE run_id=$runId;
     static string NormalizeIsoWeekText(string value)
     {
         string text = FirstNonEmpty(value, "").Trim().ToUpperInvariant();
-        Match match = Regex.Match(text, @"^(\d{4})-?W(\d{1,2})$", RegexOptions.CultureInvariant);
+        Match match = Regex.Match(text, @"^(\d{4})\s*(?:-|\s)?\s*(?:W\s*)?(\d{1,2})(?:\s*\u5E74?\s*\u5468)?$|^(\d{4})\u5E74\s*(\d{1,2})\u5468$", RegexOptions.CultureInvariant);
         if (!match.Success)
             return text;
-        return $"{match.Groups[1].Value}-W{int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture):00}";
+        string year = match.Groups[1].Success ? match.Groups[1].Value : match.Groups[3].Value;
+        string week = match.Groups[2].Success ? match.Groups[2].Value : match.Groups[4].Value;
+        return $"{year}-W{int.Parse(week, CultureInfo.InvariantCulture):00}";
     }
 
     static bool TryParseIsoWeek(string value, out DateTime start, out DateTime end)
     {
         start = default;
         end = default;
-        Match match = Regex.Match(FirstNonEmpty(value, "").Trim().ToUpperInvariant(), @"^(\d{4})-?W(\d{1,2})$", RegexOptions.CultureInvariant);
+        string normalized = NormalizeIsoWeekText(value);
+        Match match = Regex.Match(normalized, @"^(\d{4})-W(\d{1,2})$", RegexOptions.CultureInvariant);
         if (!match.Success)
             return false;
 
@@ -13089,6 +13097,14 @@ Item1=test888
         }
 
         {
+            string[] formats = { "2026W18", "2026-18", "2026 18", "2026年18周" };
+            bool ok = formats.All(value => NormalizeIsoWeekText(value).Equals("2026-W18", StringComparison.Ordinal) &&
+                                           TryParseIsoWeek(value, out DateTime start, out DateTime end) &&
+                                           start == new DateTime(2026, 4, 27) && end == new DateTime(2026, 5, 3));
+            Check("test date ISO week legacy formats normalize", ok, string.Join(", ", formats));
+        }
+
+        {
             var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
                 ["dateMode"] = "testOverride",
@@ -13110,21 +13126,28 @@ Item1=test888
         {
             var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
             {
-                ["dateMode"] = "testOverride",
+                ["date_mode"] = "testOverride",
+                ["test_date_mode"] = "testOverride",
+                ["test_date_kind"] = "week",
+                ["test_iso_week"] = "2026-W18",
                 ["period"] = "2026.04.27",
-                ["weekEnd"] = "2026.05.03",
-                ["year"] = "2026",
-                ["week"] = "18",
+                ["week_end"] = "2026.05.03",
+                ["gjahr"] = "2026",
+                ["weekno"] = "18",
                 ["startDate"] = "2026-04-27",
-                ["dateEnd"] = "2026-05-03"
+                ["dateEnd"] = "2026-05-03",
+                ["dateRangeSource"] = "testOverride",
+                ["dateRule"] = "manual"
             };
             NormalizeExecutionDateParams("ZFI057", values, allowTestDateOverride: false, addDefault: true);
             var defaultRange = ResolveDefaultExecutionDateRange();
+            string[] clearedAliases =
+            {
+                "date_mode", "test_date_mode", "test_date_kind", "test_iso_week", "week_end", "gjahr", "weekno",
+                "startDate", "dateEnd", "dateRangeSource", "dateRule"
+            };
             bool ok =
-                string.IsNullOrWhiteSpace(GetParamValue(values, "dateMode")) &&
-                string.IsNullOrWhiteSpace(GetParamValue(values, "testDateMode")) &&
-                string.IsNullOrWhiteSpace(GetParamValue(values, "startDate")) &&
-                string.IsNullOrWhiteSpace(GetParamValue(values, "dateEnd")) &&
+                clearedAliases.All(key => string.IsNullOrWhiteSpace(GetParamValue(values, key))) &&
                 GetParamValue(values, "period").Equals(FormatSapDate(defaultRange.Start), StringComparison.OrdinalIgnoreCase) &&
                 GetParamValue(values, "weekEnd").Equals(FormatSapDate(defaultRange.End), StringComparison.OrdinalIgnoreCase);
             Check("production marker clears test dates and defaults", ok, string.Join(", ", values.Select(pair => $"{pair.Key}={pair.Value}")));

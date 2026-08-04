@@ -101,6 +101,11 @@ async function captureRunParams(setup) {
   assert.equal(test888Payload.week, "18");
   assert.equal(test888Payload.runStrategy, "auto3step");
 
+  const normalizedWeekFormats = await runInPortal(`
+    return ["2026W18", "2026-18", "2026 18", "2026年18周"].map(normalizeIsoWeekText);
+  `);
+  assert.deepEqual([...normalizedWeekFormats], ["2026-W18", "2026-W18", "2026-W18", "2026-W18"]);
+
   const prodPayload = await captureRunParams(`
     state.bridge.allowTestDateOverride = false;
     state.form.tCode = "ZFI057";
