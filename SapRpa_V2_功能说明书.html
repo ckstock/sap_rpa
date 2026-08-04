@@ -441,6 +441,25 @@
         <div class="mini-card"><strong>定时任务</strong>维护定时任务配置，保存到 API/SQLite，真正执行依赖后端常驻队列或调度。</div>
         <div class="mini-card"><strong>基础配置</strong>维护工厂、业务范围、事务码和事务码与工厂/业务范围规则。</div>
       </div>
+      <h3 id="entry-card-backend-audit">生产卡片后台审计（2026-08）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>工作台卡片 / 事务码</th><th>后台执行与拆批</th><th>输出、结束与异常口径</th></tr></thead>
+          <tbody>
+            <tr><td><code>ZFI072A</code> 采购价月表</td><td>VBS 自动化；未填写时后端按服务器日期补上一完整周的年度/周次；多工厂创建父 run 和按工厂串行 child run。</td><td>保存类 ALV：本机暂存后归档到网络盘。单工厂导出及归档成功才算成功；失败保留暂存并钉钉通知。</td></tr>
+            <tr><td><code>ZFI072N</code> 模切周结-采购价（保存）</td><td>VBS 自动化；按工厂拆批；后端补上一完整周的 <code>period/weekEnd</code>，VBS 跨月时按两个过账日期窗口顺序执行。</td><td>保存类 ALV；同一 child 的多窗口 part 文件合并为一个最终工厂文件后归档。</td></tr>
+            <tr><td><code>ZFI057</code> 产值拆分</td><td>唯一的产值拆分前台入口；按业务范围顺序执行 <code>ZFI019NL -&gt; ZFI057 -&gt; ZCO020</code>。步骤一经 NCo 取 memory 物料，步骤二一次性将该业务范围全部工厂写入多选，步骤三检查 <code>TBTCO</code> 后再次执行验证。</td><td>业务范围可分别成功、无数据或失败；汇总后统一通知并执行 SAP GUI <code>/nex</code> 清理。</td></tr>
+            <tr><td><code>ZFIR034</code> 实际领料链路起始卡片</td><td>VBS 自动化；只接收日期范围，不接收工厂或业务范围；后端按服务器日期补上一完整周。</td><td>不属于 Excel 保存类；状态、日志与钉钉按单 run 回写。</td></tr>
+            <tr><td><code>ZFI080</code> 实际材料保存</td><td>VBS 自动化；多工厂按工厂 child run 串行执行，日期范围由后端补齐。</td><td>保存类 ALV；使用本机暂存、后端归档、失败通知的统一口径。</td></tr>
+            <tr><td><code>ZFI080B</code> 实际材料明细（保存）</td><td>VBS 自动化；多工厂按工厂 child run 串行执行，按上一完整周过账日期运行。</td><td>保存类 ALV；使用本机暂存、后端归档、失败通知的统一口径。</td></tr>
+            <tr><td><code>ZCO019</code> 标准材料成本</td><td>VBS 自动化；多工厂按工厂 child run 串行执行，日期范围由后端补齐。</td><td>保存类 ALV；多窗口 part 文件在同一工厂内合并后归档。</td></tr>
+            <tr><td><code>ZFI019NA</code> 周损益生成</td><td>VBS 自动化；多工厂按工厂 child run 串行执行，日期范围由后端补齐。</td><td>保存类 ALV；使用本机暂存、后端归档、失败通知的统一口径。</td></tr>
+            <tr><td><code>ZFI019NL</code> 周损益保存导出</td><td>VBS 自动化；多业务范围创建父 run 和按业务范围 child run；同时作为 ZFI057 工作流的第一步被 NCo memory 调用。</td><td>保存类 ALV；业务范围原始文件按 Excel 实际工厂列拆分，只有表头为无数据；缺工厂列或归档失败为失败。</td></tr>
+            <tr><td><code>ZFI148</code> 推送大数据平台</td><td>VBS 自动化；多工厂按工厂 child run 串行执行；年度/周次按上一完整周推导。</td><td>不属于 ALV Excel 保存类；以脚本执行、SAP 状态和 run 日志判断结果。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tip-box"><strong>非生产卡片边界：</strong><code>ZFI014D</code>、<code>ZFI085</code>、<code>ZPP063</code>、<code>ZPP063X</code>、<code>ZFI019NC</code> 仅保留旧配置或 <code>openOnly</code> 定义，不是当前生产自动化承诺；<code>ZCO020</code> 是 ZFI057 工作流的内部第三步，不作为独立工作台卡片提交。</div>
       <h3 id="entry-zfi057-zco020">产值拆分链路（ZFI057 单入口，后台三步）</h3>
       <div class="table-wrap">
         <table>
@@ -472,6 +491,22 @@
       </div>
     </section>
 
+    <section id="availability" class="section">
+      <div class="section-header"><div class="section-num">2.5</div><h2>生产可用性与重启恢复</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>项目</th><th>生产口径</th></tr></thead>
+          <tbody>
+            <tr><td>正式用户入口</td><td><code>https://fi_automation.srv.lstech.com/rpa/</code>，由 Node gateway 的 443 端口承载。</td></tr>
+            <tr><td>HTTP 兼容入口</td><td><code>http://10.0.2.120:6174/rpa/</code>，仅作内网兼容和排障使用；不替代 HTTPS 正式入口。</td></tr>
+            <tr><td>本机 API</td><td><code>SapWebLauncher.exe --serve</code> 仅监听 <code>127.0.0.1:8080</code>，gateway 将 <code>/rpa/api/*</code> 转发给该本机 API。</td></tr>
+            <tr><td>登录后恢复</td><td><code>SAP_RPA_StartupMonitor</code> 在 <code>marcus</code> 交互式登录后立即启动，持续每 10 秒检查本机 API 和 6174 gateway；任一不可达时只调用项目 <code>01_start_sap_rpa_services.ps1</code> 恢复。</td></tr>
+            <tr><td>服务器重启限制</td><td>SAP GUI 自动化必须在交互式桌面会话运行。未配置 Windows 自动登录时，服务器重启后必须先登录 <code>marcus</code>，上述监控才能运行；配置受控自动登录属于 IT/安全策略事项，不能把密码写入 Git、普通安装包或功能配置。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section id="execute" class="section">
       <div class="section-header"><div class="section-num">3</div><h2>执行任务</h2></div>
       <p>执行任务是 V2 的核心功能。页面提交后，API 创建 run，SQLite 记录参数快照，后台串行 worker 领取任务，SapWebLauncher 调用 VBS 和 SAP GUI 执行，结束后回写状态和通知。</p>
@@ -491,6 +526,7 @@
           </tbody>
         </table>
       </div>
+      <div class="warning-box"><strong>生产文件落盘口径（覆盖上表旧的“直接导出最终目录”描述）：</strong>所有保存类 ALV 卡片（ZFI072A、ZFI072N、ZFI080、ZFI080B、ZCO019、ZFI019NA、ZFI019NL）均由 SAP GUI 先写入本机暂存目录 <code>D:\RPA\临时文件\ALV本地暂存\yyyy_WKnn_工厂</code>，不把 UNC 网络路径直接传给 SAP GUI。后端在确认 <code>OUTPUT_FILE</code>、文件存在且大小稳定后，创建最终周/工厂目录并复制到 <code>fileStorage.alvExportDataDirectory</code>；当前生产值为 <code>\\10.0.16.31\rpa\经管\02-财务管报自动化</code>。复制完成后校验最终文件存在和大小，再删除本机暂存文件及空目录。归档失败时 child run 必须标记为 <code>failed</code>、写入 <code>ERROR</code> 日志、保留暂存文件供排障，并进入钉钉失败通知；不得把“SAP GUI 已导出”误判成整个卡片成功。</div>
       <h3 id="execute-queue">排队、进度和日志</h3>
       <div class="flow">
         <div class="flow-step"><div><strong>提交入队</strong>页面调用 <code>POST /api/runs</code>，传入事务码、工厂、操作人、钉钉 ID 和通知目标。</div></div>

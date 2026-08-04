@@ -50,7 +50,7 @@
                          },
                          {
                              "code":  "ZFI072N",
-                             "name":  "维护采购价",
+                             "name":  "模切周结-采购价",
                              "stage":  "顺序执行",
                              "script":  "ZFI072N.vbs",
                              "icon":  "receipt-text",
@@ -223,7 +223,7 @@
                          },
                          {
                              "code":  "ZFI080B",
-                             "name":  "工费率保存",
+                             "name":  "实际材料明细",
                              "stage":  "周结推送",
                              "script":  "ZFI080B.vbs",
                              "icon":  "calculator",

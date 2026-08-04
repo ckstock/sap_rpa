@@ -184,7 +184,8 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 {
   "multiLogonPolicy": "takeover",
   "fileStorage": {
-    "alvExportDataDirectory": "D:\\RPA\\临时文件\\文件数据"
+    "alvExportDataDirectory": "\\\\10.0.16.31\\rpa\\经管\\02-财务管报自动化",
+    "alvExportStagingDirectory": "D:\\RPA\\临时文件\\ALV本地暂存"
   },
   "dingTalkOpenApi": {
     "baseUrl": "https://你的钉钉OpenAPI网关根地址/",
@@ -214,7 +215,9 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
 }
 ```
 
-`fileStorage.alvExportDataDirectory` 是含“保存”事务 ALV Excel 的输出根目录。生产机迁移到网络共享盘或其他数据盘时，只改真实 `D:\RPA\config.local.json` 的这个值，或临时设置环境变量 `SAP_RPA_ALV_EXPORT_DIR`；不要改 VBS 或 C# 代码。改完后只重启本项目 `SapWebLauncher.exe --serve`，再通过 health 的 `alvExportDataRoot` 和一次保存类任务落盘结果确认。
+`multiLogonPolicy: "takeover"` 会先关闭本机遗留的空用户 SAP 登录屏，再重新登录；只有 SAP 服务器随后显示真正的多登录窗口时，才选择接管并终止旧登录。它不会关闭其他已登录的本机 SAP 会话。
+
+`fileStorage.alvExportDataDirectory` 是含“保存”事务 ALV Excel 的最终归档根目录。生产环境使用网络共享盘时，必须同时设置本机 `fileStorage.alvExportStagingDirectory`；SAP GUI 先写入本机暂存，后端确认文件非空后原子复制到最终归档目录。归档成功后程序会等待文件锁释放并删除暂存 Excel、清理空的周/工厂暂存目录；归档失败时才保留本地文件供排障。这样不依赖 SAP GUI 会话是否能直接访问 UNC 路径。归档复制失败会使任务失败，并把具体错误写入钉钉失败通知。暂存目录默认是 `D:\RPA\临时文件\ALV本地暂存`，最终目录可临时由 `SAP_RPA_ALV_EXPORT_DIR` 覆盖；不要改 VBS。改完后只重启本项目 `SapWebLauncher.exe --serve`，再通过 health 的 `alvExportDataRoot` 和一次保存类任务落盘结果确认。
 
 `baseUrl` 只填接口根地址。程序会自动访问：
 

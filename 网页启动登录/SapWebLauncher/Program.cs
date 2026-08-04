@@ -51,6 +51,7 @@ static class Program
     private static readonly string LogFilePath = Path.Combine(LogDirectory, "launcher.log");
     private static readonly string ConfigFilePath = Path.Combine(LocalConfigDirectory, "config.json");
     private static readonly string AlvExportDataDirectory = ResolveAlvExportDataDirectory();
+    private static readonly string AlvExportStagingDirectory = ResolveAlvExportStagingDirectory();
     private static readonly string DatabaseFilePath = Path.Combine(DataDirectory, "sap-rpa-config.db");
     private static readonly string LegacyDatabaseFilePath = Path.Combine(LocalConfigDirectory, "sap-rpa-config.db");
     private static readonly string ExecutorId = $"{Environment.MachineName}\\{Environment.UserName}";
@@ -253,6 +254,33 @@ static class Program
         return ResolveDirectoryPath(configured, defaultPath, "ALV export data directory");
     }
 
+    static string ResolveAlvExportStagingDirectory()
+    {
+        string defaultPath = Path.Combine(RuntimeRoot, "\u4E34\u65F6\u6587\u4EF6", "ALV\u672C\u673A\u6682\u5B58");
+        string configured = (Environment.GetEnvironmentVariable("SAP_RPA_ALV_EXPORT_STAGING_DIR") ?? "").Trim();
+
+        if (string.IsNullOrWhiteSpace(configured))
+        {
+            try
+            {
+                using JsonDocument? document = LoadLocalConfigDocument();
+                if (document != null && document.RootElement.ValueKind == JsonValueKind.Object)
+                {
+                    JsonElement? fileStorage = TryGetObject(document.RootElement, "fileStorage");
+                    configured = FirstNonEmpty(
+                        GetConfigString(fileStorage, "alvExportStagingDirectory"),
+                        GetConfigString(fileStorage, "alvExportLocalStagingDirectory"));
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"resolve ALV export staging directory from config failed: {ex.Message}");
+            }
+        }
+
+        return ResolveDirectoryPath(configured, defaultPath, "ALV export staging directory");
+    }
+
     static string ResolveDirectoryPath(string configured, string defaultPath, string label)
     {
         configured = Environment.ExpandEnvironmentVariables((configured ?? "").Trim());
@@ -282,6 +310,7 @@ static class Program
         Directory.CreateDirectory(OutputDirectory);
         Directory.CreateDirectory(RuntimeTransactionsDirectory);
         Directory.CreateDirectory(AlvExportDataDirectory);
+        Directory.CreateDirectory(AlvExportStagingDirectory);
     }
 
     static void MigrateLegacyDatabaseIfNeeded()
@@ -1307,6 +1336,7 @@ WHERE tcode=$tcode AND enabled=1;
                     logFile = LogFilePath,
                     outputRoot = OutputDirectory,
                     alvExportDataRoot = AlvExportDataDirectory,
+                    alvExportStagingRoot = AlvExportStagingDirectory,
                     transactionRoot = RuntimeTransactionsDirectory,
                     credentialConfig = ConfigFilePath,
                     executor = ExecutorId,
@@ -6944,13 +6974,13 @@ WHERE run_id=$runId;
             if (UsesBusinessAreaAlvOutput(p.TCode))
             {
                 string businessArea = FirstNonEmpty(FirstCsvValue(p.BusinessAreas), p.BusinessArea, plantValue);
-                directory = GetAlvBusinessAreaRawOutputDirectory(archiveDate, businessArea);
+                directory = GetAlvBusinessAreaRawOutputDirectory(archiveDate, businessArea, AlvExportStagingDirectory);
                 fileName = BuildAlvBusinessAreaRawFileName(p.TCode, transactionName, businessArea, archiveDate);
             }
             else
             {
                 string plantPart = SafeFileNamePart(plantValue);
-                directory = GetAlvFactoryOutputDirectory(archiveDate, plantPart);
+                directory = GetAlvFactoryOutputDirectory(archiveDate, plantPart, AlvExportStagingDirectory);
                 fileName = BuildAlvDirectPlantFileName(p.TCode, transactionName, plantValue, archiveDate);
             }
             Directory.CreateDirectory(directory);
@@ -7405,15 +7435,16 @@ WHERE run_id=$runId;
         return Path.Combine(root, $"{GetAlvWeekFolderName(date)}_{plantPart}");
     }
 
-    static string GetAlvBusinessAreaRawRoot()
+    static string GetAlvBusinessAreaRawRoot(string? outputRoot = null)
     {
-        return Path.Combine(AlvExportDataDirectory, "_raw_business_area");
+        string root = string.IsNullOrWhiteSpace(outputRoot) ? AlvExportDataDirectory : Path.GetFullPath(outputRoot);
+        return Path.Combine(root, "_raw_business_area");
     }
 
-    static string GetAlvBusinessAreaRawOutputDirectory(DateTime date, string businessArea)
+    static string GetAlvBusinessAreaRawOutputDirectory(DateTime date, string businessArea, string? outputRoot = null)
     {
         string areaPart = SafeFileNamePart(FirstNonEmpty(businessArea, "scope"));
-        return Path.Combine(GetAlvBusinessAreaRawRoot(), $"{GetAlvWeekFolderName(date)}_{areaPart}");
+        return Path.Combine(GetAlvBusinessAreaRawRoot(outputRoot), $"{GetAlvWeekFolderName(date)}_{areaPart}");
     }
 
     static byte[] ReadAlvFragmentBytesForMerge(string path)
@@ -8571,7 +8602,17 @@ ORDER BY 1;
 
     static string SelectDingTalkSapMessageSource(RunRecordView run, string fallbackMessage)
     {
-        foreach (string candidate in new[] { run.SapStatusText, run.Message, fallbackMessage })
+        if (!run.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+        {
+            string failureLog = run.Logs
+                .AsEnumerable()
+                .Reverse()
+                .FirstOrDefault(line => line.Level.Equals("ERROR", StringComparison.OrdinalIgnoreCase))?.Message ?? "";
+            if (!string.IsNullOrWhiteSpace(failureLog))
+                return failureLog;
+        }
+
+        foreach (string candidate in new[] { run.Message, run.SapStatusText, fallbackMessage })
         {
             if (!string.IsNullOrWhiteSpace(candidate) && !IsTechnicalSapStatusText(candidate))
                 return candidate;
@@ -10187,8 +10228,13 @@ ORDER BY 1;
                 {
                     if (ShouldTakeOverSapMultiLogon(p))
                     {
-                        Log($"SAP GUI has a pending login dialog before sapshcut login; cleanup stale local SAP windows and retry login. Probe: {initialProbe.Details}");
-                        CleanupSapGuiSessionAfterRun(p);
+                        if (CloseStaleSapLoginWindow(out string closeDetail))
+                            Log($"Closed stale local SAP login window before sapshcut login. {closeDetail}");
+                        else
+                        {
+                            Log($"SAP GUI has a pending login dialog before sapshcut login; cleanup stale local SAP windows and retry login. Probe: {initialProbe.Details}");
+                            CleanupSapGuiSessionAfterRun(p);
+                        }
                         Thread.Sleep(1000);
                         initialProbe = ProbeSapSession(p, StrictSapSessionMatching);
                     }
@@ -10303,6 +10349,15 @@ ORDER BY 1;
 
                     if (!loginProbe.Ready)
                     {
+                        if (ShouldTakeOverSapMultiLogon(p) && CloseStaleSapLoginWindow(out string closeDetail))
+                        {
+                            loginDiagnostics = AppendDiagnostic(loginDiagnostics, $"{attempt.Name}: closed stale local SAP login window: {closeDetail}");
+                            Log($"Closed stale local SAP login window after launch. mode={attempt.Name}, {closeDetail}");
+                            loginProbe = ProbeSapSession(p, StrictSapSessionMatching);
+                            if (!loginProbe.HasPendingLoginDialog)
+                                continue;
+                        }
+
                         string detail = "SAP login stopped at login or multi-logon dialog; skip remaining sapshcut fallback attempts.";
                         loginDiagnostics = AppendDiagnostic(loginDiagnostics, detail);
                         Log(detail);
@@ -10915,6 +10970,99 @@ WScript.Quit 4
         }
     }
 
+    static bool CloseStaleSapLoginWindow(out string detail)
+    {
+        string cleanupFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_close_login_{Guid.NewGuid():N}.vbs");
+        string cleanupScript = """
+On Error Resume Next
+Dim SapGuiAuto, application, connection, session, i, j, userName, transaction, programName, wnd, diag
+diag = ""
+Set SapGuiAuto = GetObject("SAPGUI")
+If Err.Number <> 0 Or Not IsObject(SapGuiAuto) Then
+   WScript.Echo "NO: SAPGUI object not found"
+   WScript.Quit 4
+End If
+Err.Clear
+Set application = SapGuiAuto.GetScriptingEngine
+If Err.Number <> 0 Or Not IsObject(application) Then
+   WScript.Echo "NO: SAP scripting engine not available"
+   WScript.Quit 4
+End If
+For i = 0 To application.Children.Count - 1
+   Err.Clear
+   Set connection = application.Children.Item(CInt(i))
+   If Err.Number = 0 And IsObject(connection) Then
+      For j = 0 To connection.Children.Count - 1
+         Err.Clear
+         Set session = connection.Children.Item(CInt(j))
+         If Err.Number = 0 And IsObject(session) Then
+            userName = Trim(CStr(session.Info.User))
+            transaction = UCase(Trim(CStr(session.Info.Transaction)))
+            programName = UCase(Trim(CStr(session.Info.Program)))
+            If userName = "" And (transaction = "S000" Or programName = "SAPMSYST") Then
+               Err.Clear
+               Set wnd = session.findById("wnd[0]")
+               If Err.Number = 0 And IsObject(wnd) Then
+                  wnd.Close
+                  If Err.Number <> 0 Then
+                     Err.Clear
+                     wnd.sendVKey 15
+                  End If
+                  If Err.Number = 0 Then
+                     WScript.Echo "OK: closed empty-user SAP login window system=" & session.Info.SystemName & ",client=" & session.Info.Client
+                     WScript.Quit 0
+                  End If
+                  diag = diag & " close failed: " & Err.Description
+                  Err.Clear
+               End If
+            End If
+         End If
+      Next
+   End If
+Next
+WScript.Echo "NO: no empty-user SAP login window found" & diag
+WScript.Quit 4
+""";
+
+        try
+        {
+            File.WriteAllText(cleanupFile, cleanupScript, Encoding.Default);
+            var psi = new ProcessStartInfo(ResolveCscriptPath(), $"//T:20 //nologo \"{cleanupFile}\"")
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            using var proc = Process.Start(psi);
+            if (proc == null)
+            {
+                detail = "failed to start cscript.exe";
+                return false;
+            }
+
+            proc.WaitForExit(25_000);
+            string output = proc.StandardOutput.ReadToEnd().Trim();
+            string error = proc.StandardError.ReadToEnd().Trim();
+            detail = string.Join(" ", new[] { output, error }.Where(value => !string.IsNullOrWhiteSpace(value)));
+            return proc.ExitCode == 0 && output.StartsWith("OK:", StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex)
+        {
+            detail = ex.Message;
+            return false;
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(cleanupFile))
+                    File.Delete(cleanupFile);
+            }
+            catch { }
+        }
+    }
+
     static SapSessionProbeResult ProbeSapSession(SapRunParams p, bool strictMatch)
     {
         string probeFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_probe_{Guid.NewGuid():N}.vbs");
@@ -11385,6 +11533,13 @@ WScript.Quit 0
             }
 
             var parsed = BuildRunResultFromVbs(stdOut, stdErr, proc?.ExitCode ?? 0, started);
+            if (SupportsAlvExport(p.TCode) &&
+                parsed.Status.Equals("success", StringComparison.OrdinalIgnoreCase) &&
+                !ArchiveStagedAlvFiles(parsed))
+            {
+                keepTempFile = true;
+            }
+
             if (UsesDirectPlantAlvOutput(p.TCode) && parsed.Files.Count > 0)
             {
                 string plantForLog = FirstNonEmpty(FirstCsvValue(effectivePlants), p.Plant, p.BusinessArea, p.FactoryGroup, "scope");
@@ -11433,10 +11588,87 @@ WScript.Quit 0
         }
     }
 
+    static bool ArchiveStagedAlvFiles(RunResultRequest result)
+    {
+        string stagingRoot = Path.GetFullPath(AlvExportStagingDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string archiveRoot = Path.GetFullPath(AlvExportDataDirectory)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (stagingRoot.Equals(archiveRoot, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        try
+        {
+            foreach (RunFile file in result.Files)
+            {
+                string sourcePath = Path.GetFullPath(Environment.ExpandEnvironmentVariables(file.Path ?? ""));
+                if (!File.Exists(sourcePath))
+                    throw new FileNotFoundException("ALV staging file was not found before archive.", sourcePath);
+
+                string relativePath = Path.GetRelativePath(stagingRoot, sourcePath);
+                if (relativePath.Equals("..", StringComparison.Ordinal) ||
+                    relativePath.StartsWith(".." + Path.DirectorySeparatorChar, StringComparison.Ordinal) ||
+                    Path.IsPathRooted(relativePath))
+                {
+                    throw new IOException($"ALV staging file is outside the configured staging directory: {sourcePath}");
+                }
+
+                string archivePath = Path.Combine(archiveRoot, relativePath);
+                Directory.CreateDirectory(Path.GetDirectoryName(archivePath) ?? archiveRoot);
+                string temporaryArchivePath = archivePath + ".copy-" + Guid.NewGuid().ToString("N") + ".tmp";
+                try
+                {
+                    File.Copy(sourcePath, temporaryArchivePath, overwrite: true);
+                    long sourceSize = new FileInfo(sourcePath).Length;
+                    long copiedSize = new FileInfo(temporaryArchivePath).Length;
+                    if (sourceSize <= 0 || sourceSize != copiedSize)
+                        throw new IOException($"ALV archive copy size check failed: source={sourceSize}, copied={copiedSize}");
+
+                    File.Move(temporaryArchivePath, archivePath, overwrite: true);
+                    file.Path = archivePath;
+                    file.Name = Path.GetFileName(archivePath);
+                    file.Size = copiedSize;
+                    result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ALV export archived to network storage: {archivePath}" });
+
+                    try
+                    {
+                        DeleteFileWithRetry(sourcePath);
+                        DeleteEmptyParentDirectoriesUnder(AlvExportStagingDirectory, sourcePath);
+                    }
+                    catch (Exception cleanupEx)
+                    {
+                        result.Logs.Add(new RunLogLine { Level = "WARN", Message = $"ALV staging file cleanup deferred: {sourcePath}; {cleanupEx.Message}" });
+                    }
+                }
+                finally
+                {
+                    try
+                    {
+                        if (File.Exists(temporaryArchivePath))
+                            File.Delete(temporaryArchivePath);
+                    }
+                    catch { }
+                }
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            result.Status = "failed";
+            result.Message = $"ALV export was created locally but could not be archived to network storage: {ex.Message}";
+            result.Logs.Add(new RunLogLine { Level = "ERROR", Message = result.Message });
+            return false;
+        }
+    }
+
     static void CleanupSapGuiSessionAfterRun(SapRunParams p)
     {
         string cleanupFile = Path.Combine(Path.GetTempPath(), $"sap_rpa_cleanup_{Guid.NewGuid():N}.vbs");
-        string cleanupTargetSystems = BuildSapTargetSystemMatcher(p);
+        // SAP GUI reports TD1 while the configured SAP Logon entry is test888.
+        // In normal mode, client and robot user identify the session safely.
+        string cleanupTargetSystems = StrictSapSessionMatching ? BuildSapTargetSystemMatcher(p) : "";
         string cleanupTargetClient = p.Client;
         string cleanupTargetUser = p.User;
         string cleanupScript = $"""
@@ -11463,7 +11695,10 @@ End If
 Function SystemMatches(ByVal value)
    On Error Resume Next
    SystemMatches = False
-   If Trim(CStr(targetSystems)) = "" Then Exit Function
+   If Trim(CStr(targetSystems)) = "" Then
+      SystemMatches = True
+      Exit Function
+   End If
    Dim parts, idx, item
    parts = Split(CStr(targetSystems), "|")
    For idx = 0 To UBound(parts)
