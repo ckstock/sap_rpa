@@ -19,7 +19,7 @@
     }
 
     const savedUseDefaultNotifyUser = getLocalValue("portalUseDefaultNotifyUser");
-    const savedUseCustomZfi057Week = getLocalValue("portalUseCustomZfi057Week");
+    const savedTestDateKind = getLocalValue("portalTestDateKind");
     const isEmbeddedPortal = (() => {
       try {
         return window.self !== window.top;
@@ -50,7 +50,17 @@
       selectedTCode: "ZFI019NL",
       executing: false,
       currentRun: null,
-      bridge: { online: false, lastChecked: "", database: "", queueMode: "" },
+      bridge: {
+        online: false,
+        lastChecked: "",
+        database: "",
+        queueMode: "",
+        sapEnvironment: "",
+        allowTestDateOverride: false,
+        testDateOverridePolicy: null,
+        defaultExecutionDateRange: null,
+        serverDate: ""
+      },
       queue: { online: false, runningRunId: "", queuedCount: null, queuePosition: null, runsAhead: null, workItemsAhead: null, lastChecked: "" },
       config: { online: false, source: "fallback", lastLoaded: "", error: "" },
       report: { online: false, loading: false, from: "", to: "", summary: null, transactionRanking: [], error: "" },
@@ -63,9 +73,11 @@
         plants: ["1022", "1024", "1032", "6041"],
         notify: true,
         useDefaultNotifyUser: savedUseDefaultNotifyUser === null ? true : savedUseDefaultNotifyUser !== "0",
-        useCustomZfi057Week: savedUseCustomZfi057Week === null ? true : savedUseCustomZfi057Week !== "0",
-        customZfi057WeekStart: getLocalValue("portalCustomZfi057WeekStart") || "",
-        customZfi057WeekEnd: getLocalValue("portalCustomZfi057WeekEnd") || "",
+        useTestDateOverride: false,
+        testDateKind: savedTestDateKind === "range" ? "range" : "week",
+        testIsoWeek: getLocalValue("portalTestIsoWeek") || "",
+        testDateStart: getLocalValue("portalTestDateStart") || getLocalValue("portalCustomZfi057WeekStart") || "",
+        testDateEnd: getLocalValue("portalTestDateEnd") || getLocalValue("portalCustomZfi057WeekEnd") || "",
         remark: ""
       },
       steps: [
@@ -88,6 +100,11 @@
         notifySuccess: true,
         notifyFail: true,
         enabled: true,
+        useTestDateOverride: false,
+        testDateKind: "week",
+        testIsoWeek: "",
+        testDateStart: "",
+        testDateEnd: "",
         nameEdited: false
       }
     };

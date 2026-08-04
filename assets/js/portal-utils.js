@@ -38,18 +38,215 @@
       return input ? input.replace(/-/g, ".") : "";
     }
 
-    function normalizeZfi057WeekOverride() {
-      const fallback = getLastFullWeekDateRange();
-      const period = inputDateToSapDate(state.form.customZfi057WeekStart) || fallback.period;
-      const weekEnd = inputDateToSapDate(state.form.customZfi057WeekEnd) || fallback.weekEnd;
-      return period <= weekEnd ? { period, weekEnd } : { period: weekEnd, weekEnd: period };
+    const WEEKLY_DATE_PARAM_TCODES = new Set(["ZFI072A", "ZFI148"]);
+    const RANGE_DATE_PARAM_TCODES = new Set(["ZFI072N", "ZFI080B", "ZFI080", "ZCO019", "ZFI019NA", "ZFI019NL", "ZFIR034", "ZFI057", "ZCO020", "ZFI148"]);
+
+    function normalizeTCodeValue(tCode) {
+      return String(tCode || "").trim().toUpperCase();
     }
 
-    function getExecutionDateRangeForTCode(tCode) {
-      if (String(tCode || "").toUpperCase() === "ZFI057" && state.form.useCustomZfi057Week !== false) {
-        return normalizeZfi057WeekOverride();
+    function usesWeeklyDateParams(tCode) {
+      return WEEKLY_DATE_PARAM_TCODES.has(normalizeTCodeValue(tCode));
+    }
+
+    function usesBudatDateRangeParams(tCode) {
+      return RANGE_DATE_PARAM_TCODES.has(normalizeTCodeValue(tCode));
+    }
+
+    function usesExecutionDateParams(tCode) {
+      const code = normalizeTCodeValue(tCode);
+      if (usesWeeklyDateParams(code) || usesBudatDateRangeParams(code)) return true;
+      const transaction = typeof getTCode === "function" ? getTCode(code) : null;
+      const params = typeof getDisplayParamsForTransaction === "function"
+        ? getDisplayParamsForTransaction(transaction)
+        : toArray(transaction?.params);
+      return params.includes("year") || params.includes("week") || (params.includes("period") && params.includes("weekEnd"));
+    }
+
+    function allowTestDateOverride() {
+      return state.bridge.allowTestDateOverride === true;
+    }
+
+    function shouldUseTestDateOverrideForTCode(tCode, formState = state.form) {
+      return allowTestDateOverride() && formState.useTestDateOverride === true && usesExecutionDateParams(tCode);
+    }
+
+    function getServerDefaultExecutionDateRange() {
+      const range = state.bridge.defaultExecutionDateRange || {};
+      if (range.period && range.weekEnd) {
+        return {
+          period: String(range.period),
+          weekEnd: String(range.weekEnd)
+        };
       }
       return getLastFullWeekDateRange();
+    }
+
+    function parseDateInputValue(value) {
+      const text = String(value || "").trim().replace(/[./]/g, "-");
+      const match = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+      if (!match) return null;
+      const year = Number(match[1]);
+      const month = Number(match[2]);
+      const day = Number(match[3]);
+      const date = new Date(year, month - 1, day);
+      if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+      return date;
+    }
+
+    function getIsoWeekNumber(date) {
+      const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      const day = d.getDay() || 7;
+      const thursday = new Date(d);
+      thursday.setDate(d.getDate() + 4 - day);
+      const yearStart = new Date(thursday.getFullYear(), 0, 1);
+      return Math.ceil((((thursday - yearStart) / 86400000) + 1) / 7);
+    }
+
+    function getIsoWeekInputParts(date) {
+      const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      const day = d.getDay() || 7;
+      const thursday = new Date(d);
+      thursday.setDate(d.getDate() + 4 - day);
+      return {
+        year: thursday.getFullYear(),
+        week: getIsoWeekNumber(d)
+      };
+    }
+
+    function formatIsoWeekInput(date) {
+      const info = getIsoWeekInputParts(date);
+      return `${info.year}-W${String(info.week).padStart(2, "0")}`;
+    }
+
+    function normalizeIsoWeekText(value) {
+      const match = String(value || "").trim().toUpperCase().match(/^(\d{4})-?W(\d{1,2})$/);
+      if (!match) return "";
+      return `${match[1]}-W${String(Number(match[2])).padStart(2, "0")}`;
+    }
+
+    function isoWeekStartDate(year, week) {
+      if (!Number.isInteger(year) || !Number.isInteger(week) || week < 1 || week > 53) return null;
+      const jan4 = new Date(year, 0, 4);
+      const jan4Day = jan4.getDay() || 7;
+      const monday = new Date(jan4);
+      monday.setDate(jan4.getDate() - jan4Day + 1 + (week - 1) * 7);
+      const check = getIsoWeekInputParts(monday);
+      if (check.year !== year || check.week !== week) return null;
+      return monday;
+    }
+
+    function parseIsoWeekRange(value) {
+      const normalized = normalizeIsoWeekText(value);
+      const match = normalized.match(/^(\d{4})-W(\d{2})$/);
+      if (!match) return null;
+      const start = isoWeekStartDate(Number(match[1]), Number(match[2]));
+      if (!start) return null;
+      const end = new Date(start);
+      end.setDate(start.getDate() + 6);
+      return {
+        period: formatSapDateValue(start),
+        weekEnd: formatSapDateValue(end),
+        year: start.getFullYear(),
+        week: getIsoWeekNumber(start),
+        testDateKind: "week",
+        testIsoWeek: normalized,
+        testDateStart: formatDateInputForForm(start),
+        testDateEnd: formatDateInputForForm(end)
+      };
+    }
+
+    function formatDateInputForForm(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function getDefaultTestDateFormState() {
+      const range = getServerDefaultExecutionDateRange();
+      const start = parseDateInputValue(range.period) || parseDateInputValue(getLastFullWeekDateRange().period);
+      const end = parseDateInputValue(range.weekEnd) || parseDateInputValue(getLastFullWeekDateRange().weekEnd);
+      return {
+        useTestDateOverride: false,
+        testDateKind: "week",
+        testIsoWeek: start ? formatIsoWeekInput(start) : "",
+        testDateStart: start ? formatDateInputForForm(start) : "",
+        testDateEnd: end ? formatDateInputForForm(end) : ""
+      };
+    }
+
+    function getTestDateRangeFromForm(formState = state.form) {
+      const defaultState = getDefaultTestDateFormState();
+      const kind = formState.testDateKind === "range" ? "range" : "week";
+      if (kind === "week") {
+        return parseIsoWeekRange(formState.testIsoWeek || defaultState.testIsoWeek);
+      }
+
+      let start = parseDateInputValue(formState.testDateStart || defaultState.testDateStart);
+      let end = parseDateInputValue(formState.testDateEnd || defaultState.testDateEnd);
+      if (!start || !end) return null;
+      if (end < start) {
+        const tmp = start;
+        start = end;
+        end = tmp;
+      }
+      return {
+        period: formatSapDateValue(start),
+        weekEnd: formatSapDateValue(end),
+        year: start.getFullYear(),
+        week: getIsoWeekNumber(start),
+        testDateKind: "range",
+        testIsoWeek: "",
+        testDateStart: formatDateInputForForm(start),
+        testDateEnd: formatDateInputForForm(end)
+      };
+    }
+
+    function buildTestDateOverrideForTCode(tCode, formState = state.form) {
+      if (!shouldUseTestDateOverrideForTCode(tCode, formState)) return null;
+      const range = getTestDateRangeFromForm(formState);
+      if (!range) return null;
+      return {
+        dateMode: "testOverride",
+        testDateMode: "testOverride",
+        testDateKind: range.testDateKind,
+        testIsoWeek: range.testIsoWeek,
+        testDateStart: range.testDateStart,
+        testDateEnd: range.testDateEnd,
+        period: range.period,
+        weekEnd: range.weekEnd,
+        year: String(range.year),
+        week: String(range.week)
+      };
+    }
+
+    function getDisplayExecutionDateRangeForTCode(tCode) {
+      return buildTestDateOverrideForTCode(tCode) || getServerDefaultExecutionDateRange();
+    }
+
+    function getTestDateFormStateFromParams(tCode, params = {}) {
+      const defaults = getDefaultTestDateFormState();
+      if (!allowTestDateOverride() || !usesExecutionDateParams(tCode)) return defaults;
+      const dateMode = String(params.dateMode || "").trim();
+      const testDateMode = String(params.testDateMode || "").trim();
+      const hasMarker = dateMode.toLowerCase() === "testoverride" || testDateMode.toLowerCase() === "testoverride";
+      if (!hasMarker) return defaults;
+      const kind = String(params.testDateKind || "").trim().toLowerCase() === "range" ? "range" : "week";
+      const startInput = sapDateToInputValue(params.testDateStart || params.period || params.startDate || params.fromDate || params.dateFrom || params.beginDate || params.dateBegin || "");
+      const endInput = sapDateToInputValue(params.testDateEnd || params.weekEnd || params.endDate || params.toDate || params.dateTo || params.dateEnd || "");
+      return {
+        useTestDateOverride: true,
+        testDateKind: kind,
+        testIsoWeek: normalizeIsoWeekText(params.testIsoWeek || "") || defaults.testIsoWeek,
+        testDateStart: startInput || defaults.testDateStart,
+        testDateEnd: endInput || defaults.testDateEnd
+      };
+    }
+
+    function disableTestDateOverrideState() {
+      state.form.useTestDateOverride = false;
+      if (state.scheduleForm) state.scheduleForm.useTestDateOverride = false;
     }
 
     function getLastFullWeekDateRange(baseDate = new Date()) {

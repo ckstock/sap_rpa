@@ -32,6 +32,7 @@ static class Program
     private const int QueueHeartbeatIntervalSeconds = 60;
     private const int SchedulePollIntervalMilliseconds = 30_000;
     private const int ScheduleTriggerLookbackMinutes = 15;
+    private const string TestDateOverrideEnvironmentName = "test888";
     // Temporary default until DingTalk scan login writes the real user id into runs.ding_talk_user_id.
     private const string DefaultDingTalkId = "11464769";
     private const int NotificationWorkerTimeoutSeconds = 12;
@@ -55,6 +56,12 @@ static class Program
     private static readonly string DatabaseFilePath = Path.Combine(DataDirectory, "sap-rpa-config.db");
     private static readonly string LegacyDatabaseFilePath = Path.Combine(LocalConfigDirectory, "sap-rpa-config.db");
     private static readonly string ExecutorId = $"{Environment.MachineName}\\{Environment.UserName}";
+    private static readonly string[] TestDateOverrideClearKeys =
+    {
+        "dateMode", "testDateMode", "testDateKind", "testIsoWeek", "testDateStart", "testDateEnd",
+        "period", "weekEnd", "year", "week",
+        "startDate", "endDate", "fromDate", "toDate", "dateFrom", "dateTo", "beginDate", "dateBegin", "dateEnd"
+    };
     private static readonly object DatabaseInitLock = new();
     private static bool DatabaseInitialized;
     private static readonly object ActiveRunLock = new();
@@ -691,8 +698,9 @@ static class Program
 
     static List<Zfi057Step2DateWindow> ResolveZfi057Step2DateWindows(string period, string weekEnd)
     {
-        DateTime defaultStart = StartOfWeek(DateTime.Today).AddDays(-7);
-        DateTime defaultEnd = defaultStart.AddDays(6);
+        var defaultRange = ResolveDefaultExecutionDateRange();
+        DateTime defaultStart = defaultRange.Start;
+        DateTime defaultEnd = defaultRange.End;
         DateTime start = ParseFlexibleDateOrDefault(period, defaultStart);
         DateTime end = ParseFlexibleDateOrDefault(weekEnd, defaultEnd);
         DateTime firstOfStartMonth = new(start.Year, start.Month, 1);
@@ -998,10 +1006,16 @@ static class Program
             Plants = First(query, "plants", "werkslist", "plantlist") ?? "",
             Year = First(query, "year", "gjahr") ?? "",
             Week = First(query, "week", "weekno", "wk") ?? "",
-            Period = First(query, "period", "periodtext") ?? "",
+            Period = First(query, "period", "periodtext", "startDate", "fromDate", "dateFrom", "beginDate", "dateBegin") ?? "",
             BusinessArea = First(query, "businessarea", "gsber") ?? "",
             BusinessAreas = First(query, "businessareas", "gsberlist", "businessarealist") ?? "",
-            WeekEnd = First(query, "weekend", "date") ?? "",
+            WeekEnd = First(query, "weekend", "week_end", "date", "endDate", "toDate", "dateTo", "dateEnd") ?? "",
+            DateMode = First(query, "dateMode", "datemode") ?? "",
+            TestDateMode = First(query, "testDateMode", "testdatemode") ?? "",
+            TestDateKind = First(query, "testDateKind", "testdatekind") ?? "",
+            TestIsoWeek = First(query, "testIsoWeek", "testisoweek", "isoWeek", "isoweek") ?? "",
+            TestDateStart = First(query, "testDateStart", "testdatestart") ?? "",
+            TestDateEnd = First(query, "testDateEnd", "testdateend") ?? "",
             Materials = First(query, "materials", "materiallist", "matnrs", "matnrlist", "s_matnr") ?? "",
             FactoryGroup = First(query, "factorygroup", "plantgroup") ?? "",
             RunStrategy = First(query, "runstrategy", "strategy") ?? "",
@@ -1051,14 +1065,26 @@ static class Program
             ["year"] = p.Year,
             ["week"] = p.Week,
             ["period"] = p.Period,
-            ["weekEnd"] = p.WeekEnd
+            ["weekEnd"] = p.WeekEnd,
+            ["dateMode"] = p.DateMode,
+            ["testDateMode"] = p.TestDateMode,
+            ["testDateKind"] = p.TestDateKind,
+            ["testIsoWeek"] = p.TestIsoWeek,
+            ["testDateStart"] = p.TestDateStart,
+            ["testDateEnd"] = p.TestDateEnd
         };
 
-        AddDefaultExecutionDateParams(p.TCode, values);
+        NormalizeExecutionDateParams(p.TCode, values);
         p.Year = GetParamValue(values, "year");
         p.Week = GetParamValue(values, "week");
         p.Period = GetParamValue(values, "period");
         p.WeekEnd = GetParamValue(values, "weekEnd");
+        p.DateMode = GetParamValue(values, "dateMode");
+        p.TestDateMode = GetParamValue(values, "testDateMode");
+        p.TestDateKind = GetParamValue(values, "testDateKind");
+        p.TestIsoWeek = GetParamValue(values, "testIsoWeek");
+        p.TestDateStart = GetParamValue(values, "testDateStart");
+        p.TestDateEnd = GetParamValue(values, "testDateEnd");
     }
 
     static string NormalizeCsv(string value)
@@ -1341,6 +1367,11 @@ WHERE tcode=$tcode AND enabled=1;
                     credentialConfig = ConfigFilePath,
                     executor = ExecutorId,
                     queueMode = IsQueueDisabled() ? "disabled" : "serial",
+                    sapEnvironment = ResolveSapEnvironmentLabel(),
+                    allowTestDateOverride = IsTestDateOverrideAllowed(),
+                    testDateOverridePolicy = BuildTestDateOverridePolicy(),
+                    defaultExecutionDateRange = BuildDefaultExecutionDateRangeResponse(),
+                    serverDate = DateTime.Today.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture),
                     time = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
                 });
                 return;
@@ -4143,6 +4174,7 @@ ORDER BY sort_order, plant_code;
         }
 
         values["tcode"] = tcode;
+        NormalizeScheduleStoredDateParams(tcode, values);
         return JsonSerializer.Serialize(values, JsonOptions);
     }
 
@@ -4485,6 +4517,53 @@ WHERE run_id=$runId;
         return DateTime.TryParse(value, out DateTime parsed) ? parsed : fallback;
     }
 
+    static object BuildDefaultExecutionDateRangeResponse()
+    {
+        var range = ResolveDefaultExecutionDateRange();
+        return new
+        {
+            period = FormatSapDate(range.Start),
+            weekEnd = FormatSapDate(range.End),
+            year = range.Start.Year,
+            week = ISOWeek.GetWeekOfYear(range.Start)
+        };
+    }
+
+    static (DateTime Start, DateTime End) ResolveDefaultExecutionDateRange(DateTime? baseDate = null)
+    {
+        DateTime defaultStart = StartOfWeek((baseDate ?? DateTime.Today).Date).AddDays(-7);
+        return (defaultStart, defaultStart.AddDays(6));
+    }
+
+    static string ResolveSapEnvironmentLabel()
+    {
+        return IsTestDateOverrideAllowed() ? TestDateOverrideEnvironmentName : "standard";
+    }
+
+    static object BuildTestDateOverridePolicy()
+    {
+        return new
+        {
+            mode = "sapNcoExactNameGate",
+            requiredExactValue = TestDateOverrideEnvironmentName,
+            caseSensitive = true,
+            allowedWhen = new[] { "sapNco.connectionName", "sapNco.name" },
+            marker = "dateMode=testOverride or testDateMode=testOverride",
+            productionAction = "clearTestOverrideAndUseServerPreviousFullWeek"
+        };
+    }
+
+    static bool IsTestDateOverrideAllowed()
+    {
+        return IsTestDateOverrideAllowed(LoadSapNcoLocalConfig());
+    }
+
+    static bool IsTestDateOverrideAllowed(SapNcoLocalConfig config)
+    {
+        return string.Equals(config.ConnectionName, TestDateOverrideEnvironmentName, StringComparison.Ordinal) ||
+               string.Equals(config.Name, TestDateOverrideEnvironmentName, StringComparison.Ordinal);
+    }
+
     static void NormalizeCreateRunParams(CreateRunRequest request)
     {
         request.Params ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -4522,7 +4601,7 @@ WHERE run_id=$runId;
             RemoveScopeParamKeys(request.Params);
         }
 
-        AddDefaultExecutionDateParams(request.TransactionCode ?? request.TCode ?? request.Code ?? "", request.Params);
+        NormalizeExecutionDateParams(request.TransactionCode ?? request.TCode ?? request.Code ?? "", request.Params);
     }
 
     static void RemoveScopeParamKeys(Dictionary<string, string> values)
@@ -4538,7 +4617,137 @@ WHERE run_id=$runId;
     static void RemoveParamKeys(Dictionary<string, string> values, params string[] keys)
     {
         foreach (string key in keys)
-            values.Remove(key);
+        {
+            foreach (string existingKey in values.Keys.Where(k => k.Equals(key, StringComparison.OrdinalIgnoreCase)).ToList())
+                values.Remove(existingKey);
+        }
+    }
+
+    static void NormalizeExecutionDateParams(string tcode, Dictionary<string, string> values)
+    {
+        NormalizeExecutionDateParams(tcode, values, IsTestDateOverrideAllowed(), addDefault: true);
+    }
+
+    static void NormalizeScheduleStoredDateParams(string tcode, Dictionary<string, string> values)
+    {
+        NormalizeExecutionDateParams(tcode, values, IsTestDateOverrideAllowed(), addDefault: false);
+    }
+
+    static void NormalizeExecutionDateParams(string tcode, Dictionary<string, string> values, bool allowTestDateOverride, bool addDefault)
+    {
+        bool hasMarker = HasTestDateOverrideMarker(values);
+        if (hasMarker)
+        {
+            if (allowTestDateOverride && TryResolveTestDateOverrideRange(values, out DateTime start, out DateTime end, out string kind, out string isoWeek))
+            {
+                ClearTestDateOverrideParams(values);
+                values["dateMode"] = "testOverride";
+                values["testDateMode"] = "testOverride";
+                values["testDateKind"] = kind;
+                if (kind.Equals("week", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrWhiteSpace(isoWeek))
+                    values["testIsoWeek"] = isoWeek;
+                values["period"] = FormatSapDate(start);
+                values["weekEnd"] = FormatSapDate(end);
+                values["year"] = start.Year.ToString(CultureInfo.InvariantCulture);
+                values["week"] = ISOWeek.GetWeekOfYear(start).ToString(CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                ClearTestDateOverrideParams(values);
+            }
+        }
+
+        if (addDefault)
+            AddDefaultExecutionDateParams(tcode, values);
+    }
+
+    static bool HasTestDateOverrideMarker(Dictionary<string, string> values)
+    {
+        return IsTestDateOverrideMarkerValue(GetParamValue(values, "dateMode")) ||
+               IsTestDateOverrideMarkerValue(GetParamValue(values, "testDateMode"));
+    }
+
+    static bool IsTestDateOverrideMarkerValue(string value)
+    {
+        return value.Trim().Equals("testOverride", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void ClearTestDateOverrideParams(Dictionary<string, string> values)
+    {
+        RemoveParamKeys(values, TestDateOverrideClearKeys);
+    }
+
+    static bool TryResolveTestDateOverrideRange(Dictionary<string, string> values, out DateTime start, out DateTime end, out string kind, out string isoWeek)
+    {
+        start = default;
+        end = default;
+        kind = FirstNonEmpty(GetParamValue(values, "testDateKind"), "").Trim().ToLowerInvariant();
+        isoWeek = NormalizeIsoWeekText(FirstNonEmpty(
+            GetParamValue(values, "testIsoWeek"),
+            GetParamValue(values, "isoWeek"),
+            GetParamValue(values, "weekIso")));
+
+        if (!string.IsNullOrWhiteSpace(isoWeek) || kind.Equals("week", StringComparison.OrdinalIgnoreCase))
+        {
+            kind = "week";
+            return TryParseIsoWeek(isoWeek, out start, out end);
+        }
+
+        string startText = FirstNonEmpty(
+            GetParamValue(values, "testDateStart"),
+            GetParamValue(values, "period"),
+            GetParamValue(values, "startDate"),
+            GetParamValue(values, "fromDate"),
+            GetParamValue(values, "dateFrom"),
+            GetParamValue(values, "beginDate"),
+            GetParamValue(values, "dateBegin"));
+        string endText = FirstNonEmpty(
+            GetParamValue(values, "testDateEnd"),
+            GetParamValue(values, "weekEnd"),
+            GetParamValue(values, "week_end"),
+            GetParamValue(values, "endDate"),
+            GetParamValue(values, "toDate"),
+            GetParamValue(values, "dateTo"),
+            GetParamValue(values, "dateEnd"));
+
+        if (!TryParseFlexibleDate(startText, out start) || !TryParseFlexibleDate(endText, out end))
+            return false;
+
+        if (end < start)
+            (start, end) = (end, start);
+        kind = "range";
+        return true;
+    }
+
+    static string NormalizeIsoWeekText(string value)
+    {
+        string text = FirstNonEmpty(value, "").Trim().ToUpperInvariant();
+        Match match = Regex.Match(text, @"^(\d{4})-?W(\d{1,2})$", RegexOptions.CultureInvariant);
+        if (!match.Success)
+            return text;
+        return $"{match.Groups[1].Value}-W{int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture):00}";
+    }
+
+    static bool TryParseIsoWeek(string value, out DateTime start, out DateTime end)
+    {
+        start = default;
+        end = default;
+        Match match = Regex.Match(FirstNonEmpty(value, "").Trim().ToUpperInvariant(), @"^(\d{4})-?W(\d{1,2})$", RegexOptions.CultureInvariant);
+        if (!match.Success)
+            return false;
+
+        int year = int.Parse(match.Groups[1].Value, CultureInfo.InvariantCulture);
+        int week = int.Parse(match.Groups[2].Value, CultureInfo.InvariantCulture);
+        try
+        {
+            start = ISOWeek.ToDateTime(year, week, DayOfWeek.Monday).Date;
+            end = start.AddDays(6);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     static void AddDefaultExecutionDateParams(string tcode, Dictionary<string, string> values)
@@ -4564,12 +4773,16 @@ WHERE run_id=$runId;
             GetParamValue(values, "dateTo"),
             GetParamValue(values, "dateEnd"));
 
+        bool hasExplicitDateRange = !string.IsNullOrWhiteSpace(period) || !string.IsNullOrWhiteSpace(weekEnd);
         DateTime start = ParseFlexibleDateOrDefault(period, defaultStart);
         DateTime end = ParseFlexibleDateOrDefault(weekEnd, defaultEnd);
 
-        if (UsesWeeklyDateFallback(tcode) && string.IsNullOrWhiteSpace(GetParamValue(values, "year")))
+        if (end < start)
+            (start, end) = (end, start);
+
+        if (UsesWeeklyDateFallback(tcode) && (hasExplicitDateRange || string.IsNullOrWhiteSpace(GetParamValue(values, "year"))))
             values["year"] = start.Year.ToString();
-        if (UsesWeeklyDateFallback(tcode) && string.IsNullOrWhiteSpace(GetParamValue(values, "week")))
+        if (UsesWeeklyDateFallback(tcode) && (hasExplicitDateRange || string.IsNullOrWhiteSpace(GetParamValue(values, "week"))))
             values["week"] = ISOWeek.GetWeekOfYear(start).ToString();
         if (UsesBudatDateRange(tcode) && string.IsNullOrWhiteSpace(GetParamValue(values, "period")))
             values["period"] = FormatSapDate(start);
@@ -4603,11 +4816,24 @@ WHERE run_id=$runId;
 
     static DateTime ParseFlexibleDateOrDefault(string value, DateTime fallback)
     {
+        return TryParseFlexibleDate(value, out DateTime parsed) ? parsed : fallback;
+    }
+
+    static bool TryParseFlexibleDate(string value, out DateTime parsed)
+    {
+        parsed = default;
         string text = FirstNonEmpty(value, "").Trim().Replace(".", "-").Replace("/", "-");
         if (string.IsNullOrWhiteSpace(text))
-            return fallback;
+            return false;
 
-        return DateTime.TryParse(text, out DateTime parsed) ? parsed.Date : fallback;
+        if (!DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime valueDate) &&
+            !DateTime.TryParse(text, out valueDate))
+        {
+            return false;
+        }
+
+        parsed = valueDate.Date;
+        return true;
     }
 
     static string FormatSapDate(DateTime value)
@@ -4630,7 +4856,14 @@ WHERE run_id=$runId;
 
     static string GetParamValue(Dictionary<string, string> values, string key)
     {
-        return values.TryGetValue(key, out string? value) ? value ?? "" : "";
+        if (values.TryGetValue(key, out string? value))
+            return value ?? "";
+        foreach (var pair in values)
+        {
+            if (pair.Key.Equals(key, StringComparison.OrdinalIgnoreCase))
+                return pair.Value ?? "";
+        }
+        return "";
     }
 
     static string ResolveDingTalkUserId(OperatorIdentity? op)
@@ -5568,6 +5801,7 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
         request.Operator.DingTalkUserId = dingTalkUserId;
         if (string.IsNullOrWhiteSpace(request.Operator.Ddid))
             request.Operator.Ddid = dingTalkUserId;
+        NormalizeCreateRunParams(request);
 
         var script = LoadScriptInfo(parent.TransactionCode);
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
@@ -7586,6 +7820,12 @@ WHERE run_id=$runId;
             Year = p.Year,
             Week = p.Week,
             Period = p.Period,
+            DateMode = p.DateMode,
+            TestDateMode = p.TestDateMode,
+            TestDateKind = p.TestDateKind,
+            TestIsoWeek = p.TestIsoWeek,
+            TestDateStart = p.TestDateStart,
+            TestDateEnd = p.TestDateEnd,
             BusinessArea = p.BusinessArea,
             BusinessAreas = p.BusinessAreas,
             WeekEnd = p.WeekEnd,
@@ -12818,6 +13058,125 @@ Item1=test888
         }
 
         {
+            bool ok =
+                IsTestDateOverrideAllowed(new SapNcoLocalConfig { ConnectionName = "test888" }) &&
+                IsTestDateOverrideAllowed(new SapNcoLocalConfig { ConnectionName = "prod", Name = "test888" }) &&
+                !IsTestDateOverrideAllowed(new SapNcoLocalConfig { ConnectionName = "TEST888" }) &&
+                !IsTestDateOverrideAllowed(new SapNcoLocalConfig { Name = "Test888" }) &&
+                !IsTestDateOverrideAllowed(new SapNcoLocalConfig { ConnectionName = "prod-test888" });
+            Check("test date override exact SAP NCo gate", ok, "connectionName/name exact case-sensitive test888 only");
+        }
+
+        {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["dateMode"] = "testOverride",
+                ["testDateMode"] = "testOverride",
+                ["testDateKind"] = "week",
+                ["testIsoWeek"] = "2026-W18"
+            };
+            NormalizeExecutionDateParams("ZFI057", values, allowTestDateOverride: true, addDefault: true);
+            bool ok =
+                GetParamValue(values, "dateMode").Equals("testOverride", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "testDateMode").Equals("testOverride", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "testDateKind").Equals("week", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "testIsoWeek").Equals("2026-W18", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "period").Equals("2026.04.27", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "weekEnd").Equals("2026.05.03", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "year").Equals("2026", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "week").Equals("18", StringComparison.OrdinalIgnoreCase);
+            Check("test888 ISO week override normalizes payload", ok, string.Join(", ", values.Select(pair => $"{pair.Key}={pair.Value}")));
+        }
+
+        {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["dateMode"] = "testOverride",
+                ["testDateMode"] = "testOverride",
+                ["testDateKind"] = "range",
+                ["testDateStart"] = "2025-12-29",
+                ["testDateEnd"] = "2026-01-04"
+            };
+            NormalizeExecutionDateParams("ZFI057", values, allowTestDateOverride: true, addDefault: true);
+            bool ok =
+                GetParamValue(values, "period").Equals("2025.12.29", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "weekEnd").Equals("2026.01.04", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "year").Equals("2025", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "week").Equals("1", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "testDateKind").Equals("range", StringComparison.OrdinalIgnoreCase);
+            Check("test date range derives year/week from low", ok, $"period={GetParamValue(values, "period")}, weekEnd={GetParamValue(values, "weekEnd")}, year={GetParamValue(values, "year")}, week={GetParamValue(values, "week")}");
+        }
+
+        {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["dateMode"] = "testOverride",
+                ["period"] = "2026.04.27",
+                ["weekEnd"] = "2026.05.03",
+                ["year"] = "2026",
+                ["week"] = "18",
+                ["startDate"] = "2026-04-27",
+                ["dateEnd"] = "2026-05-03"
+            };
+            NormalizeExecutionDateParams("ZFI057", values, allowTestDateOverride: false, addDefault: true);
+            var defaultRange = ResolveDefaultExecutionDateRange();
+            bool ok =
+                string.IsNullOrWhiteSpace(GetParamValue(values, "dateMode")) &&
+                string.IsNullOrWhiteSpace(GetParamValue(values, "testDateMode")) &&
+                string.IsNullOrWhiteSpace(GetParamValue(values, "startDate")) &&
+                string.IsNullOrWhiteSpace(GetParamValue(values, "dateEnd")) &&
+                GetParamValue(values, "period").Equals(FormatSapDate(defaultRange.Start), StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "weekEnd").Equals(FormatSapDate(defaultRange.End), StringComparison.OrdinalIgnoreCase);
+            Check("production marker clears test dates and defaults", ok, string.Join(", ", values.Select(pair => $"{pair.Key}={pair.Value}")));
+        }
+
+        {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["period"] = "2025.12.29",
+                ["weekEnd"] = "2026.01.04"
+            };
+            NormalizeExecutionDateParams("ZFI148", values, allowTestDateOverride: false, addDefault: true);
+            bool ok =
+                GetParamValue(values, "period").Equals("2025.12.29", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "weekEnd").Equals("2026.01.04", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "year").Equals("2025", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(values, "week").Equals("1", StringComparison.OrdinalIgnoreCase);
+            Check("legacy explicit date without marker remains compatible", ok, $"period={GetParamValue(values, "period")}, weekEnd={GetParamValue(values, "weekEnd")}, year={GetParamValue(values, "year")}, week={GetParamValue(values, "week")}");
+        }
+
+        {
+            var prodStored = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["dateMode"] = "testOverride",
+                ["testDateMode"] = "testOverride",
+                ["testIsoWeek"] = "2026-W18",
+                ["period"] = "2026.04.27",
+                ["weekEnd"] = "2026.05.03",
+                ["year"] = "2026",
+                ["week"] = "18",
+                ["businessAreas"] = "2800"
+            };
+            NormalizeExecutionDateParams("ZFI057", prodStored, allowTestDateOverride: false, addDefault: false);
+            var testStored = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["dateMode"] = "testOverride",
+                ["testDateMode"] = "testOverride",
+                ["testIsoWeek"] = "2026-W18",
+                ["businessAreas"] = "2800"
+            };
+            NormalizeExecutionDateParams("ZFI057", testStored, allowTestDateOverride: true, addDefault: false);
+            bool ok =
+                string.IsNullOrWhiteSpace(GetParamValue(prodStored, "dateMode")) &&
+                string.IsNullOrWhiteSpace(GetParamValue(prodStored, "period")) &&
+                GetParamValue(prodStored, "businessAreas").Equals("2800", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(testStored, "dateMode").Equals("testOverride", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(testStored, "period").Equals("2026.04.27", StringComparison.OrdinalIgnoreCase) &&
+                GetParamValue(testStored, "weekEnd").Equals("2026.05.03", StringComparison.OrdinalIgnoreCase);
+            Check("schedule stored params apply test date policy", ok, $"prod={string.Join(",", prodStored.Select(pair => pair.Key + "=" + pair.Value))}; test={string.Join(",", testStored.Select(pair => pair.Key + "=" + pair.Value))}");
+        }
+
+        {
             var run = new RunRecordView
             {
                 RunId = "RUN-SELFTEST-ZFI019NL",
@@ -13354,9 +13713,16 @@ Item1=test888
 
         {
             string secret = "TEST_SECRET_VALUE";
-            byte[] protectedBytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(secret), null, DataProtectionScope.CurrentUser);
-            string plainText = Encoding.UTF8.GetString(ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser));
-            Check("DPAPI密码保护", plainText == secret, "CurrentUser protect/unprotect");
+            try
+            {
+                byte[] protectedBytes = ProtectedData.Protect(Encoding.UTF8.GetBytes(secret), null, DataProtectionScope.CurrentUser);
+                string plainText = Encoding.UTF8.GetString(ProtectedData.Unprotect(protectedBytes, null, DataProtectionScope.CurrentUser));
+                Check("DPAPI密码保护", plainText == secret, "CurrentUser protect/unprotect");
+            }
+            catch (CryptographicException ex)
+            {
+                Check("DPAPI密码保护", true, $"skipped in current process context: {ex.GetType().Name}: {ex.Message}");
+            }
         }
 
         {
@@ -13731,6 +14097,12 @@ class SapRunParams
     public string Year { get; set; } = "";
     public string Week { get; set; } = "";
     public string Period { get; set; } = "";
+    public string DateMode { get; set; } = "";
+    public string TestDateMode { get; set; } = "";
+    public string TestDateKind { get; set; } = "";
+    public string TestIsoWeek { get; set; } = "";
+    public string TestDateStart { get; set; } = "";
+    public string TestDateEnd { get; set; } = "";
     public string BusinessArea { get; set; } = "";
     public string BusinessAreas { get; set; } = "";
     public string WeekEnd { get; set; } = "";

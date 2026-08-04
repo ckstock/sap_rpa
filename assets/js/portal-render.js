@@ -12,11 +12,21 @@
           online: !!health.ok,
           lastChecked: checkedAt,
           database: health.database || "",
-          queueMode: health.queueMode || ""
+          queueMode: health.queueMode || "",
+          sapEnvironment: health.sapEnvironment || "",
+          allowTestDateOverride: health.allowTestDateOverride === true,
+          testDateOverridePolicy: health.testDateOverridePolicy || null,
+          defaultExecutionDateRange: health.defaultExecutionDateRange || null,
+          serverDate: health.serverDate || ""
         };
+        if (!state.bridge.allowTestDateOverride) disableTestDateOverrideState();
       } catch (err) {
         state.bridge.online = false;
         state.bridge.queueMode = "";
+        state.bridge.allowTestDateOverride = false;
+        state.bridge.defaultExecutionDateRange = null;
+        state.bridge.serverDate = "";
+        disableTestDateOverrideState();
         state.bridge.lastChecked = checkedAt;
         state.queue = { online: false, runningRunId: "", queuedCount: null, queuePosition: null, runsAhead: null, workItemsAhead: null, lastChecked: checkedAt };
         state.config = { online: false, source: "fallback", lastLoaded: checkedAt, error: err.message || "本机 API 不可用" };
@@ -579,38 +589,79 @@
         const label = payload.rangeKind === "dateRange" ? (index === 0 ? "开始" : "截止") + " " : "";
         return `<span class="area-chip">${esc(label + code)}</span>`;
       }).join("") || `<span class="area-chip">${esc(payload.rangeEmptyText)}</span>`;
-      const weekOverride = state.form.tCode === "ZFI057" ? renderZfi057WeekOverride(payload) : "";
+      const testDateOverride = renderTestDateOverrideControl(payload);
       return `
         <div class="execute-range">
           <div class="execute-range-row">
             <div class="execute-range-label">执行${esc(payload.rangeLabel)}</div>
             <div class="area-chips">${chips}</div>
           </div>
-          ${weekOverride}
+          ${testDateOverride}
         </div>
       `;
     }
 
-    function renderZfi057WeekOverride(payload) {
-      const currentRange = normalizeZfi057WeekOverride();
-      const inputText = payload.dateRangeSource === "server"
-        ? "服务器上一完整周（提交时由后端计算）"
-        : `${payload.period} 至 ${payload.weekEnd}`;
+    function renderTestDateOverrideControl(payload) {
+      if (!allowTestDateOverride() || !usesExecutionDateParams(payload.tcode)) return "";
+      const defaults = getDefaultTestDateFormState();
+      if (!state.form.testIsoWeek) state.form.testIsoWeek = defaults.testIsoWeek;
+      if (!state.form.testDateStart) state.form.testDateStart = defaults.testDateStart;
+      if (!state.form.testDateEnd) state.form.testDateEnd = defaults.testDateEnd;
+      const checked = state.form.useTestDateOverride === true;
+      const kind = state.form.testDateKind === "range" ? "range" : "week";
+      const currentRange = buildTestDateOverrideForTCode(payload.tcode);
+      const previewRange = currentRange || getServerDefaultExecutionDateRange();
+      const inputText = `${previewRange.period} 至 ${previewRange.weekEnd}`;
+      const disabled = checked ? "" : "disabled";
       return `
-          <div class="zfi057-week-override">
+          <div class="zfi057-week-override test-date-override">
             <label class="checkbox-card compact">
-              <input id="useCustomZfi057Week" type="checkbox" ${state.form.useCustomZfi057Week === false ? "" : "checked"}>
+              <input id="useTestDateOverride" type="checkbox" ${checked ? "checked" : ""}>
               <span>
-                <strong>指定测试周</strong>
-                <span>勾选后按下方日期执行；取消勾选后不传日期，由后端按服务器日期计算上一完整周。</span>
+                <strong>指定测试用日期</strong>
+                <span>仅 test888 测试系统可用，取消勾选后不提交日期字段。</span>
               </span>
             </label>
             <div class="week-range-inputs">
-              <label>开始日期<input id="customZfi057WeekStart" type="date" value="${esc(sapDateToInputValue(currentRange.period))}" ${state.form.useCustomZfi057Week === false ? "disabled" : ""}></label>
-              <label>截止日期<input id="customZfi057WeekEnd" type="date" value="${esc(sapDateToInputValue(currentRange.weekEnd))}" ${state.form.useCustomZfi057Week === false ? "disabled" : ""}></label>
+              <label>类型<select id="testDateKind" ${disabled}><option value="week" ${kind === "week" ? "selected" : ""}>ISO 周</option><option value="range" ${kind === "range" ? "selected" : ""}>日期范围</option></select></label>
+              <label ${kind === "range" ? "hidden" : ""}>测试周<input id="testIsoWeek" type="week" value="${esc(normalizeIsoWeekText(state.form.testIsoWeek) || defaults.testIsoWeek)}" ${disabled}></label>
+              <label ${kind === "week" ? "hidden" : ""}>开始日期<input id="testDateStart" type="date" value="${esc(state.form.testDateStart || defaults.testDateStart)}" ${disabled}></label>
+              <label ${kind === "week" ? "hidden" : ""}>截止日期<input id="testDateEnd" type="date" value="${esc(state.form.testDateEnd || defaults.testDateEnd)}" ${disabled}></label>
               <span class="table-hint">本次入参：${esc(inputText)}</span>
             </div>
           </div>
+      `;
+    }
+
+    function renderScheduleTestDateOverrideControl(tCode) {
+      if (!allowTestDateOverride() || !usesExecutionDateParams(tCode)) return "";
+      const defaults = getDefaultTestDateFormState();
+      if (!state.scheduleForm.testIsoWeek) state.scheduleForm.testIsoWeek = defaults.testIsoWeek;
+      if (!state.scheduleForm.testDateStart) state.scheduleForm.testDateStart = defaults.testDateStart;
+      if (!state.scheduleForm.testDateEnd) state.scheduleForm.testDateEnd = defaults.testDateEnd;
+      const checked = state.scheduleForm.useTestDateOverride === true;
+      const kind = state.scheduleForm.testDateKind === "range" ? "range" : "week";
+      const currentRange = buildTestDateOverrideForTCode(tCode, state.scheduleForm);
+      const previewRange = currentRange || getServerDefaultExecutionDateRange();
+      const disabled = checked ? "" : "disabled";
+      return `
+                  <div class="field span-2">
+                    <label>指定测试用日期</label>
+                    <label class="checkbox-card compact">
+                      <input id="scheduleUseTestDateOverride" type="checkbox" ${checked ? "checked" : ""}>
+                      <span>
+                        <strong>指定测试用日期</strong>
+                        <span>仅 test888 测试系统可保存，取消勾选后不保存日期字段。</span>
+                      </span>
+                    </label>
+                    <div class="week-range-inputs">
+                      <label>类型<select id="scheduleTestDateKind" ${disabled}><option value="week" ${kind === "week" ? "selected" : ""}>ISO 周</option><option value="range" ${kind === "range" ? "selected" : ""}>日期范围</option></select></label>
+                      <label ${kind === "range" ? "hidden" : ""}>测试周<input id="scheduleTestIsoWeek" type="week" value="${esc(normalizeIsoWeekText(state.scheduleForm.testIsoWeek) || defaults.testIsoWeek)}" ${disabled}></label>
+                      <label ${kind === "week" ? "hidden" : ""}>开始日期<input id="scheduleTestDateStart" type="date" value="${esc(state.scheduleForm.testDateStart || defaults.testDateStart)}" ${disabled}></label>
+                      <label ${kind === "week" ? "hidden" : ""}>截止日期<input id="scheduleTestDateEnd" type="date" value="${esc(state.scheduleForm.testDateEnd || defaults.testDateEnd)}" ${disabled}></label>
+                      <span class="table-hint">本次入参：${esc(previewRange.period)} 至 ${esc(previewRange.weekEnd)}</span>
+                    </div>
+                  </div>
       `;
     }
     function unique(list) {
@@ -1153,6 +1204,15 @@
       const notifyEnabled = readInputChecked("scheduleNotifyStart") || readInputChecked("scheduleNotifySuccess") || readInputChecked("scheduleNotifyFail");
       if (notifyEnabled && !getResolvedNotifyUserId()) throw new Error(notifyUserBlockingText() || "缺少定时任务通知人钉钉 ID");
       const currentUserName = state.user.name || state.externalAuth.claimedUserName || "portal";
+      const scheduleDateForm = {
+        ...state.scheduleForm,
+        useTestDateOverride: readInputChecked("scheduleUseTestDateOverride"),
+        testDateKind: readInputValue("scheduleTestDateKind") || state.scheduleForm.testDateKind,
+        testIsoWeek: readInputValue("scheduleTestIsoWeek") || state.scheduleForm.testIsoWeek,
+        testDateStart: readInputValue("scheduleTestDateStart") || state.scheduleForm.testDateStart,
+        testDateEnd: readInputValue("scheduleTestDateEnd") || state.scheduleForm.testDateEnd
+      };
+      const scheduleDateOverride = buildTestDateOverrideForTCode(tCode, scheduleDateForm);
       const task = {
         id: state.scheduleForm.id || nextScheduleTaskId(),
         name: readInputValue("scheduleName") || defaultScheduleName(tCode),
@@ -1199,6 +1259,22 @@
         createdBy: state.scheduleForm.createdBy || currentUserName,
         updatedBy: currentUserName
       };
+      if (scheduleDateOverride) {
+        [
+          "dateMode",
+          "testDateMode",
+          "testDateKind",
+          "testIsoWeek",
+          "testDateStart",
+          "testDateEnd",
+          "period",
+          "weekEnd",
+          "year",
+          "week"
+        ].forEach(key => {
+          if (scheduleDateOverride[key] !== undefined && scheduleDateOverride[key] !== null && scheduleDateOverride[key] !== "") task.params[key] = scheduleDateOverride[key];
+        });
+      }
       return task;
     }
 
@@ -1255,6 +1331,7 @@
         const isBusinessAreaRange = scheduleRangeKind === "businessArea";
         const scheduleAreas = isDateRange ? [] : (isBusinessAreaRange ? schedulePlants : getBusinessAreasForSelection(state.scheduleForm.tCode, schedulePlants, state.scheduleForm.factoryGroup));
         const scheduleRange = getLastFullWeekDateRange();
+        const scheduleTestDateOverride = renderScheduleTestDateOverrideControl(state.scheduleForm.tCode);
         const scheduleScopeEditor = isDateRange ? `
                   <div class="schedule-plant-preview">
                     <div class="schedule-plant-title">日期范围</div>
@@ -1291,6 +1368,7 @@
                   <div class="field"><label>执行频率</label><select id="scheduleFrequency"><option value="daily" ${state.scheduleForm.frequency === "daily" ? "selected" : ""}>每天</option><option value="weekly" ${state.scheduleForm.frequency === "weekly" ? "selected" : ""}>每周</option><option value="monthly" ${state.scheduleForm.frequency === "monthly" ? "selected" : ""}>每月</option></select></div>
                   <div class="field"><label>状态</label><label class="radio-chip"><input id="scheduleEnabled" type="checkbox" ${state.scheduleForm.enabled === false ? "" : "checked"}>启用</label></div>
 ${scheduleScopeEditor}
+${scheduleTestDateOverride}
                   <div class="field span-2"><label>通知规则</label><div class="check-row"><label class="radio-chip"><input id="scheduleNotifyStart" type="checkbox" ${state.scheduleForm.notifyStart === false ? "" : "checked"}>执行前提醒</label><label class="radio-chip"><input id="scheduleNotifySuccess" type="checkbox" ${state.scheduleForm.notifySuccess === false ? "" : "checked"}>成功通知</label><label class="radio-chip"><input id="scheduleNotifyFail" type="checkbox" ${state.scheduleForm.notifyFail === false ? "" : "checked"}>失败告警</label></div></div>
                 </div>
               </div>

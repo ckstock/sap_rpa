@@ -26,22 +26,33 @@
         localStorage.setItem("portalUseDefaultNotifyUser", state.form.useDefaultNotifyUser ? "1" : "0");
         render();
       });
-      const useCustomZfi057Week = document.getElementById("useCustomZfi057Week");
-      if (useCustomZfi057Week) useCustomZfi057Week.addEventListener("change", () => {
-        state.form.useCustomZfi057Week = useCustomZfi057Week.checked;
-        localStorage.setItem("portalUseCustomZfi057Week", state.form.useCustomZfi057Week ? "1" : "0");
+      const useTestDateOverride = document.getElementById("useTestDateOverride");
+      if (useTestDateOverride) useTestDateOverride.addEventListener("change", () => {
+        state.form.useTestDateOverride = allowTestDateOverride() && useTestDateOverride.checked;
         render();
       });
-      const customZfi057WeekStart = document.getElementById("customZfi057WeekStart");
-      if (customZfi057WeekStart) customZfi057WeekStart.addEventListener("change", () => {
-        state.form.customZfi057WeekStart = customZfi057WeekStart.value;
-        localStorage.setItem("portalCustomZfi057WeekStart", customZfi057WeekStart.value);
+      const testDateKind = document.getElementById("testDateKind");
+      if (testDateKind) testDateKind.addEventListener("change", () => {
+        state.form.testDateKind = testDateKind.value === "range" ? "range" : "week";
+        localStorage.setItem("portalTestDateKind", state.form.testDateKind);
         render();
       });
-      const customZfi057WeekEnd = document.getElementById("customZfi057WeekEnd");
-      if (customZfi057WeekEnd) customZfi057WeekEnd.addEventListener("change", () => {
-        state.form.customZfi057WeekEnd = customZfi057WeekEnd.value;
-        localStorage.setItem("portalCustomZfi057WeekEnd", customZfi057WeekEnd.value);
+      const testIsoWeek = document.getElementById("testIsoWeek");
+      if (testIsoWeek) testIsoWeek.addEventListener("change", () => {
+        state.form.testIsoWeek = normalizeIsoWeekText(testIsoWeek.value) || testIsoWeek.value;
+        localStorage.setItem("portalTestIsoWeek", state.form.testIsoWeek);
+        render();
+      });
+      const testDateStart = document.getElementById("testDateStart");
+      if (testDateStart) testDateStart.addEventListener("change", () => {
+        state.form.testDateStart = testDateStart.value;
+        localStorage.setItem("portalTestDateStart", testDateStart.value);
+        render();
+      });
+      const testDateEnd = document.getElementById("testDateEnd");
+      if (testDateEnd) testDateEnd.addEventListener("change", () => {
+        state.form.testDateEnd = testDateEnd.value;
+        localStorage.setItem("portalTestDateEnd", testDateEnd.value);
         render();
       });
       const scheduleTCode = document.getElementById("scheduleTCode");
@@ -59,6 +70,22 @@
       if (scheduleFrequency) scheduleFrequency.addEventListener("change", () => { state.scheduleForm.frequency = scheduleFrequency.value; });
       const scheduleEnabled = document.getElementById("scheduleEnabled");
       if (scheduleEnabled) scheduleEnabled.addEventListener("change", () => { state.scheduleForm.enabled = scheduleEnabled.checked; });
+      const scheduleUseTestDateOverride = document.getElementById("scheduleUseTestDateOverride");
+      if (scheduleUseTestDateOverride) scheduleUseTestDateOverride.addEventListener("change", () => {
+        state.scheduleForm.useTestDateOverride = allowTestDateOverride() && scheduleUseTestDateOverride.checked;
+        render();
+      });
+      const scheduleTestDateKind = document.getElementById("scheduleTestDateKind");
+      if (scheduleTestDateKind) scheduleTestDateKind.addEventListener("change", () => {
+        state.scheduleForm.testDateKind = scheduleTestDateKind.value === "range" ? "range" : "week";
+        render();
+      });
+      const scheduleTestIsoWeek = document.getElementById("scheduleTestIsoWeek");
+      if (scheduleTestIsoWeek) scheduleTestIsoWeek.addEventListener("change", () => { state.scheduleForm.testIsoWeek = normalizeIsoWeekText(scheduleTestIsoWeek.value) || scheduleTestIsoWeek.value; });
+      const scheduleTestDateStart = document.getElementById("scheduleTestDateStart");
+      if (scheduleTestDateStart) scheduleTestDateStart.addEventListener("change", () => { state.scheduleForm.testDateStart = scheduleTestDateStart.value; });
+      const scheduleTestDateEnd = document.getElementById("scheduleTestDateEnd");
+      if (scheduleTestDateEnd) scheduleTestDateEnd.addEventListener("change", () => { state.scheduleForm.testDateEnd = scheduleTestDateEnd.value; });
       [
         ["scheduleNotifyStart", "notifyStart"],
         ["scheduleNotifySuccess", "notifySuccess"],
@@ -87,6 +114,7 @@
     function updateScheduleTCode(tCode) {
       state.scheduleForm.tCode = tCode;
       state.scheduleForm.plants = getRuleRangeKind(getTCode(tCode)) === "dateRange" ? [] : getDefaultRunRangeForTCode(tCode, state.scheduleForm.factoryGroup);
+      if (!usesExecutionDateParams(tCode)) state.scheduleForm.useTestDateOverride = false;
       if (!state.scheduleForm.nameEdited) {
         state.scheduleForm.name = defaultScheduleName(tCode);
       }
@@ -149,6 +177,7 @@
     function openScheduleModal(id = "") {
       const task = id ? scheduleTasks.find(item => item.id === id) : null;
       if (task) {
+        const testDateState = getTestDateFormStateFromParams(task.tCode, task.params || {});
         state.scheduleForm = {
           id: task.id,
           name: task.name,
@@ -161,6 +190,11 @@
           notifySuccess: task.notifySuccess !== false,
           notifyFail: task.notifyFail !== false,
           enabled: task.enabled !== false && task.status !== "停用",
+          useTestDateOverride: testDateState.useTestDateOverride,
+          testDateKind: testDateState.testDateKind,
+          testIsoWeek: testDateState.testIsoWeek,
+          testDateStart: testDateState.testDateStart,
+          testDateEnd: testDateState.testDateEnd,
           createdBy: task.createdBy || "",
           updatedBy: task.updatedBy || "",
           nameEdited: true
@@ -168,6 +202,7 @@
       } else {
         const tCode = state.scheduleForm.tCode || tCodes[0]?.code || "";
         const defaultGroup = getTCode(tCode)?.defaultPlantGroup || state.scheduleForm.factoryGroup || factoryGroups[0]?.id || "";
+        const testDateState = getDefaultTestDateFormState();
         state.scheduleForm = {
           id: "",
           name: defaultScheduleName(tCode),
@@ -180,6 +215,11 @@
           notifySuccess: true,
           notifyFail: true,
           enabled: true,
+          useTestDateOverride: false,
+          testDateKind: testDateState.testDateKind,
+          testIsoWeek: testDateState.testIsoWeek,
+          testDateStart: testDateState.testDateStart,
+          testDateEnd: testDateState.testDateEnd,
           createdBy: state.user.name || state.externalAuth.claimedUserName || "portal",
           updatedBy: state.user.name || state.externalAuth.claimedUserName || "portal",
           nameEdited: false
@@ -720,8 +760,6 @@
       state.user.dingTalkUserId = notifyUserId;
       const runParams = payload.rangeKind === "dateRange"
         ? {
-            period: payload.period,
-            weekEnd: payload.weekEnd,
             runStrategy: payload.runStrategy
           }
         : {
@@ -731,11 +769,25 @@
             factoryCodes: payload.plantsCsv,
             factoryGroup: payload.factoryGroup,
             businessAreas: payload.businessAreasCsv,
-            period: payload.period,
-            weekEnd: payload.weekEnd,
             runStrategy: payload.runStrategy,
             remark: payload.remark
           };
+      if (payload.dateMode === "testOverride" || payload.testDateMode === "testOverride") {
+        [
+          "dateMode",
+          "testDateMode",
+          "testDateKind",
+          "testIsoWeek",
+          "testDateStart",
+          "testDateEnd",
+          "period",
+          "weekEnd",
+          "year",
+          "week"
+        ].forEach(key => {
+          if (payload[key] !== undefined && payload[key] !== null && payload[key] !== "") runParams[key] = payload[key];
+        });
+      }
       return bridgeFetch("/api/runs", {
         method: "POST",
         body: JSON.stringify({
@@ -847,15 +899,15 @@
       const isBusinessAreaRange = rangeMeta.isBusinessArea;
       const isDateRange = rangeMeta.isDateRange;
       const selectedRange = getRunRangeForTCode(state.form.tCode, state.form.plants, state.form.factoryGroup);
-      const isZfi057ServerWeek = state.form.tCode === "ZFI057" && state.form.useCustomZfi057Week === false;
-      const dateRange = isZfi057ServerWeek ? { period: "", weekEnd: "" } : getExecutionDateRangeForTCode(state.form.tCode);
+      const dateOverride = buildTestDateOverrideForTCode(state.form.tCode);
+      const displayDateRange = dateOverride || getDisplayExecutionDateRangeForTCode(state.form.tCode);
       const selectedPlants = isBusinessAreaRange || isDateRange ? [] : selectedRange;
       const businessAreas = isDateRange
         ? []
         : isBusinessAreaRange
           ? selectedRange
           : getBusinessAreasForSelection(state.form.tCode, selectedPlants, state.form.factoryGroup);
-      const rangeValues = isDateRange ? [dateRange.period, dateRange.weekEnd] : selectedRange;
+      const rangeValues = isDateRange ? [displayDateRange.period, displayDateRange.weekEnd] : selectedRange;
       const rangeLabel = isDateRange ? "日期范围" : (isBusinessAreaRange ? "业务范围" : "工厂");
       return {
         source: "netlify-static-portal",
@@ -869,9 +921,17 @@
         plantsCsv: selectedPlants.join(","),
         businessAreas,
         businessAreasCsv: businessAreas.join(","),
-        period: dateRange.period,
-        weekEnd: dateRange.weekEnd,
-        dateRangeSource: isZfi057ServerWeek ? "server" : "page",
+        dateMode: dateOverride?.dateMode || "",
+        testDateMode: dateOverride?.testDateMode || "",
+        testDateKind: dateOverride?.testDateKind || "",
+        testIsoWeek: dateOverride?.testIsoWeek || "",
+        testDateStart: dateOverride?.testDateStart || "",
+        testDateEnd: dateOverride?.testDateEnd || "",
+        period: dateOverride?.period || "",
+        weekEnd: dateOverride?.weekEnd || "",
+        year: dateOverride?.year || "",
+        week: dateOverride?.week || "",
+        dateRangeSource: dateOverride ? "testOverride" : "server",
         rangeKind: isDateRange ? "dateRange" : (isBusinessAreaRange ? "businessArea" : "plant"),
         runStrategy: state.form.tCode === "ZFI057" ? "auto3step" : "",
         rangeLabel,
@@ -892,13 +952,27 @@
         action: "run",
         tcode: p.tcode,
         script: p.script,
-        period: p.period,
-        weekEnd: p.weekEnd,
         notifyUserId,
         dingTalkUserId: notifyUserId,
         ddid: notifyUserId
       });
       if (p.runStrategy) params.set("runStrategy", p.runStrategy);
+      if (p.dateMode === "testOverride" || p.testDateMode === "testOverride") {
+        [
+          "dateMode",
+          "testDateMode",
+          "testDateKind",
+          "testIsoWeek",
+          "testDateStart",
+          "testDateEnd",
+          "period",
+          "weekEnd",
+          "year",
+          "week"
+        ].forEach(key => {
+          if (p[key] !== undefined && p[key] !== null && p[key] !== "") params.set(key, p[key]);
+        });
+      }
       if (p.rangeKind !== "dateRange") {
         params.set("plant", p.plant);
         params.set("plants", p.plantsCsv);

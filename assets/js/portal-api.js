@@ -130,6 +130,20 @@
           if (parsed && typeof parsed === "object") params = parsed;
         } catch (_) { }
       }
+      [
+        "dateMode",
+        "testDateMode",
+        "testDateKind",
+        "testIsoWeek",
+        "testDateStart",
+        "testDateEnd",
+        "period",
+        "weekEnd",
+        "year",
+        "week"
+      ].forEach(key => {
+        if (item[key] !== undefined && item[key] !== null && item[key] !== "") params[key] = item[key];
+      });
       const isDateRange = getRuleRangeKind(getTCode(tCode)) === "dateRange";
       const isBusinessAreaRange = getRuleRangeKind(getTCode(tCode)) === "businessArea";
       const hasExplicitPlants = item.plants !== undefined || item.plantCodes !== undefined || item.factoryCodes !== undefined ||
