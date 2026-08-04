@@ -516,7 +516,7 @@
         <table>
           <thead><tr><th>场景</th><th>页面与提交</th><th>后端最终行为</th></tr></thead>
           <tbody>
-            <tr><td><code>test888</code> 测试系统</td><td>日期相关卡片及定时任务弹窗显示“指定测试用日期”，默认不勾选。可输入 <code>2026-W18</code>（兼容 <code>2026W18</code>、<code>2026-18</code>、<code>2026 18</code>、<code>2026年18周</code>）或开始/截止日期。</td><td>勾选时写入 <code>dateMode=testOverride</code>、<code>testDateMode=testOverride</code> 和标准化的 <code>period/weekEnd/year/week</code>；年周始终由日期范围 low 值推导。</td></tr>
+            <tr><td><code>test888</code> 测试系统</td><td>日期相关卡片及定时任务弹窗显示“指定测试用日期”，默认不勾选。选择 <code>ISO 周</code> 时只编辑 <code>2026-W18</code>（兼容 <code>2026W18</code>、<code>2026-18</code>、<code>2026 18</code>、<code>2026年18周</code>），开始/截止日期只读显示推导值；选择<code>日期范围</code>时只编辑开始/截止日期，测试周只读显示 low 日期推导值。界面始终显示完整 VBS 日期入参，避免周和日期范围相互矛盾。</td><td>勾选时写入 <code>dateMode=testOverride</code>、<code>testDateMode=testOverride</code> 和标准化的 <code>period/weekEnd/year/week</code>；年周始终由日期范围 low 值推导。</td></tr>
             <tr><td>未勾选</td><td>不发送测试 marker，也不发送 <code>period/weekEnd/year/week</code>。</td><td>按服务器系统日期计算上一完整周。</td></tr>
             <tr><td>正式或非 <code>test888</code> 系统</td><td>测试日期控件完全隐藏；localStorage 遗留输入不得进入 API 或 <code>sap-rpa://run</code> payload。</td><td>即使外部请求、SQLite 历史定时任务或失败重跑带有测试 marker，也会清除测试日期及历史别名后，按服务器上一完整周执行。</td></tr>
           </tbody>
