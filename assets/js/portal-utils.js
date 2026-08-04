@@ -40,6 +40,8 @@
 
     const WEEKLY_DATE_PARAM_TCODES = new Set(["ZFI072A", "ZFI148"]);
     const RANGE_DATE_PARAM_TCODES = new Set(["ZFI072N", "ZFI080B", "ZFI080", "ZCO019", "ZFI019NA", "ZFI019NL", "ZFIR034", "ZFI057", "ZCO020", "ZFI148"]);
+    // Only these flows accept an ISO-week source. The other date VBS files receive a date range only.
+    const TEST_DATE_WEEK_INPUT_TCODES = new Set(["ZFI072A", "ZFI057", "ZFIR034", "ZFI148"]);
 
     function normalizeTCodeValue(tCode) {
       return String(tCode || "").trim().toUpperCase();
@@ -51,6 +53,10 @@
 
     function usesBudatDateRangeParams(tCode) {
       return RANGE_DATE_PARAM_TCODES.has(normalizeTCodeValue(tCode));
+    }
+
+    function supportsTestDateWeekInput(tCode) {
+      return TEST_DATE_WEEK_INPUT_TCODES.has(normalizeTCodeValue(tCode));
     }
 
     function usesExecutionDateParams(tCode) {
@@ -179,9 +185,9 @@
       };
     }
 
-    function getTestDateRangeFromForm(formState = state.form) {
+    function getTestDateRangeFromForm(formState = state.form, tCode = "") {
       const defaultState = getDefaultTestDateFormState();
-      const kind = formState.testDateKind === "range" ? "range" : "week";
+      const kind = supportsTestDateWeekInput(tCode) && formState.testDateKind !== "range" ? "week" : "range";
       if (kind === "week") {
         return parseIsoWeekRange(formState.testIsoWeek || defaultState.testIsoWeek);
       }
@@ -208,7 +214,7 @@
 
     function buildTestDateOverrideForTCode(tCode, formState = state.form) {
       if (!shouldUseTestDateOverrideForTCode(tCode, formState)) return null;
-      const range = getTestDateRangeFromForm(formState);
+      const range = getTestDateRangeFromForm(formState, tCode);
       if (!range) return null;
       return {
         dateMode: "testOverride",
@@ -235,7 +241,7 @@
       const testDateMode = String(params.testDateMode || "").trim();
       const hasMarker = dateMode.toLowerCase() === "testoverride" || testDateMode.toLowerCase() === "testoverride";
       if (!hasMarker) return defaults;
-      const kind = String(params.testDateKind || "").trim().toLowerCase() === "range" ? "range" : "week";
+      const kind = supportsTestDateWeekInput(tCode) && String(params.testDateKind || "").trim().toLowerCase() !== "range" ? "week" : "range";
       const startInput = sapDateToInputValue(params.testDateStart || params.period || params.startDate || params.fromDate || params.dateFrom || params.beginDate || params.dateBegin || "");
       const endInput = sapDateToInputValue(params.testDateEnd || params.weekEnd || params.endDate || params.toDate || params.dateTo || params.dateEnd || "");
       return {

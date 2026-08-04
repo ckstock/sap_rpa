@@ -144,6 +144,20 @@ async function captureRunParams(setup) {
   assert.match(scheduleRangePreviewMarkup, /开始日期<input id="scheduleTestDateStart"[^>]*value="2026-04-27"(?![^>]*readonly)/);
   assert.match(scheduleRangePreviewMarkup, /截止日期<input id="scheduleTestDateEnd"[^>]*value="2026-05-03"(?![^>]*readonly)/);
 
+  const scheduleDateOnlyMarkup = await runInPortal(`
+    state.bridge.allowTestDateOverride = true;
+    state.scheduleForm.tCode = "ZFI072N";
+    state.scheduleForm.useTestDateOverride = true;
+    state.scheduleForm.testDateKind = "week";
+    state.scheduleForm.testDateStart = "2026-04-27";
+    state.scheduleForm.testDateEnd = "2026-05-03";
+    return renderScheduleTestDateOverrideControl("ZFI072N");
+  `);
+  assert.doesNotMatch(scheduleDateOnlyMarkup, /id="scheduleTestDateKind"/);
+  assert.doesNotMatch(scheduleDateOnlyMarkup, /id="scheduleTestIsoWeek"/);
+  assert.match(scheduleDateOnlyMarkup, /id="scheduleTestDateStart"[^>]*value="2026-04-27"(?![^>]*readonly)/);
+  assert.match(scheduleDateOnlyMarkup, /id="scheduleTestDateEnd"[^>]*value="2026-05-03"(?![^>]*readonly)/);
+
   const dateControlCodes = [
     "ZFI072A", "ZFI072N", "ZFI057", "ZCO020", "ZFI080", "ZCO019",
     "ZFI019NA", "ZFIR034", "ZFI019NL", "ZFI080B", "ZFI148"
@@ -156,10 +170,46 @@ async function captureRunParams(setup) {
   `);
   dateControlMarkup.forEach(([code, markup]) => {
     assert.match(markup, /id="useTestDateOverride"/, `${code} must show the test-date control`);
-    assert.match(markup, /id="testIsoWeek"/, `${code} must show the ISO week input`);
     assert.match(markup, /id="testDateStart"/, `${code} must show the start-date preview`);
     assert.match(markup, /id="testDateEnd"/, `${code} must show the end-date preview`);
   });
+
+  const weekInputCodes = ["ZFI072A", "ZFI057", "ZFIR034", "ZFI148"];
+  const dateOnlyCodes = dateControlCodes.filter(code => !weekInputCodes.includes(code));
+  const dateInputMarkup = await runInPortal(`
+    return {
+      week: ${JSON.stringify(weekInputCodes)}.map(code => [code, renderTestDateOverrideControl({ tcode: code })]),
+      dateOnly: ${JSON.stringify(dateOnlyCodes)}.map(code => [code, renderTestDateOverrideControl({ tcode: code })])
+    };
+  `);
+  dateInputMarkup.week.forEach(([code, markup]) => {
+    assert.match(markup, /id="testDateKind"/, `${code} must show the source selector`);
+    assert.match(markup, /id="testIsoWeek"/, `${code} must show the ISO week input`);
+  });
+  dateInputMarkup.dateOnly.forEach(([code, markup]) => {
+    assert.doesNotMatch(markup, /id="testDateKind"/, `${code} must not show the source selector`);
+    assert.doesNotMatch(markup, /id="testIsoWeek"/, `${code} must not show an ISO week input`);
+  });
+
+  const dateOnlyPayload = await captureRunParams(`
+    state.bridge.allowTestDateOverride = true;
+    state.form.tCode = "ZFI072N";
+    state.form.plants = ["2800"];
+    state.form.factoryGroup = "PINGHU_ALL";
+    state.form.useTestDateOverride = true;
+    state.form.testDateKind = "week";
+    state.form.testIsoWeek = "2026-W18";
+    state.form.testDateStart = "2026-04-27";
+    state.form.testDateEnd = "2026-05-03";
+    state.form.notify = true;
+    state.form.useDefaultNotifyUser = true;
+  `);
+  assert.equal(dateOnlyPayload.testDateKind, "range");
+  assert.equal(Object.prototype.hasOwnProperty.call(dateOnlyPayload, "testIsoWeek"), false);
+  assert.equal(dateOnlyPayload.period, "2026.04.27");
+  assert.equal(dateOnlyPayload.weekEnd, "2026.05.03");
+  assert.equal(dateOnlyPayload.year, "2026");
+  assert.equal(dateOnlyPayload.week, "18");
 
   const prodPayload = await captureRunParams(`
     state.bridge.allowTestDateOverride = false;

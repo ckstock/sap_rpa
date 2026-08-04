@@ -608,7 +608,8 @@
       if (!state.form.testDateStart) state.form.testDateStart = defaults.testDateStart;
       if (!state.form.testDateEnd) state.form.testDateEnd = defaults.testDateEnd;
       const checked = state.form.useTestDateOverride === true;
-      const kind = state.form.testDateKind === "range" ? "range" : "week";
+      const hasWeekInput = supportsTestDateWeekInput(payload.tcode);
+      const kind = hasWeekInput && state.form.testDateKind !== "range" ? "week" : "range";
       const currentRange = buildTestDateOverrideForTCode(payload.tcode);
       const previewRange = currentRange || getServerDefaultExecutionDateRange();
       const previewStart = sapDateToInputValue(previewRange.period) || defaults.testDateStart;
@@ -623,6 +624,12 @@
       const endValue = kind === "range" ? (state.form.testDateEnd || defaults.testDateEnd) : previewEnd;
       const inputText = `${previewRange.period} 至 ${previewRange.weekEnd}`;
       const disabled = checked ? "" : "disabled";
+      const modeControl = hasWeekInput
+        ? `<label>类型<select id="testDateKind" ${disabled}><option value="week" ${kind === "week" ? "selected" : ""}>ISO 周</option><option value="range" ${kind === "range" ? "selected" : ""}>日期范围</option></select></label>`
+        : "";
+      const weekControl = hasWeekInput
+        ? `<label>测试周<input id="testIsoWeek" type="text" inputmode="numeric" value="${esc(isoWeekValue)}" ${kind === "range" ? "readonly" : ""} ${disabled}></label>`
+        : "";
       return `
           <div class="zfi057-week-override test-date-override">
             <label class="checkbox-card compact">
@@ -633,10 +640,10 @@
               </span>
             </label>
             <div class="week-range-inputs">
-              <label>类型<select id="testDateKind" ${disabled}><option value="week" ${kind === "week" ? "selected" : ""}>ISO 周</option><option value="range" ${kind === "range" ? "selected" : ""}>日期范围</option></select></label>
-              <label>测试周<input id="testIsoWeek" type="text" inputmode="numeric" value="${esc(isoWeekValue)}" ${kind === "range" ? "readonly" : ""} ${disabled}></label>
-              <label>开始日期<input id="testDateStart" type="date" value="${esc(startValue)}" ${kind === "week" ? "readonly" : ""} ${disabled}></label>
-              <label>截止日期<input id="testDateEnd" type="date" value="${esc(endValue)}" ${kind === "week" ? "readonly" : ""} ${disabled}></label>
+              ${modeControl}
+              ${weekControl}
+              <label>开始日期<input id="testDateStart" type="date" value="${esc(startValue)}" ${hasWeekInput && kind === "week" ? "readonly" : ""} ${disabled}></label>
+              <label>截止日期<input id="testDateEnd" type="date" value="${esc(endValue)}" ${hasWeekInput && kind === "week" ? "readonly" : ""} ${disabled}></label>
               <span class="table-hint">本次入参：${esc(inputText)}</span>
             </div>
           </div>
@@ -650,7 +657,8 @@
       if (!state.scheduleForm.testDateStart) state.scheduleForm.testDateStart = defaults.testDateStart;
       if (!state.scheduleForm.testDateEnd) state.scheduleForm.testDateEnd = defaults.testDateEnd;
       const checked = state.scheduleForm.useTestDateOverride === true;
-      const kind = state.scheduleForm.testDateKind === "range" ? "range" : "week";
+      const hasWeekInput = supportsTestDateWeekInput(tCode);
+      const kind = hasWeekInput && state.scheduleForm.testDateKind !== "range" ? "week" : "range";
       const currentRange = buildTestDateOverrideForTCode(tCode, state.scheduleForm);
       const previewRange = currentRange || getServerDefaultExecutionDateRange();
       const previewStart = sapDateToInputValue(previewRange.period) || defaults.testDateStart;
@@ -664,6 +672,12 @@
       const startValue = kind === "range" ? (state.scheduleForm.testDateStart || defaults.testDateStart) : previewStart;
       const endValue = kind === "range" ? (state.scheduleForm.testDateEnd || defaults.testDateEnd) : previewEnd;
       const disabled = checked ? "" : "disabled";
+      const modeControl = hasWeekInput
+        ? `<label>类型<select id="scheduleTestDateKind" ${disabled}><option value="week" ${kind === "week" ? "selected" : ""}>ISO 周</option><option value="range" ${kind === "range" ? "selected" : ""}>日期范围</option></select></label>`
+        : "";
+      const weekControl = hasWeekInput
+        ? `<label>测试周<input id="scheduleTestIsoWeek" type="text" inputmode="numeric" value="${esc(isoWeekValue)}" ${kind === "range" ? "readonly" : ""} ${disabled}></label>`
+        : "";
       return `
                   <div class="field span-2">
                     <label>指定测试用日期</label>
@@ -675,10 +689,10 @@
                       </span>
                     </label>
                     <div class="week-range-inputs">
-                      <label>类型<select id="scheduleTestDateKind" ${disabled}><option value="week" ${kind === "week" ? "selected" : ""}>ISO 周</option><option value="range" ${kind === "range" ? "selected" : ""}>日期范围</option></select></label>
-                      <label>测试周<input id="scheduleTestIsoWeek" type="text" inputmode="numeric" value="${esc(isoWeekValue)}" ${kind === "range" ? "readonly" : ""} ${disabled}></label>
-                      <label>开始日期<input id="scheduleTestDateStart" type="date" value="${esc(startValue)}" ${kind === "week" ? "readonly" : ""} ${disabled}></label>
-                      <label>截止日期<input id="scheduleTestDateEnd" type="date" value="${esc(endValue)}" ${kind === "week" ? "readonly" : ""} ${disabled}></label>
+                      ${modeControl}
+                      ${weekControl}
+                      <label>开始日期<input id="scheduleTestDateStart" type="date" value="${esc(startValue)}" ${hasWeekInput && kind === "week" ? "readonly" : ""} ${disabled}></label>
+                      <label>截止日期<input id="scheduleTestDateEnd" type="date" value="${esc(endValue)}" ${hasWeekInput && kind === "week" ? "readonly" : ""} ${disabled}></label>
                       <span class="table-hint">本次入参：${esc(previewRange.period)} 至 ${esc(previewRange.weekEnd)}</span>
                     </div>
                   </div>
