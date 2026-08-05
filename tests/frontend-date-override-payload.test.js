@@ -403,6 +403,48 @@ async function captureRunParams(setup) {
   assert.equal(schedulePayload.params.weekEnd, "2026.05.03");
   assert.equal(schedulePayload.params.year, "2026");
   assert.equal(schedulePayload.params.week, "18");
+
+  const scheduleWeekPayload = await runInPortal(`
+    state.bridge.allowTestDateOverride = true;
+    state.scheduleForm = {
+      id: "SCH-FRONTEND-WEEK",
+      tCode: "ZFI057",
+      factoryGroup: "PINGHU_ALL",
+      plants: ["2800"],
+      useTestDateOverride: true,
+      testDateKind: "week",
+      testIsoWeek: "2026-W18",
+      testDateStart: "2026-04-27",
+      testDateEnd: "2026-05-03",
+      notifyStart: false,
+      notifySuccess: false,
+      notifyFail: false,
+      enabled: true
+    };
+    __inputs = {
+      scheduleTCode: { value: "ZFI057" },
+      scheduleFactoryGroup: { value: "PINGHU_ALL" },
+      schedulePlants: { value: "2800" },
+      scheduleFrequency: { value: "weekly" },
+      scheduleEnabled: { checked: true },
+      scheduleTime: { value: "08:00" },
+      scheduleName: { value: "SCH-FRONTEND-WEEK" },
+      scheduleUseTestDateOverride: { checked: true },
+      scheduleTestIsoWeek: { value: "2026-W18" },
+      scheduleTestDateStart: { value: "2026-04-27" },
+      scheduleTestDateEnd: { value: "2026-05-03" },
+      scheduleNotifyStart: { checked: false },
+      scheduleNotifySuccess: { checked: false },
+      scheduleNotifyFail: { checked: false }
+    };
+    return buildScheduleConfigPayload();
+  `);
+  assert.equal(scheduleWeekPayload.params.testDateKind, "week");
+  assert.equal(scheduleWeekPayload.params.testIsoWeek, "2026-W18");
+  assert.equal(scheduleWeekPayload.params.period, "2026.04.27");
+  assert.equal(scheduleWeekPayload.params.weekEnd, "2026.05.03");
+  assert.equal(scheduleWeekPayload.params.year, "2026");
+  assert.equal(scheduleWeekPayload.params.week, "18");
   assert.equal(schedulePayload.params.runStrategy, "auto3step");
 
   console.log("FRONTEND_DATE_OVERRIDE_PAYLOAD_OK");
