@@ -10844,6 +10844,18 @@ ORDER BY 1;
         }
 
         Add(p.System);
+        // SAP GUI exposes the real SID (for example TD1), while the local login entry can use an alias such as test888.
+        var ncoConfig = LoadSapNcoLocalConfig();
+        bool currentNcoConfigMatchesTarget = string.IsNullOrWhiteSpace(p.System) ||
+            p.System.Equals(ncoConfig.ConnectionName, StringComparison.OrdinalIgnoreCase) ||
+            p.System.Equals(ncoConfig.Name, StringComparison.OrdinalIgnoreCase) ||
+            p.System.Equals(ncoConfig.SystemId, StringComparison.OrdinalIgnoreCase);
+        if (currentNcoConfigMatchesTarget)
+        {
+            Add(ncoConfig.ConnectionName);
+            Add(ncoConfig.Name);
+            Add(ncoConfig.SystemId);
+        }
         foreach (var entry in ReadSapLogonEntries())
         {
             if (!SapLogonEntryMatches(entry, p.System))
@@ -10912,10 +10924,14 @@ ORDER BY 1;
         string takeoverScript = $"""
 On Error Resume Next
 Dim SapGuiAuto, application, connection, session, i, j, k, wnd, diag
-Dim targetSystems, targetClient, targetUser, currentSystem, currentClient, currentUser
+Dim targetSystems, targetClient, targetUser, targetPassword, targetLanguage, currentSystem, currentClient, currentUser, shell
 targetSystems = "{VbsEscape(targetSystems)}"
 targetClient = "{VbsEscape(targetClient)}"
 targetUser = "{VbsEscape(targetUser)}"
+Set shell = CreateObject("WScript.Shell")
+targetPassword = shell.Environment("Process")("SAP_RPA_LOGIN_PASSWORD")
+Set shell = Nothing
+targetLanguage = "{VbsEscape(p.Language)}"
 diag = ""
 
 Sub AddDiag(ByVal value)
@@ -10998,6 +11014,67 @@ Function MatchTarget(ByVal candidate)
    If Trim(CStr(targetClient)) <> "" And currentClient <> Trim(CStr(targetClient)) Then MatchTarget = False
    If Trim(CStr(targetUser)) <> "" And currentUser <> "" And UCase(currentUser) <> UCase(Trim(CStr(targetUser))) Then MatchTarget = False
    Err.Clear
+End Function
+
+Function TryCompleteStandardLogin(ByVal candidate)
+   On Error Resume Next
+   TryCompleteStandardLogin = False
+   Dim transaction, programName, clientField, userField, passwordField, languageField, waited, loginUser
+   transaction = UCase(Trim(CStr(candidate.Info.Transaction)))
+   programName = UCase(Trim(CStr(candidate.Info.Program)))
+   If Trim(CStr(candidate.Info.User)) <> "" Then Exit Function
+   If transaction <> "S000" And programName <> "SAPMSYST" Then Exit Function
+   If Trim(CStr(targetUser)) = "" Or Trim(CStr(targetPassword)) = "" Then
+      AddDiag "standard login skipped: local user or password is empty"
+      Exit Function
+   End If
+
+   Err.Clear
+   Set clientField = candidate.findById("wnd[0]/usr/txtRSYST-MANDT")
+   If Err.Number = 0 And IsObject(clientField) And Trim(CStr(targetClient)) <> "" Then clientField.Text = CStr(targetClient)
+   Err.Clear
+   Set userField = candidate.findById("wnd[0]/usr/txtRSYST-BNAME")
+   If Err.Number <> 0 Or Not IsObject(userField) Then
+      AddDiag "standard login user field not found"
+      Err.Clear
+      Exit Function
+   End If
+   userField.Text = CStr(targetUser)
+   Err.Clear
+   Set passwordField = candidate.findById("wnd[0]/usr/pwdRSYST-BCODE")
+   If Err.Number <> 0 Or Not IsObject(passwordField) Then
+      AddDiag "standard login password field not found"
+      Err.Clear
+      Exit Function
+    End If
+    passwordField.Text = CStr(targetPassword)
+    targetPassword = ""
+   Err.Clear
+   Set languageField = candidate.findById("wnd[0]/usr/txtRSYST-LANGU")
+   If Err.Number = 0 And IsObject(languageField) And Trim(CStr(targetLanguage)) <> "" Then languageField.Text = CStr(targetLanguage)
+   Err.Clear
+   candidate.findById("wnd[0]").sendVKey 0
+   If Err.Number <> 0 Then
+      AddDiag "standard login submit failed: " & Err.Description
+      Err.Clear
+      Exit Function
+   End If
+   AddDiag "submitted standard SAP login for configured user"
+
+   waited = 0
+   Do While waited <= 30000
+      WScript.Sleep 1000
+      waited = waited + 1000
+      Err.Clear
+      loginUser = Trim(CStr(candidate.Info.User))
+      If Err.Number = 0 And loginUser <> "" Then
+         AddDiag "standard login confirmed afterMs=" & waited
+         TryCompleteStandardLogin = True
+         Exit Function
+      End If
+      Err.Clear
+   Loop
+   AddDiag "standard login did not produce a session user within 30s"
 End Function
 
 Function TryPressTakeover(ByVal candidate)
@@ -11111,7 +11188,10 @@ For i = 0 To application.Children.Count - 1
          If Err.Number = 0 And IsObject(session) Then
             AddDiag "session[" & i & "," & j & "].system=" & session.Info.SystemName & ",client=" & session.Info.Client & ",user=" & session.Info.User & ",transaction=" & session.Info.Transaction & ",program=" & session.Info.Program & ",screen=" & session.Info.ScreenNumber
             If MatchTarget(session) Then
-               If TryPressTakeover(session) Then
+               If TryCompleteStandardLogin(session) Then
+                  WScript.Echo "OK: standard SAP login submitted; " & diag
+                  WScript.Quit 0
+               ElseIf TryPressTakeover(session) Then
                   WScript.Echo "OK: SAP multi-logon takeover selected; " & diag
                   WScript.Quit 0
                End If
@@ -11137,6 +11217,7 @@ WScript.Quit 4
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             };
+            psi.Environment["SAP_RPA_LOGIN_PASSWORD"] = p.Password;
 
             using var proc = Process.Start(psi);
             if (proc == null)

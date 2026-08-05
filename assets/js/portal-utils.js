@@ -38,35 +38,43 @@
       return input ? input.replace(/-/g, ".") : "";
     }
 
-    const WEEKLY_DATE_PARAM_TCODES = new Set(["ZFI072A", "ZFI148"]);
-    const RANGE_DATE_PARAM_TCODES = new Set(["ZFI072N", "ZFI080B", "ZFI080", "ZCO019", "ZFI019NA", "ZFI019NL", "ZFIR034", "ZFI057", "ZCO020", "ZFI148"]);
-    // Only these flows accept an ISO-week source. The other date VBS files receive a date range only.
-    const TEST_DATE_WEEK_INPUT_TCODES = new Set(["ZFI072A", "ZFI057", "ZFIR034", "ZFI148"]);
+    // This is deliberately based on each shipped VBS @params contract, not on fields that
+    // happen to be calculated internally by a script. ZFI057 is the one product-approved
+    // exception: its ISO week input is converted to period/weekEnd for its three-step flow.
+    const TEST_DATE_INPUT_MODES = Object.freeze({
+      ZFI072A: "week",
+      ZFI057: "weekOrRange",
+      ZCO020: "range",
+      ZFI072N: "range",
+      ZFI080B: "range",
+      ZFI148: "range",
+      ZFIR034: "range"
+    });
 
     function normalizeTCodeValue(tCode) {
       return String(tCode || "").trim().toUpperCase();
     }
 
-    function usesWeeklyDateParams(tCode) {
-      return WEEKLY_DATE_PARAM_TCODES.has(normalizeTCodeValue(tCode));
-    }
-
-    function usesBudatDateRangeParams(tCode) {
-      return RANGE_DATE_PARAM_TCODES.has(normalizeTCodeValue(tCode));
+    function getTestDateInputMode(tCode) {
+      return TEST_DATE_INPUT_MODES[normalizeTCodeValue(tCode)] || "none";
     }
 
     function supportsTestDateWeekInput(tCode) {
-      return TEST_DATE_WEEK_INPUT_TCODES.has(normalizeTCodeValue(tCode));
+      const mode = getTestDateInputMode(tCode);
+      return mode === "week" || mode === "weekOrRange";
+    }
+
+    function supportsTestDateRangeInput(tCode) {
+      const mode = getTestDateInputMode(tCode);
+      return mode === "range" || mode === "weekOrRange";
+    }
+
+    function canSelectTestDateInputMode(tCode) {
+      return getTestDateInputMode(tCode) === "weekOrRange";
     }
 
     function usesExecutionDateParams(tCode) {
-      const code = normalizeTCodeValue(tCode);
-      if (usesWeeklyDateParams(code) || usesBudatDateRangeParams(code)) return true;
-      const transaction = typeof getTCode === "function" ? getTCode(code) : null;
-      const params = typeof getDisplayParamsForTransaction === "function"
-        ? getDisplayParamsForTransaction(transaction)
-        : toArray(transaction?.params);
-      return params.includes("year") || params.includes("week") || (params.includes("period") && params.includes("weekEnd"));
+      return getTestDateInputMode(tCode) !== "none";
     }
 
     function allowTestDateOverride() {
@@ -187,7 +195,11 @@
 
     function getTestDateRangeFromForm(formState = state.form, tCode = "") {
       const defaultState = getDefaultTestDateFormState();
-      const kind = supportsTestDateWeekInput(tCode) && formState.testDateKind !== "range" ? "week" : "range";
+      const inputMode = getTestDateInputMode(tCode);
+      if (inputMode === "none") return null;
+      const kind = inputMode === "week" || (inputMode === "weekOrRange" && formState.testDateKind !== "range")
+        ? "week"
+        : "range";
       if (kind === "week") {
         return parseIsoWeekRange(formState.testIsoWeek || defaultState.testIsoWeek);
       }
@@ -216,18 +228,21 @@
       if (!shouldUseTestDateOverrideForTCode(tCode, formState)) return null;
       const range = getTestDateRangeFromForm(formState, tCode);
       if (!range) return null;
-      return {
+      const payload = {
         dateMode: "testOverride",
         testDateMode: "testOverride",
         testDateKind: range.testDateKind,
-        testIsoWeek: range.testIsoWeek,
-        testDateStart: range.testDateStart,
-        testDateEnd: range.testDateEnd,
         period: range.period,
         weekEnd: range.weekEnd,
         year: String(range.year),
         week: String(range.week)
       };
+      if (range.testDateKind === "week") payload.testIsoWeek = range.testIsoWeek;
+      else {
+        payload.testDateStart = range.testDateStart;
+        payload.testDateEnd = range.testDateEnd;
+      }
+      return payload;
     }
 
     function getDisplayExecutionDateRangeForTCode(tCode) {
@@ -241,7 +256,10 @@
       const testDateMode = String(params.testDateMode || "").trim();
       const hasMarker = dateMode.toLowerCase() === "testoverride" || testDateMode.toLowerCase() === "testoverride";
       if (!hasMarker) return defaults;
-      const kind = supportsTestDateWeekInput(tCode) && String(params.testDateKind || "").trim().toLowerCase() !== "range" ? "week" : "range";
+      const inputMode = getTestDateInputMode(tCode);
+      const kind = inputMode === "week" || (inputMode === "weekOrRange" && String(params.testDateKind || "").trim().toLowerCase() !== "range")
+        ? "week"
+        : "range";
       const startInput = sapDateToInputValue(params.testDateStart || params.period || params.startDate || params.fromDate || params.dateFrom || params.beginDate || params.dateBegin || "");
       const endInput = sapDateToInputValue(params.testDateEnd || params.weekEnd || params.endDate || params.toDate || params.dateTo || params.dateEnd || "");
       return {
