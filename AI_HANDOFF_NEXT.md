@@ -6,11 +6,11 @@
 
 - SAP GUI 自动登录同时处理两类受控窗口：已有登录会话的多重登录接管窗口，以及空用户的标准登录页。后者只在当前 Windows 用户的 DPAPI 本机登录配置可用、窗口为 `S000` / `SAPMSYST` 时填写 client、user、password、language；密码仅经本次 `cscript.exe` 子进程的私有环境变量传递，写入密码框后立即清空，不写入临时 VBS、API、日志或 Git。
 - SAP NCo 连接别名可能与 SAP GUI 实际 SID 不同。例如测试配置为 `test888`、SAP GUI 实际系统为 `TD1` 时，目标会话匹配必须同时识别 `connectionName`、`name` 和 `systemId`。2026-08-05 已以 `ZFI072A`、工厂 `5021`、测试周 `2026-W31` 真实验证成功：run `RUN-20260805100148-ZFI072A-8c9ab514805942fabbab2a97d55b9`，网络归档与钉钉成功通知均已落地。
-- 测试日期控件必须以发布的 VBS `@params` 合约为准，不能因为 VBS 内部会推导 year/week 就额外展示输入框：
+- 测试日期控件必须以发布 VBS 实际消费的 `{PERIOD}`、`{WEEK_END}`、`{YEAR}`、`{WEEK}` 占位符和 SAP 写屏字段为准，不能只看可能滞后的 `@params` 头注释：
   - `ZFI072A`：仅 ISO 周，网页只显示测试周，提交 `year/week` 及其派生的 `period/weekEnd`，不显示或提交开始/截止日期字段。
   - `ZFI057`：按 V2 业务规则支持 ISO 周或日期范围；ISO 周先由网页推导为 `period/weekEnd`，供既有三步流程使用。
-  - `ZCO020`、`ZFI072N`、`ZFI080B`、`ZFI148`、`ZFIR034`：仅日期范围。
-  - `ZCO019`、`ZFI019NA`、`ZFI019NL`、`ZFI080`：VBS 不接收外部日期参数，不显示测试日期控件。
+  - `ZCO019`、`ZCO020`、`ZFI019NA`、`ZFI019NL`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZFI148`、`ZFIR034`：仅日期范围。
+  - 保存类卡片全部有测试日期输入：`ZFI072A` 输入 ISO 周；其余保存类 `ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL` 输入开始/截止日期。周结完工成本明细表的 `ZFI019NL`、`ZFI019NA`、`ZFI148` 三张卡均显示日期范围。
 - 前端源文件是 `D:\RPA\RpaProject\assets\js\portal-utils.js` 与 `portal-render.js`；部署时必须同步复制到运行目录 `D:\RPA\assets\js`，仅修改 Git 源码不会影响正式网页。
 
 ## 当前项目定位

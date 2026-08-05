@@ -180,8 +180,10 @@ async function captureRunParams(setup) {
 
   const weekOnlyCodes = ["ZFI072A"];
   const weekOrRangeCodes = ["ZFI057"];
-  const dateOnlyCodes = ["ZCO020", "ZFI072N", "ZFI080B", "ZFI148", "ZFIR034"];
-  const noExternalDateParamCodes = ["ZCO019", "ZFI019NA", "ZFI019NL", "ZFI080"];
+  const dateOnlyCodes = [
+    "ZCO019", "ZCO020", "ZFI019NA", "ZFI019NL", "ZFI072N", "ZFI080", "ZFI080B", "ZFI148", "ZFIR034"
+  ];
+  const noExternalDateParamCodes = [];
   const dateControlCodes = [...weekOnlyCodes, ...weekOrRangeCodes, ...dateOnlyCodes];
   const dateControlMarkup = await runInPortal(`
     state.bridge.allowTestDateOverride = true;
@@ -249,6 +251,23 @@ async function captureRunParams(setup) {
   });
   scheduleInputMarkup.none.forEach(([code, markup]) => {
     assert.equal(markup, "", `${code} schedule must not show a test-date control`);
+  });
+
+  const saveCardMarkup = await runInPortal(`
+    return ${JSON.stringify(["ZFI072A", "ZFI072N", "ZFI080", "ZFI080B", "ZCO019", "ZFI019NA", "ZFI019NL"])}
+      .map(code => [code, renderTestDateOverrideControl({ tcode: code })]);
+  `);
+  saveCardMarkup.forEach(([code, markup]) => {
+    assert.match(markup, /id="useTestDateOverride"/, `${code} save card must show the test-date control`);
+  });
+  const zfi072aSaveMarkup = saveCardMarkup.find(([code]) => code === "ZFI072A")[1];
+  assert.match(zfi072aSaveMarkup, /id="testIsoWeek"/);
+  assert.doesNotMatch(zfi072aSaveMarkup, /id="testDateStart"/);
+  ["ZFI072N", "ZFI080", "ZFI080B", "ZCO019", "ZFI019NA", "ZFI019NL"].forEach(code => {
+    const markup = saveCardMarkup.find(([itemCode]) => itemCode === code)[1];
+    assert.doesNotMatch(markup, /id="testIsoWeek"/, `${code} save card must not show ISO week input`);
+    assert.match(markup, /id="testDateStart"/, `${code} save card must show a start-date input`);
+    assert.match(markup, /id="testDateEnd"/, `${code} save card must show an end-date input`);
   });
 
   const dateOnlyPayload = await captureRunParams(`

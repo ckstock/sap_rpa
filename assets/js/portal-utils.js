@@ -38,14 +38,18 @@
       return input ? input.replace(/-/g, ".") : "";
     }
 
-    // This is deliberately based on each shipped VBS @params contract, not on fields that
-    // happen to be calculated internally by a script. ZFI057 is the one product-approved
-    // exception: its ISO week input is converted to period/weekEnd for its three-step flow.
+    // This follows actual VBS placeholder consumption and SAP fields, not stale @params
+    // comments. ZFI057 is the one product-approved flow that accepts either an ISO week
+    // or a date range; all other date-range flows receive period/weekEnd directly.
     const TEST_DATE_INPUT_MODES = Object.freeze({
       ZFI072A: "week",
       ZFI057: "weekOrRange",
+      ZCO019: "range",
       ZCO020: "range",
+      ZFI019NA: "range",
+      ZFI019NL: "range",
       ZFI072N: "range",
+      ZFI080: "range",
       ZFI080B: "range",
       ZFI148: "range",
       ZFIR034: "range"
