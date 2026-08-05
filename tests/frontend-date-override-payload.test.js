@@ -79,6 +79,23 @@ async function captureRunParams(setup) {
 }
 
 (async () => {
+  const zfi057InitialMarkup = await runInPortal(`
+    state.bridge.allowTestDateOverride = true;
+    state.bridge.defaultExecutionDateRange = { period: "2026.07.27", weekEnd: "2026.08.02", year: 2026, week: 31 };
+    state.form.tCode = "ZFI057";
+    state.form.useTestDateOverride = true;
+    return {
+      kind: state.form.testDateKind,
+      markup: renderTestDateOverrideControl({ tcode: "ZFI057" })
+    };
+  `);
+  assert.equal(zfi057InitialMarkup.kind, "range");
+  assert.match(zfi057InitialMarkup.markup, /id="testDateKind"/);
+  assert.match(zfi057InitialMarkup.markup, /<option value="range" selected>日期范围<\/option>/);
+  assert.doesNotMatch(zfi057InitialMarkup.markup, /id="testIsoWeek"/);
+  assert.match(zfi057InitialMarkup.markup, /id="testDateStart"/);
+  assert.match(zfi057InitialMarkup.markup, /id="testDateEnd"/);
+
   const test888Payload = await captureRunParams(`
     state.bridge.allowTestDateOverride = true;
     state.bridge.defaultExecutionDateRange = { period: "2026.07.27", weekEnd: "2026.08.02", year: 2026, week: 31 };

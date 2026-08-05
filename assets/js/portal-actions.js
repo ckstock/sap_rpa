@@ -34,7 +34,7 @@
       const testDateKind = document.getElementById("testDateKind");
       if (testDateKind) testDateKind.addEventListener("change", () => {
         state.form.testDateKind = testDateKind.value === "range" ? "range" : "week";
-        localStorage.setItem("portalTestDateKind", state.form.testDateKind);
+          localStorage.setItem("portalTestDateKindV2", state.form.testDateKind);
         render();
       });
       const testIsoWeek = document.getElementById("testIsoWeek");

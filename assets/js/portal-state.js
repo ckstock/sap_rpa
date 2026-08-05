@@ -19,7 +19,8 @@
     }
 
     const savedUseDefaultNotifyUser = getLocalValue("portalUseDefaultNotifyUser");
-    const savedTestDateKind = getLocalValue("portalTestDateKind");
+    // Versioned so existing browsers do not retain the old week-first default for ZFI057.
+    const savedTestDateKind = getLocalValue("portalTestDateKindV2");
     const isEmbeddedPortal = (() => {
       try {
         return window.self !== window.top;
@@ -74,7 +75,7 @@
         notify: true,
         useDefaultNotifyUser: savedUseDefaultNotifyUser === null ? true : savedUseDefaultNotifyUser !== "0",
         useTestDateOverride: false,
-        testDateKind: savedTestDateKind === "range" ? "range" : "week",
+        testDateKind: savedTestDateKind === "week" ? "week" : "range",
         testIsoWeek: getLocalValue("portalTestIsoWeek") || "",
         testDateStart: getLocalValue("portalTestDateStart") || getLocalValue("portalCustomZfi057WeekStart") || "",
         testDateEnd: getLocalValue("portalTestDateEnd") || getLocalValue("portalCustomZfi057WeekEnd") || "",
@@ -101,7 +102,7 @@
         notifyFail: true,
         enabled: true,
         useTestDateOverride: false,
-        testDateKind: "week",
+        testDateKind: "range",
         testIsoWeek: "",
         testDateStart: "",
         testDateEnd: "",

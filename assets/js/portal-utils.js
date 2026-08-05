@@ -190,7 +190,7 @@
       const end = parseDateInputValue(range.weekEnd) || parseDateInputValue(getLastFullWeekDateRange().weekEnd);
       return {
         useTestDateOverride: false,
-        testDateKind: "week",
+        testDateKind: "range",
         testIsoWeek: start ? formatIsoWeekInput(start) : "",
         testDateStart: start ? formatDateInputForForm(start) : "",
         testDateEnd: end ? formatDateInputForForm(end) : ""

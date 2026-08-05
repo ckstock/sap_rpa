@@ -8,7 +8,7 @@
 - SAP NCo 连接别名可能与 SAP GUI 实际 SID 不同。例如测试配置为 `test888`、SAP GUI 实际系统为 `TD1` 时，目标会话匹配必须同时识别 `connectionName`、`name` 和 `systemId`。2026-08-05 已以 `ZFI072A`、工厂 `5021`、测试周 `2026-W31` 真实验证成功：run `RUN-20260805100148-ZFI072A-8c9ab514805942fabbab2a97d55b9`，网络归档与钉钉成功通知均已落地。
 - 测试日期控件必须以发布 VBS 实际消费的 `{PERIOD}`、`{WEEK_END}`、`{YEAR}`、`{WEEK}` 占位符和 SAP 写屏字段为准，不能只看可能滞后的 `@params` 头注释：
   - `ZFI072A`：仅 ISO 周，网页只显示测试周，提交 `year/week` 及其派生的 `period/weekEnd`，不显示或提交开始/截止日期字段。
-  - `ZFI057`：按 V2 业务规则支持 ISO 周或日期范围；ISO 周先由网页推导为 `period/weekEnd`，供既有三步流程使用。
+  - `ZFI057`：按 V2 业务规则支持 ISO 周或日期范围；页面默认显示开始/截止日期，并提供切换为 ISO 周的选择。ISO 周先由网页推导为 `period/weekEnd`，供既有三步流程使用。
   - `ZCO019`、`ZCO020`、`ZFI019NA`、`ZFI019NL`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZFI148`、`ZFIR034`：仅日期范围。
   - 保存类卡片全部有测试日期输入：`ZFI072A` 输入 ISO 周；其余保存类 `ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL` 输入开始/截止日期。周结完工成本明细表的 `ZFI019NL`、`ZFI019NA`、`ZFI148` 三张卡均显示日期范围。
 - 前端源文件是 `D:\RPA\RpaProject\assets\js\portal-utils.js` 与 `portal-render.js`；部署时必须同步复制到运行目录 `D:\RPA\assets\js`，仅修改 Git 源码不会影响正式网页。
