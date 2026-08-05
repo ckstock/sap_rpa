@@ -611,7 +611,8 @@
       const inputMode = getTestDateInputMode(payload.tcode);
       const hasWeekInput = supportsTestDateWeekInput(payload.tcode);
       const hasRangeInput = supportsTestDateRangeInput(payload.tcode);
-      const kind = inputMode === "week" || (inputMode === "weekOrRange" && state.form.testDateKind !== "range") ? "week" : "range";
+      const isWeekAndRange = inputMode === "weekAndRange";
+      const kind = inputMode === "week" || ((inputMode === "weekOrRange" || isWeekAndRange) && state.form.testDateKind === "week") ? "week" : "range";
       const currentRange = buildTestDateOverrideForTCode(payload.tcode);
       const previewRange = currentRange || getServerDefaultExecutionDateRange();
       const previewStart = sapDateToInputValue(previewRange.period) || defaults.testDateStart;
@@ -621,15 +622,17 @@
         || (previewStartDate ? formatIsoWeekInput(previewStartDate) : defaults.testIsoWeek);
       const isoWeekValue = kind === "week"
         ? (normalizeIsoWeekText(state.form.testIsoWeek) || defaults.testIsoWeek)
-        : previewIsoWeek;
-      const startValue = kind === "range" ? (state.form.testDateStart || defaults.testDateStart) : previewStart;
-      const endValue = kind === "range" ? (state.form.testDateEnd || defaults.testDateEnd) : previewEnd;
-      const inputText = inputMode === "week" ? `本次按 ISO 周 ${isoWeekValue}` : `${previewRange.period} 至 ${previewRange.weekEnd}`;
+        : (isWeekAndRange ? (normalizeIsoWeekText(state.form.testIsoWeek) || previewIsoWeek) : previewIsoWeek);
+      const startValue = kind === "range" || isWeekAndRange ? (state.form.testDateStart || defaults.testDateStart) : previewStart;
+      const endValue = kind === "range" || isWeekAndRange ? (state.form.testDateEnd || defaults.testDateEnd) : previewEnd;
+      const inputText = isWeekAndRange
+        ? `ISO 周 ${isoWeekValue}；日期范围 ${startValue} 至 ${endValue}`
+        : (inputMode === "week" ? `本次按 ISO 周 ${isoWeekValue}` : `${previewRange.period} 至 ${previewRange.weekEnd}`);
       const disabled = checked ? "" : "disabled";
       const modeControl = canSelectTestDateInputMode(payload.tcode)
         ? `<label>类型<select id="testDateKind" ${disabled}><option value="week" ${kind === "week" ? "selected" : ""}>ISO 周</option><option value="range" ${kind === "range" ? "selected" : ""}>日期范围</option></select></label>`
         : "";
-      const weekControl = hasWeekInput && kind === "week"
+      const weekControl = hasWeekInput && (kind === "week" || isWeekAndRange)
         ? `<label>测试周<input id="testIsoWeek" type="text" inputmode="numeric" value="${esc(isoWeekValue)}" ${disabled}></label>`
         : "";
       return `
@@ -644,8 +647,8 @@
             <div class="week-range-inputs">
               ${modeControl}
               ${weekControl}
-              ${hasRangeInput && kind === "range" ? `<label>开始日期<input id="testDateStart" type="date" value="${esc(startValue)}" ${disabled}></label>` : ""}
-              ${hasRangeInput && kind === "range" ? `<label>截止日期<input id="testDateEnd" type="date" value="${esc(endValue)}" ${disabled}></label>` : ""}
+              ${hasRangeInput && (kind === "range" || isWeekAndRange) ? `<label>开始日期<input id="testDateStart" type="date" value="${esc(startValue)}" ${disabled}></label>` : ""}
+              ${hasRangeInput && (kind === "range" || isWeekAndRange) ? `<label>截止日期<input id="testDateEnd" type="date" value="${esc(endValue)}" ${disabled}></label>` : ""}
               <span class="table-hint">本次入参：${esc(inputText)}</span>
             </div>
           </div>
@@ -662,7 +665,8 @@
       const inputMode = getTestDateInputMode(tCode);
       const hasWeekInput = supportsTestDateWeekInput(tCode);
       const hasRangeInput = supportsTestDateRangeInput(tCode);
-      const kind = inputMode === "week" || (inputMode === "weekOrRange" && state.scheduleForm.testDateKind !== "range") ? "week" : "range";
+      const isWeekAndRange = inputMode === "weekAndRange";
+      const kind = inputMode === "week" || ((inputMode === "weekOrRange" || isWeekAndRange) && state.scheduleForm.testDateKind === "week") ? "week" : "range";
       const currentRange = buildTestDateOverrideForTCode(tCode, state.scheduleForm);
       const previewRange = currentRange || getServerDefaultExecutionDateRange();
       const previewStart = sapDateToInputValue(previewRange.period) || defaults.testDateStart;
@@ -672,14 +676,14 @@
         || (previewStartDate ? formatIsoWeekInput(previewStartDate) : defaults.testIsoWeek);
       const isoWeekValue = kind === "week"
         ? (normalizeIsoWeekText(state.scheduleForm.testIsoWeek) || defaults.testIsoWeek)
-        : previewIsoWeek;
-      const startValue = kind === "range" ? (state.scheduleForm.testDateStart || defaults.testDateStart) : previewStart;
-      const endValue = kind === "range" ? (state.scheduleForm.testDateEnd || defaults.testDateEnd) : previewEnd;
+        : (isWeekAndRange ? (normalizeIsoWeekText(state.scheduleForm.testIsoWeek) || previewIsoWeek) : previewIsoWeek);
+      const startValue = kind === "range" || isWeekAndRange ? (state.scheduleForm.testDateStart || defaults.testDateStart) : previewStart;
+      const endValue = kind === "range" || isWeekAndRange ? (state.scheduleForm.testDateEnd || defaults.testDateEnd) : previewEnd;
       const disabled = checked ? "" : "disabled";
       const modeControl = canSelectTestDateInputMode(tCode)
         ? `<label>类型<select id="scheduleTestDateKind" ${disabled}><option value="week" ${kind === "week" ? "selected" : ""}>ISO 周</option><option value="range" ${kind === "range" ? "selected" : ""}>日期范围</option></select></label>`
         : "";
-      const weekControl = hasWeekInput && kind === "week"
+      const weekControl = hasWeekInput && (kind === "week" || isWeekAndRange)
         ? `<label>测试周<input id="scheduleTestIsoWeek" type="text" inputmode="numeric" value="${esc(isoWeekValue)}" ${disabled}></label>`
         : "";
       return `
@@ -695,9 +699,9 @@
                     <div class="week-range-inputs">
                       ${modeControl}
                       ${weekControl}
-                      ${hasRangeInput && kind === "range" ? `<label>开始日期<input id="scheduleTestDateStart" type="date" value="${esc(startValue)}" ${disabled}></label>` : ""}
-                      ${hasRangeInput && kind === "range" ? `<label>截止日期<input id="scheduleTestDateEnd" type="date" value="${esc(endValue)}" ${disabled}></label>` : ""}
-                      <span class="table-hint">本次入参：${esc(inputMode === "week" ? `本次按 ISO 周 ${isoWeekValue}` : `${previewRange.period} 至 ${previewRange.weekEnd}`)}</span>
+                      ${hasRangeInput && (kind === "range" || isWeekAndRange) ? `<label>开始日期<input id="scheduleTestDateStart" type="date" value="${esc(startValue)}" ${disabled}></label>` : ""}
+                      ${hasRangeInput && (kind === "range" || isWeekAndRange) ? `<label>截止日期<input id="scheduleTestDateEnd" type="date" value="${esc(endValue)}" ${disabled}></label>` : ""}
+                      <span class="table-hint">本次入参：${esc(isWeekAndRange ? `ISO 周 ${isoWeekValue}；日期范围 ${startValue} 至 ${endValue}` : (inputMode === "week" ? `本次按 ISO 周 ${isoWeekValue}` : `${previewRange.period} 至 ${previewRange.weekEnd}`))}</span>
                     </div>
                   </div>
       `;

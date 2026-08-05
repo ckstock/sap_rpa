@@ -40,12 +40,30 @@
       const testIsoWeek = document.getElementById("testIsoWeek");
       if (testIsoWeek) testIsoWeek.addEventListener("change", () => {
         state.form.testIsoWeek = normalizeIsoWeekText(testIsoWeek.value) || testIsoWeek.value;
+        if (getTestDateInputMode(state.form.tCode) === "weekAndRange") {
+          const range = parseIsoWeekRange(state.form.testIsoWeek);
+          if (range) {
+            state.form.testDateKind = "week";
+            state.form.testDateStart = range.testDateStart;
+            state.form.testDateEnd = range.testDateEnd;
+            localStorage.setItem("portalTestDateStart", state.form.testDateStart);
+            localStorage.setItem("portalTestDateEnd", state.form.testDateEnd);
+          }
+        }
         localStorage.setItem("portalTestIsoWeek", state.form.testIsoWeek);
         render();
       });
       const testDateStart = document.getElementById("testDateStart");
       if (testDateStart) testDateStart.addEventListener("change", () => {
         state.form.testDateStart = testDateStart.value;
+        if (getTestDateInputMode(state.form.tCode) === "weekAndRange") {
+          const start = parseDateInputValue(state.form.testDateStart);
+          if (start) {
+            state.form.testDateKind = "range";
+            state.form.testIsoWeek = formatIsoWeekInput(start);
+            localStorage.setItem("portalTestIsoWeek", state.form.testIsoWeek);
+          }
+        }
         localStorage.setItem("portalTestDateStart", testDateStart.value);
         render();
       });
@@ -81,9 +99,30 @@
         render();
       });
       const scheduleTestIsoWeek = document.getElementById("scheduleTestIsoWeek");
-      if (scheduleTestIsoWeek) scheduleTestIsoWeek.addEventListener("change", () => { state.scheduleForm.testIsoWeek = normalizeIsoWeekText(scheduleTestIsoWeek.value) || scheduleTestIsoWeek.value; });
+      if (scheduleTestIsoWeek) scheduleTestIsoWeek.addEventListener("change", () => {
+        state.scheduleForm.testIsoWeek = normalizeIsoWeekText(scheduleTestIsoWeek.value) || scheduleTestIsoWeek.value;
+        if (getTestDateInputMode(state.scheduleForm.tCode) === "weekAndRange") {
+          const range = parseIsoWeekRange(state.scheduleForm.testIsoWeek);
+          if (range) {
+            state.scheduleForm.testDateKind = "week";
+            state.scheduleForm.testDateStart = range.testDateStart;
+            state.scheduleForm.testDateEnd = range.testDateEnd;
+          }
+        }
+        render();
+      });
       const scheduleTestDateStart = document.getElementById("scheduleTestDateStart");
-      if (scheduleTestDateStart) scheduleTestDateStart.addEventListener("change", () => { state.scheduleForm.testDateStart = scheduleTestDateStart.value; });
+      if (scheduleTestDateStart) scheduleTestDateStart.addEventListener("change", () => {
+        state.scheduleForm.testDateStart = scheduleTestDateStart.value;
+        if (getTestDateInputMode(state.scheduleForm.tCode) === "weekAndRange") {
+          const start = parseDateInputValue(state.scheduleForm.testDateStart);
+          if (start) {
+            state.scheduleForm.testDateKind = "range";
+            state.scheduleForm.testIsoWeek = formatIsoWeekInput(start);
+          }
+        }
+        render();
+      });
       const scheduleTestDateEnd = document.getElementById("scheduleTestDateEnd");
       if (scheduleTestDateEnd) scheduleTestDateEnd.addEventListener("change", () => { state.scheduleForm.testDateEnd = scheduleTestDateEnd.value; });
       [

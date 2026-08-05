@@ -39,11 +39,11 @@
     }
 
     // This follows actual VBS placeholder consumption and SAP fields, not stale @params
-    // comments. ZFI057 is the one product-approved flow that accepts either an ISO week
-    // or a date range; all other date-range flows receive period/weekEnd directly.
+    // comments. ZFI057 exposes its ISO week and date range together because its VBS
+    // accepts year/week as well as period/weekEnd; all other date-range flows receive period/weekEnd directly.
     const TEST_DATE_INPUT_MODES = Object.freeze({
       ZFI072A: "week",
-      ZFI057: "weekOrRange",
+      ZFI057: "weekAndRange",
       ZCO019: "range",
       ZCO020: "range",
       ZFI019NA: "range",
@@ -65,12 +65,12 @@
 
     function supportsTestDateWeekInput(tCode) {
       const mode = getTestDateInputMode(tCode);
-      return mode === "week" || mode === "weekOrRange";
+      return mode === "week" || mode === "weekOrRange" || mode === "weekAndRange";
     }
 
     function supportsTestDateRangeInput(tCode) {
       const mode = getTestDateInputMode(tCode);
-      return mode === "range" || mode === "weekOrRange";
+      return mode === "range" || mode === "weekOrRange" || mode === "weekAndRange";
     }
 
     function canSelectTestDateInputMode(tCode) {
@@ -201,7 +201,7 @@
       const defaultState = getDefaultTestDateFormState();
       const inputMode = getTestDateInputMode(tCode);
       if (inputMode === "none") return null;
-      const kind = inputMode === "week" || (inputMode === "weekOrRange" && formState.testDateKind !== "range")
+      const kind = inputMode === "week" || ((inputMode === "weekOrRange" || inputMode === "weekAndRange") && formState.testDateKind === "week")
         ? "week"
         : "range";
       if (kind === "week") {
@@ -261,7 +261,7 @@
       const hasMarker = dateMode.toLowerCase() === "testoverride" || testDateMode.toLowerCase() === "testoverride";
       if (!hasMarker) return defaults;
       const inputMode = getTestDateInputMode(tCode);
-      const kind = inputMode === "week" || (inputMode === "weekOrRange" && String(params.testDateKind || "").trim().toLowerCase() !== "range")
+      const kind = inputMode === "week" || ((inputMode === "weekOrRange" || inputMode === "weekAndRange") && String(params.testDateKind || "").trim().toLowerCase() === "week")
         ? "week"
         : "range";
       const startInput = sapDateToInputValue(params.testDateStart || params.period || params.startDate || params.fromDate || params.dateFrom || params.beginDate || params.dateBegin || "");
