@@ -50,6 +50,7 @@
 - `D:\RPA\certs` 不是技术上只能安装不能复制；它可以作为受控生产证书备份/迁移材料复制。但它是 secret，不能进 GitHub、普通安装包、公开 zip 或聊天明文附件；全新生产机放生产证书，升级已有生产机保留现有证书，复制/替换后必须重设 ACL 并验收 HTTPS。
 - 含“保存”的 ALV Excel 导出只承诺 7 个事务码：`ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`。`ZFI019NI` 是无生产 VBS 的旧残留，已从默认前端 fallback 和 `transaction-config.json` 移除；后端历史 run 名称解析可以保留，不代表它是生产入口。
 - Excel 输出根目录必须由运行目录真实配置 `D:\RPA\config.local.json` 的 `fileStorage.alvExportDataDirectory` 控制，默认 `D:\RPA\临时文件\文件数据`；临时覆盖可用环境变量 `SAP_RPA_ALV_EXPORT_DIR`。生产机换网络共享盘时只改配置并重启后端，不改 VBS 或 C#。
+- 保存类 ALV 的工厂文件必须按两层目录归档：`<alvExportDataDirectory>\yyyy_WKnn\工厂号\事务码_卡片名称_工厂工厂号_时间戳.xlsx`。例如 `\\10.0.16.31\rpa\经管\02-财务管报自动化\2026_WK32\103C\...xlsx`；本机暂存、网络归档和业务范围 Excel 拆分均使用同一层级，旧的 `yyyy_WKnn_工厂号` 目录不再为新任务生成。
 - 上线/升级后必须从运行目录验证：publish 输出完整复制到 `D:\RPA\bin`，`assets`、`gateway`、`启动脚本`、`transactions` 同步到 `D:\RPA`，执行 `--init-db` 保留并迁移 SQLite，只重启本项目 `SapWebLauncher.exe --serve`。
 - 生成或交付安装包后，必须从最终包或解压目录跑一次真实路径验收：启动服务、打开正式 HTTPS、提交受控任务、确认 SQLite run/log、钉钉日志和保存类 Excel 落到配置目录。
 

@@ -7674,7 +7674,7 @@ WHERE run_id=$runId;
     {
         string plantPart = SafeFileNamePart(FirstNonEmpty(plant, "scope"));
         string root = string.IsNullOrWhiteSpace(outputRoot) ? AlvExportDataDirectory : Path.GetFullPath(outputRoot);
-        return Path.Combine(root, $"{GetAlvWeekFolderName(date)}_{plantPart}");
+        return Path.Combine(root, GetAlvWeekFolderName(date), plantPart);
     }
 
     static string GetAlvBusinessAreaRawRoot(string? outputRoot = null)
@@ -12368,7 +12368,8 @@ WScript.Quit 0
             Check("ALV output week folder name", weekFolderOk, GetAlvWeekFolderName(new DateTime(2026, 8, 4)));
 
             string factoryDirectory = GetAlvFactoryOutputDirectory(new DateTime(2026, 7, 28), "6700");
-            bool factoryDirectoryOk = Path.GetFileName(factoryDirectory).Equals("2026_WK31_6700", StringComparison.OrdinalIgnoreCase);
+            bool factoryDirectoryOk = Path.GetFileName(factoryDirectory).Equals("6700", StringComparison.OrdinalIgnoreCase) &&
+                                      Path.GetFileName(Path.GetDirectoryName(factoryDirectory) ?? "").Equals("2026_WK31", StringComparison.OrdinalIgnoreCase);
             Check("ALV factory output directory name", factoryDirectoryOk, factoryDirectory);
 
             string plantFileName = BuildAlvDirectPlantFileName("ZFI072N", "\u7EF4\u62A4\u91C7\u8D2D\u4EF7", "6700", new DateTime(2026, 7, 28, 13, 45, 53));
@@ -12522,8 +12523,8 @@ WScript.Quit 0
                     "RUN-SELFTEST-ALV-FACTORY-SPLIT",
                     logs);
 
-                string? file6700 = splitFiles.FirstOrDefault(f => f.Path.Contains("2026_WK31_6700", StringComparison.OrdinalIgnoreCase))?.Path;
-                string? file6800 = splitFiles.FirstOrDefault(f => f.Path.Contains("2026_WK31_6800", StringComparison.OrdinalIgnoreCase))?.Path;
+                string? file6700 = splitFiles.FirstOrDefault(f => f.Path.Contains(Path.Combine("2026_WK31", "6700"), StringComparison.OrdinalIgnoreCase))?.Path;
+                string? file6800 = splitFiles.FirstOrDefault(f => f.Path.Contains(Path.Combine("2026_WK31", "6800"), StringComparison.OrdinalIgnoreCase))?.Path;
                 int rows6700 = 0;
                 int rows6800 = 0;
                 int columns6700 = 0;

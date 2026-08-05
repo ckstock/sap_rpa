@@ -510,6 +510,7 @@
     <section id="execute" class="section">
       <div class="section-header"><div class="section-num">3</div><h2>执行任务</h2></div>
       <p>执行任务是 V2 的核心功能。页面提交后，API 创建 run，SQLite 记录参数快照，后台串行 worker 领取任务，SapWebLauncher 调用 VBS 和 SAP GUI 执行，结束后回写状态和通知。</p>
+      <div class="tip-box"><strong>ALV 周/工厂归档：</strong>保存类 ALV 的最终文件统一按 <code>&lt;alvExportDataDirectory&gt;\yyyy_WKnn\工厂号\文件名.xlsx</code> 两层目录保存。例如工厂 <code>103C</code> 在第 32 周的文件位于 <code>\\10.0.16.31\rpa\经管\02-财务管报自动化\2026_WK32\103C</code>。SAP GUI 本机暂存、后端网络归档和业务范围 Excel 拆分保持同一相对路径；新任务不再生成旧的 <code>yyyy_WKnn_工厂号</code> 单层目录，已存在的历史目录不自动搬迁。</div>
       <h3 id="execute-test-date-override">V2 测试日期覆盖</h3>
       <p>测试日期只是一层日期入参覆盖，不改变事务码、VBS、排队、通知、导出或 SAP 登录流程。页面仅以 <code>GET /api/health</code> 的 <code>allowTestDateOverride=true</code> 决定是否显示“指定测试用日期”。后端只在 <code>sapNco.connectionName</code> 或 <code>sapNco.name</code> 大小写严格等于 <code>test888</code> 时返回该值；<code>TEST888</code>、<code>Test888</code>、带空格或前后缀的值均不允许。</p>
       <div class="table-wrap">
