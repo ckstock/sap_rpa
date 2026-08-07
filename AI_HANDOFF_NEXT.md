@@ -1,6 +1,41 @@
 # SAP RPA V2 下一任 AI 交接文档
 
-更新时间：2026-08-05
+更新时间：2026-08-07
+
+## 2026-08-07 ZFI057 卡片实际链路与中文映射失败提示
+
+- 工作台“产值拆分”卡片的唯一生产入口是 `ZFI057`。后端按业务范围依次执行：步骤一通过 SAP NCo 的 `REPORT_SUBMIT/MEMORY_EXPORT` 从 `ZFI019NL` memory 取物料，步骤二执行 `ZFI057.vbs` 并直接在 SAP GUI 输入 `/nZFI057`，步骤三执行 `ZCO020.vbs` 后按 `TBTCO` 状态完成范围闭环。RPA 源码、VBS 和运行日志均没有直接调用 `ZFI085_MAINTAIN`；若需核实 SAP 事务 `ZFI057` 在系统内部绑定的程序，必须由 SAP 管理员在 `SE93` 只读确认。
+- `Z31` 是 SAP 集名称，不是业务范围“组”。后端以 `GET_GS03` 的 `IV_SET_NAME=Z31` 查询，在返回行中以 `TITLE=业务范围` 匹配并取全部 `FROM` 工厂。业务范围有上游物料但没有任何可执行工厂时，不得回退本地旧映射、SQLite 或 VBS 硬编码。
+- 基础配置的“事务码与工厂/业务范围规则”中，`ZFI057.factoryRule` 只说明可维护的默认业务范围：`本规则仅维护默认业务范围；执行工厂运行时由 SAP 集 Z31 的 GET_GS03 按业务范围解析，不能在此配置或用本地工厂覆盖。` 不能把三步工作流、物料取数或 SAP 内部程序名误写进这条范围配置备注。
+- 该失败会回写并通知中文可操作提示：`业务范围 <范围> 的上游物料已获取，但 SAP 集 Z31 未维护该业务范围对应的可执行工厂，无法执行 ZFI057 与 ZCO020 后续步骤。请维护“业务范围-工厂”映射，或从任务范围中移除该业务范围。` 这属于 SAP 映射配置失败，不是 SAP GUI、导出或“无数据”失败。日志可以保留技术细节，但钉钉和页面必须展示中文处理建议。
+- `FormatZfi057ScopeResultForMessage` 的业务范围失败详情上限为 160 个字符，以保留完整的维护建议；对应自测为 `ZFI057 missing plant mapping is explained in Chinese`。
+
+## 2026-08-07 无数据不是失败
+
+- SAP 明确返回“无数据”“没有符合条件数据”“No data”“No records”或“No matching”时，后端将 run 写为 `no_data`，SAP 状态以 `W` 回写；不生成空 Excel、不进入失败重跑，也不保留临时 VBS 作为故障现场。
+- 多工厂批次中，`no_data` 计入已完成但不计入失败：有成功工厂时父 run 为 `success` 并单列无数据数量；全部无数据时父 run 为 `no_data`；只有真实脚本、导出、归档、SAP 登录等错误才会形成 `failed` 或 `partial_failed`。
+- 钉钉按“成功通知”开关发送无数据完成消息，标题为“自动化已完成（无数据）”，无数据工厂不进入“失败工厂”列表。前端执行页与历史状态显示“无数据”，不显示为失败。
+- `ALV export entry not found or not usable before timeout` 不是无数据标记，仍是导出自动化异常，必须按失败处理并保留诊断信息；不能为了减少告警而把这类错误误判为无数据。
+- `ZCO019` 等共用 `sap_alv_export_helper.vbs` 的保存类事务，在 ALV grid 出现后会先等待 SAP GUI 空闲，再重试正常网格工具栏 `&MB_EXPORT -> &XXL` 和 `&XXL`；这些入口没有打开有效的导出格式/文件路径窗口时，才调用由 `Script1.vbs` 整理出的右键 `grid.contextMenu -> &XXL` 兜底，最后才尝试不保证所有报表都存在的顶部 `btn[43]`。任意遗留 `wnd[1]` 不得当成导出窗口，助手会先取消无效弹窗。录制脚本里的 `btn[8]`、第 8 行和 `SMAKTX` 是报表特定状态，不能放入公共助手。只有导出文件对话框实际出现才继续写文件。超时日志会列出当前 `wnd[0]/tbar[1]` 可用的 `btn[n]`、tooltip 和 text，用于确认服务器 SAP GUI 的真实导出按钮，不得把该错误降级为无数据。
+- 2026-08-07 已用 `ZCO019` 工厂 `1022`、测试日期 `2026.06.01 ~ 2026.06.07` 真实验收：run `RUN-20260807142133-ZCO019-f48b8a0b79d14bfeb18b0084436bd9` 的两段 ALV 均走 `Script1` 兜底，临时 Excel 已就绪并合并归档到 `\\10.0.16.31\财务管报自动化\2026_WK32\1022\ZCO019_标准材料成本_工厂1022_20260807142139.xlsx`。运行服务日志可证明归档成功；当前 Codex 进程对该 UNC 根目录无直接浏览权限。
+
+## 2026-08-07 ZCO019 明细与保存文件分开
+
+- 上述真实验收为切分前的历史结果。此后 `ZCO019.vbs` 第一段导出固定使用 ASCII 暂存后缀 `_detail.xlsx`，第二段固定使用 `_saved.xlsx`；不再使用 `_part1/_part2`，因此后端不会把两种业务结果误判为同一份窗口分段并合并。
+- 组织归档只对 `ZCO019` 的这两个后缀映射用户可见名称：`标准材料成本_明细` 和 `标准材料成本_保存`。最终命中组织时为 `<alvExportDataDirectory>\ZBU\ZSBU\yyyy_WKnn\ZCO019_标准材料成本_明细_WKnn.xlsx` 与 `..._保存_WKnn.xlsx`；未命中时也保持同样的名称区分再追加工厂号。
+- 两种文件各自按工厂来源去重和重跑，明细不会覆盖保存，保存也不会删除明细。自检已用两个不同内容的 `1022` 工作簿验证独立组织路由，两个最终工作簿分别保留各自行内容。
+- 已发布到运行目录：`D:\RPA\transactions\ZCO019.vbs` 和 `D:\RPA\bin\SapWebLauncher.dll`；发布前备份在 `D:\RPA\deployment-backups\20260807-zco019-distinct-detail-saved`。生产 API、HTTPS 入口和 HTTP 兼容入口在发布后均返回 `200`。
+
+## 2026-08-06 ALV 组织归档规则（覆盖本文此前周/工厂目录说明）
+
+- 保存类 ALV 的最终归档是公共后端能力，当前覆盖 `ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`、`ZFI148`；不能为 `103C` 或任一具体工厂硬编码。
+- SAP GUI 始终先写本机暂存，后端只读 SAP `RFC_READ_TABLE`：`ZFI080`、`ZFI080B`、`ZFI019NL`、`ZFI019NA`、`ZFI148` 从导出 Excel 的 `GSBER`/业务范围列查询 `ZTFI48A-GSBER -> ZBU/ZSBU`；其余保存类从 Excel 的 `WERKS`/工厂列查询 `ZTFI48B-WERKS -> ZBU/ZSBU`。一个 Excel 含多个工厂或业务范围时必须逐值拆分。
+- 命中组织时的最终文件为 `<alvExportDataDirectory>\<ZBU>\<ZSBU>\yyyy_WKnn\<事务码>_<卡片名称>_WKnn.xlsx`。`ZBU` 和 `ZSBU` 是两层组织，周目录固定在其下；同一 `ZBU+ZSBU+周+事务码` 的所有工厂数据合并到同一工作簿；一厂映射多个组织时向每个组织各写一份。重跑同一工厂或业务范围要替换该来源旧行，不能重复追加。
+- 查询成功但未命中组织时回退到 `<alvExportDataDirectory>\集采工厂\yyyy_WKnn\<事务码>_<卡片名称>_WKnn_工厂<WERKS>.xlsx`。业务范围型 Excel 只要实际包含 `WERKS`，也必须按该工厂名回退；仅没有任何工厂列时才可用 `_业务范围<GSBER>.xlsx`。`集采工厂` 与 `BU1`、`BU2` 等一级组织同级，但它没有 `ZSBU` 层；查询失败、Excel 缺必需列或必需值时任务失败，保留本机暂存供排障，不得伪造成功。
+- 网络盘根目录只由运行目录 `D:\RPA\config.local.json` 的 `fileStorage.alvExportDataDirectory` 控制；证书、真实配置、网络盘 Excel 都不得提交 Git。发布后必须用真实 SAP 导出验证最终网络目录和 Excel 行数。
+- SAP GUI 导出只能写 `fileStorage.alvExportStagingDirectory`（当前 `D:\RPA\临时文件\ALV本地暂存`），由 `SapWebLauncher` 以实际执行账户复制到 `alvExportDataDirectory`、校验文件大小并原子落盘；本机暂存写入失败与网络归档失败必须分别记录，不能把前者误判为网络共享盘无权限。服务重启时，上一执行器遗留的 `running` 子任务必须立即标记失败、通知并保留本机暂存，不能等待 6 小时阻塞队列。
+
+- 执行器重启回收仅针对带 `locked_by=<当前执行账户>|queue`（兼容历史同账户租约）的桥服务队列任务；`sap-rpa://` fallback 没有队列租约，不能被服务启动或 6 小时守护误杀。所有完成、超时和重启失败都会清空租约字段。暂存目录只能是 `D:\RPA\临时文件\ALV本地暂存` 或其子目录；UNC 暂存和暂存/归档目录相同都会拒绝或回退，确保 SAP GUI 从不直接写网络盘。
 
 ## 2026-08-05 SAP 登录与测试日期控件修正
 
@@ -12,6 +47,13 @@
   - `ZCO019`、`ZCO020`、`ZFI019NA`、`ZFI019NL`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZFI148`、`ZFIR034`：仅日期范围。
   - 保存类卡片全部有测试日期输入：`ZFI072A` 输入 ISO 周；其余保存类 `ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL` 输入开始/截止日期。周结完工成本明细表的 `ZFI019NL`、`ZFI019NA`、`ZFI148` 三张卡均显示日期范围。
 - 前端源文件是 `D:\RPA\RpaProject\assets\js\portal-utils.js` 与 `portal-render.js`；部署时必须同步复制到运行目录 `D:\RPA\assets\js`，仅修改 Git 源码不会影响正式网页。
+
+## 2026-08-05 工厂规则配置刷新与联动
+
+- 工厂主数据目录与事务码/业务范围规则的显式工厂代码是两类数据：规则允许先配置一个有效 SAP 工厂代码，再补充可选的门户工厂主数据。因此 `/api/config` 刷新时不得以“该代码不在 `plants` 或已停用”为由，静默删除 `plantGroups.plants`、`zfi072Plants`、`zco019Plants` 或事务规则 `fixedPlants`。
+- 规则弹窗的“新增工厂代码”只会在点击新增或回车成功后清空输入，并必须即时显示新工厂标签和“已新增工厂 <code>”反馈；重复代码保留输入并提示，不得伪装为成功。
+- 对按工厂执行的事务规则，页面必须实时展示由工厂主数据推导的“关联业务范围”。工厂代码本身允许保留；若主数据缺少该代码或该代码没有业务范围，则显示缺失提示，不能因此删除配置。保存后刷新页面仍必须保留该显式工厂代码。
+- 本轮改动位于 `assets/js/portal-api.js`、`portal-render.js`、`portal-actions.js`；发布时三者均须复制到 `D:\RPA\assets\js`。网关静态 JS 缓存最长 60 秒，紧急验证使用浏览器硬刷新。
 
 ## 当前项目定位
 
@@ -48,9 +90,9 @@
 - GitHub 仓库只保留 `D:\RPA\RpaProject\上线安装包` 这一套最终上线资料；运行根目录下旧 `安装包`、旧 `上线安装包`、`临时文件`、`vp` 都不是源码交付物，不应提交。`D:\RPA\临时文件\文件数据` 可能被运行时按默认导出路径自动重建，生产以 `config.local.json` 的 `fileStorage.alvExportDataDirectory` 为准。
 - 生产机专属状态不能被测试机覆盖：`D:\RPA\config.local.json`、`D:\RPA\data\sap-rpa-config.db`、`D:\RPA\logs\`、`D:\RPA\outputs\`、`D:\RPA\certs\lstech.com\`、`%LOCALAPPDATA%\SapWebLauncher\config.json`。全新生产机要重新填写/放置/生成这些内容；已有生产机升级要先备份并默认保留。
 - `D:\RPA\certs` 不是技术上只能安装不能复制；它可以作为受控生产证书备份/迁移材料复制。但它是 secret，不能进 GitHub、普通安装包、公开 zip 或聊天明文附件；全新生产机放生产证书，升级已有生产机保留现有证书，复制/替换后必须重设 ACL 并验收 HTTPS。
-- 含“保存”的 ALV Excel 导出只承诺 7 个事务码：`ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`。`ZFI019NI` 是无生产 VBS 的旧残留，已从默认前端 fallback 和 `transaction-config.json` 移除；后端历史 run 名称解析可以保留，不代表它是生产入口。
+- 含“保存”的 ALV Excel 导出覆盖 8 个事务码：`ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`、`ZFI148`。`ZFI019NI` 是无生产 VBS 的旧残留，已从默认前端 fallback 和 `transaction-config.json` 移除；后端历史 run 名称解析可以保留，不代表它是生产入口。
 - Excel 输出根目录必须由运行目录真实配置 `D:\RPA\config.local.json` 的 `fileStorage.alvExportDataDirectory` 控制，默认 `D:\RPA\临时文件\文件数据`；临时覆盖可用环境变量 `SAP_RPA_ALV_EXPORT_DIR`。生产机换网络共享盘时只改配置并重启后端，不改 VBS 或 C#。
-- 保存类 ALV 的工厂文件必须按两层目录归档：`<alvExportDataDirectory>\yyyy_WKnn\工厂号\事务码_卡片名称_工厂工厂号_时间戳.xlsx`。例如 `\\10.0.16.31\rpa\经管\02-财务管报自动化\2026_WK32\103C\...xlsx`；本机暂存、网络归档和业务范围 Excel 拆分均使用同一层级，旧的 `yyyy_WKnn_工厂号` 目录不再为新任务生成。
+- 保存类 ALV 的最终文件必须按组织和周归档：命中组织时为 `<alvExportDataDirectory>\ZBU\ZSBU\yyyy_WKnn\事务码_卡片名称_WKnn.xlsx`，同一组织、周和事务码的工厂数据合并；未命中组织时为 `<alvExportDataDirectory>\集采工厂\yyyy_WKnn\事务码_卡片名称_WKnn_工厂工厂号.xlsx`。本机暂存仍在 `D:\RPA\临时文件\ALV本地暂存`，绝不按最终网络目录直接导出；旧目录不自动搬迁。
 - 上线/升级后必须从运行目录验证：publish 输出完整复制到 `D:\RPA\bin`，`assets`、`gateway`、`启动脚本`、`transactions` 同步到 `D:\RPA`，执行 `--init-db` 保留并迁移 SQLite，只重启本项目 `SapWebLauncher.exe --serve`。
 - 生成或交付安装包后，必须从最终包或解压目录跑一次真实路径验收：启动服务、打开正式 HTTPS、提交受控任务、确认 SQLite run/log、钉钉日志和保存类 Excel 落到配置目录。
 
@@ -103,7 +145,7 @@
 
 - 数据库是主配置源。
 - 页面从本地 API 读取配置。
-- 删除/停用工厂后，前端过滤 `enabled=false`，并清理业务范围/事务码规则里的停用工厂引用。
+- 工厂主数据列表会过滤 `enabled=false`；但业务范围和事务码规则中由用户显式保存的工厂代码必须在配置刷新后保留。代码未登记或缺少业务范围时显示缺失提示，不能静默清理。
 - SAP GUI 执行保持串行，不并发操作同一个桌面会话。
 - ZFI072A 是当前优先打通事务码。
 - 多工厂执行应记录父 run 和每个工厂子 run；开始通知一次，结束汇总通知一次，失败工厂支持重跑。

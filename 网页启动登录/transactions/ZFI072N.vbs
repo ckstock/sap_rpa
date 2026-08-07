@@ -16,6 +16,7 @@ Dim retries, sleepMs, statusType, statusText, windowIndex
 Dim unresolvedOkCodeToken, unresolvedPlantsToken
 Dim alvExportDir, alvExportFilename, alvOutputFile, alvExportReady, exportTimeoutMs, alvExportMethod
 Dim unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken, currentWindowExportFileName
+Dim scriptDir, alvHelperLoaded
 
 tcode = "{OK_CODE}"
 plantsCsv = "{PLANTS}"
@@ -26,9 +27,11 @@ periodValue = "{PERIOD}"
 weekEndValue = "{WEEK_END}"
 alvExportDir = "{ALV_EXPORT_DIR}"
 alvExportFilename = "{ALV_EXPORT_FILENAME}"
+scriptDir = "{SCRIPT_DIR}"
 exportTimeoutMs = 180000
 alvExportReady = False
 alvExportMethod = ""
+alvHelperLoaded = False
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
 unresolvedPlantsToken = "{" & "PLANTS" & "}"
 unresolvedAlvExportDirToken = "{" & "ALV_EXPORT_DIR" & "}"
@@ -39,6 +42,7 @@ If UCase(Trim(CStr(tcode))) <> "ZFI072N" Then Fail "ZFI072N script refuses tcode
 If Trim(CStr(plantsCsv)) = unresolvedPlantsToken Then plantsCsv = ""
 If Trim(CStr(alvExportDir)) = unresolvedAlvExportDirToken Then alvExportDir = ""
 If Trim(CStr(alvExportFilename)) = unresolvedAlvExportFilenameToken Then alvExportFilename = ""
+If IsPlaceholder(scriptDir, "SCRIPT_DIR") Then scriptDir = ""
 If IsPlaceholder(yearValue, "YEAR") Then yearValue = ""
 If IsPlaceholder(weekValue, "WEEK") Then weekValue = ""
 If IsPlaceholder(periodValue, "PERIOD") Then periodValue = ""
@@ -485,6 +489,51 @@ Function CombinePath(folderPath, fileName)
    End If
 End Function
 
+Function LoadAlvExportHelper()
+   Dim fso, helperPath, textFile, helperText, operationError
+   On Error Resume Next
+   LoadAlvExportHelper = False
+   If alvHelperLoaded Then
+      LoadAlvExportHelper = True
+      Exit Function
+   End If
+
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If Err.Number <> 0 Then
+      operationError = Err.Description
+      Err.Clear
+      Fail "create FileSystemObject for ALV export helper failed - " & operationError, 8
+      Exit Function
+   End If
+   If Trim(CStr(scriptDir)) = "" Then scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+   helperPath = CombinePath(scriptDir, "sap_alv_export_helper.vbs")
+   If Not fso.FileExists(helperPath) Then
+      Fail "ALV export helper not found: " & helperPath, 8
+      Exit Function
+   End If
+
+   Err.Clear
+   Set textFile = fso.OpenTextFile(helperPath, 1, False, -2)
+   If Err.Number <> 0 Then
+      operationError = Err.Description
+      Err.Clear
+      Fail "open ALV export helper failed - " & operationError, 8
+      Exit Function
+   End If
+   helperText = textFile.ReadAll
+   textFile.Close
+   Err.Clear
+   ExecuteGlobal helperText
+   If Err.Number <> 0 Then
+      operationError = Err.Description
+      Err.Clear
+      Fail "load ALV export helper failed - " & operationError, 8
+      Exit Function
+   End If
+   alvHelperLoaded = True
+   LoadAlvExportHelper = True
+End Function
+
 Function EnsureFolderExists(folderPath)
    Dim fso, parentPath
    On Error Resume Next
@@ -874,7 +923,8 @@ Function ExportAlvIfConfigured(exportDir, exportFilename, timeoutMs)
    alvOutputFile = CombinePath(exportDir, exportFilename)
    If Not DeleteFileIfExists(alvOutputFile) Then Fail "ALV export target could not be cleared before export: " & alvOutputFile, 8
 
-   If Not PressAlvExportEntry(timeoutMs) Then Fail "ALV export entry not found or not usable before timeout", 8
+   If Not LoadAlvExportHelper() Then Fail "ALV export helper could not be loaded", 8
+   If Not AlvPressExportEntry(session, timeoutMs) Then Fail "ALV export entry not found or not usable before timeout", 8
 
    If Not WaitForObject("wnd[1]", 10000) Then Fail "ALV export dialog did not open", 8
    If Not ObjectExists("wnd[1]/usr/ctxtDY_PATH") Then

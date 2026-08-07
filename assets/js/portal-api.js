@@ -54,19 +54,15 @@
       };
     }
 
-    function filterKnownPlantCodes(values, activePlantCodes) {
-      const list = toArray(values);
-      if (!activePlantCodes) return list;
-      return list.filter(code => activePlantCodes.has(String(code || "").trim().toUpperCase()));
-    }
-
-    function pruneInactivePlantRefs(item, activePlantCodes) {
+    function preserveConfiguredPlantRefs(item) {
+      // Group and transaction rules can explicitly target a valid SAP plant before
+      // that plant has been added to the optional portal master-data catalog.
       return {
         ...item,
-        plants: filterKnownPlantCodes(item.plants, activePlantCodes),
-        zfi072Plants: filterKnownPlantCodes(item.zfi072Plants, activePlantCodes),
-        zco019Plants: filterKnownPlantCodes(item.zco019Plants, activePlantCodes),
-        fixedPlants: filterKnownPlantCodes(item.fixedPlants, activePlantCodes)
+        plants: toArray(item.plants),
+        zfi072Plants: toArray(item.zfi072Plants),
+        zco019Plants: toArray(item.zco019Plants),
+        fixedPlants: toArray(item.fixedPlants)
       };
     }
 
@@ -197,9 +193,8 @@
       const scheduleSource = data.scheduleTasks || data.schedules || data.scheduledTasks;
       const hasSchedules = Array.isArray(scheduleSource);
       const nextPlants = hasPlants ? data.plants.map(normalizePlantFromApi).filter(item => item.code && item.enabled !== false) : [];
-      const activePlantCodes = hasPlants ? new Set(nextPlants.map(item => item.code)) : null;
-      const nextGroups = hasGroups ? data.plantGroups.map(normalizePlantGroupFromApi).filter(item => item.id).map(item => pruneInactivePlantRefs(item, activePlantCodes)) : [];
-      const nextRules = hasRules ? data.transactionRules.map(normalizeTransactionRuleFromApi).filter(item => item.code).map(item => pruneInactivePlantRefs(item, activePlantCodes)) : [];
+      const nextGroups = hasGroups ? data.plantGroups.map(normalizePlantGroupFromApi).filter(item => item.id).map(preserveConfiguredPlantRefs) : [];
+      const nextRules = hasRules ? data.transactionRules.map(normalizeTransactionRuleFromApi).filter(item => item.code).map(preserveConfiguredPlantRefs) : [];
       const nextRobots = hasRobots ? data.notificationRobots.map(normalizeRobotFromApi).filter(item => item.id) : [];
 
       if (hasPlants) {
@@ -246,7 +241,7 @@
 
     function normalizeRunFromApi(run) {
       const params = readRunParams(run.requestJson);
-      const statusText = run.status === "success" ? "成功" : run.status === "failed" ? "失败" : run.status === "running" ? "执行中" : run.status === "canceled" ? "已取消" : "排队中";
+      const statusText = run.status === "success" ? "成功" : run.status === "no_data" ? "无数据" : run.status === "failed" ? "失败" : run.status === "running" ? "执行中" : run.status === "canceled" ? "已取消" : "排队中";
       return {
         id: run.runId,
         time: run.finishedAt || run.startedAt || run.queuedAt || "",
@@ -294,6 +289,7 @@
     function normalizeRunStatus(status) {
       const value = String(status || "").toLowerCase();
       if (value === "succeeded" || value === "completed") return "success";
+      if (value === "nodata" || value === "no-data") return "no_data";
       if (value === "error") return "failed";
       if (value === "partial_failed" || value === "partialfailed") return "partial_failed";
       if (value === "cancelled") return "canceled";
@@ -352,6 +348,7 @@
       const status = normalizeRunStatus(run?.status);
       if (status === "running") return "正在执行";
       if (status === "success") return "已完成";
+      if (status === "no_data") return "无数据";
       if (status === "partial_failed") return "部分失败";
       if (status === "failed") return "执行失败";
       if (status === "canceled") return "已取消";

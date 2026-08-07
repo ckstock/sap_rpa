@@ -313,14 +313,14 @@ SetField "werks-low", "wnd[0]/usr/ctxtS_WERKS-LOW", plantValue
 PressExecute
 WaitReady 600000
 SelectAllGrid
-ExportAlvBeforeSave "save first result", "part1"
+ExportAlvBeforeSave "export detail before save", "detail"
 PressToolbarButton "wnd[0]/tbar[1]/btn[26]", "save/export first result"
 PressToolbarButton "wnd[0]/tbar[0]/btn[3]", "back"
 SetRadioIfExists "wnd[0]/usr/radP_RADIO2"
 PressExecute
 WaitReady 600000
 SelectAllGrid
-ExportAlvBeforeSave "save second result", "part2"
+ExportAlvBeforeSave "export saved result", "saved"
 PressToolbarButton "wnd[0]/tbar[1]/btn[26]", "save/export second result"
 
 CheckSapStatus "finish"

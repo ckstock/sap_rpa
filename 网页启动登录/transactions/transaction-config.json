@@ -77,7 +77,7 @@
                                             "period",
                                             "weekEnd"
                                         ],
-                             "factoryRule":  "点击 ZFI057 后自动执行 ZFI019NL -> ZFI057 -> ZCO020；物料集合由工作流从 ZFI019NL/ZFI_SPLIT 上游取数",
+                             "factoryRule":  "本规则仅维护默认业务范围；执行工厂运行时由 SAP 集 Z31 的 GET_GS03 按业务范围解析，不能在此配置或用本地工厂覆盖。",
                              "defaultPlantGroup":  "PINGHU_ALL",
                              "automation":  "script",
                              "timeoutSeconds":  1800,

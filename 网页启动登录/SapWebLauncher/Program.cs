@@ -24,6 +24,7 @@ static class Program
 {
     private const string PrimaryProtocolName = "sap-rpa";
     private const string MutexId = "SapWebLauncher-SingleInstance-Mutex";
+    private const string BridgeServerMutexId = "SapWebLauncher-BridgeServer-Mutex";
     private const int BridgePort = 8080;
     private const int DefaultRunListLimit = 50;
     private const int DefaultQueueStatusLimit = 5;
@@ -39,6 +40,7 @@ static class Program
     private const string Zfi057TbtcoJobName = "ZFI057";
     private const int Zfi057TbtcoPollTimeoutSeconds = 600;
     private const int Zfi057TbtcoPollIntervalSeconds = 10;
+    private const string RequiredAlvLocalStagingRoot = @"D:\RPA\临时文件\ALV本地暂存";
     private static readonly string ExeDirectory = AppContext.BaseDirectory;
     private static readonly string LocalConfigDirectory = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -56,6 +58,7 @@ static class Program
     private static readonly string DatabaseFilePath = Path.Combine(DataDirectory, "sap-rpa-config.db");
     private static readonly string LegacyDatabaseFilePath = Path.Combine(LocalConfigDirectory, "sap-rpa-config.db");
     private static readonly string ExecutorId = $"{Environment.MachineName}\\{Environment.UserName}";
+    private static readonly string QueueExecutorLockOwner = ExecutorId + "|queue";
     private static readonly string[] TestDateOverrideClearKeys =
     {
         "dateMode", "date_mode", "testDateMode", "test_date_mode", "testDateKind", "test_date_kind",
@@ -134,6 +137,14 @@ static class Program
              args[0].Equals("test-zfi057-get-gs03", StringComparison.OrdinalIgnoreCase)))
         {
             Environment.Exit(RunZfi057GetGs03Diagnostic(args.Skip(1).ToArray()));
+            return;
+        }
+
+        if (args.Length > 0 &&
+            (args[0].Equals("--test-zbu-mapping", StringComparison.OrdinalIgnoreCase) ||
+             args[0].Equals("test-zbu-mapping", StringComparison.OrdinalIgnoreCase)))
+        {
+            Environment.Exit(RunAlvOrganizationMappingDiagnostic(args.Skip(1).ToArray()));
             return;
         }
 
@@ -264,7 +275,7 @@ static class Program
 
     static string ResolveAlvExportStagingDirectory()
     {
-        string defaultPath = Path.Combine(RuntimeRoot, "\u4E34\u65F6\u6587\u4EF6", "ALV\u672C\u673A\u6682\u5B58");
+        string defaultPath = RequiredAlvLocalStagingRoot;
         string configured = (Environment.GetEnvironmentVariable("SAP_RPA_ALV_EXPORT_STAGING_DIR") ?? "").Trim();
 
         if (string.IsNullOrWhiteSpace(configured))
@@ -286,7 +297,27 @@ static class Program
             }
         }
 
-        return ResolveDirectoryPath(configured, defaultPath, "ALV export staging directory");
+        string stagingPath = ResolveDirectoryPath(configured, defaultPath, "ALV export staging directory");
+        string approvedRoot = Path.GetFullPath(defaultPath);
+        if (IsApprovedLocalAlvStagingDirectory(stagingPath, approvedRoot))
+            return stagingPath;
+
+        Log($"ALV export staging directory must stay under {approvedRoot}; fallback to the local staging root. value={stagingPath}");
+        return approvedRoot;
+    }
+
+    static bool IsApprovedLocalAlvStagingDirectory(string candidatePath, string approvedRoot)
+    {
+        string candidate = Path.GetFullPath(candidatePath)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string root = Path.GetFullPath(approvedRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+
+        if (candidate.StartsWith("\\\\", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        return candidate.Equals(root, StringComparison.OrdinalIgnoreCase) ||
+               candidate.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
     }
 
     static string ResolveDirectoryPath(string configured, string defaultPath, string label)
@@ -501,6 +532,58 @@ static class Program
         {
             Console.Error.WriteLine($"ZFI057 GET_GS03 diagnostic failed: {ex.Message}");
             Log($"ZFI057 GET_GS03 diagnostic failed: {ex}");
+            return 1;
+        }
+    }
+
+    static int RunAlvOrganizationMappingDiagnostic(string[] args)
+    {
+        try
+        {
+            EnsureRuntimeDirectories();
+            var values = ParseCliKeyValueArgs(args);
+            string plant = First(values, "plant", "werks") ?? "";
+            string businessArea = First(values, "businessArea", "businessarea", "gsber") ?? "";
+            if (string.IsNullOrWhiteSpace(plant) && string.IsNullOrWhiteSpace(businessArea))
+            {
+                Console.Error.WriteLine("Specify --plant <WERKS> or --businessArea <GSBER>.");
+                return 2;
+            }
+            if (!string.IsNullOrWhiteSpace(plant) && !string.IsNullOrWhiteSpace(businessArea))
+            {
+                Console.Error.WriteLine("Specify only one of --plant or --businessArea.");
+                return 2;
+            }
+
+            AlvOrganizationMappingKind kind = string.IsNullOrWhiteSpace(plant)
+                ? AlvOrganizationMappingKind.BusinessArea
+                : AlvOrganizationMappingKind.Plant;
+            string sourceCode = kind == AlvOrganizationMappingKind.Plant ? plant : businessArea;
+            var p = ApplyLocalConfig(new SapRunParams
+            {
+                TCode = "ZFI072A",
+                Script = "diagnostic",
+                Plant = plant,
+                BusinessArea = businessArea,
+                RunStrategy = "diagnostic"
+            });
+            SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
+            AlvOrganizationMappingResult result = new AlvOrganizationMappingFetcher().Fetch(connectionConfig, kind, sourceCode);
+
+            Console.WriteLine("SAP ALV organization mapping diagnostic");
+            Console.WriteLine($"status={(result.Success ? "success" : "failed")}");
+            Console.WriteLine($"sourceKind={(kind == AlvOrganizationMappingKind.Plant ? "plant" : "businessArea")}");
+            Console.WriteLine($"sourceCode={sourceCode.Trim()}");
+            Console.WriteLine($"message={result.Message}");
+            foreach (AlvOrganizationTarget target in result.Targets)
+                Console.WriteLine($"target={target.Zbu}/{target.Zsbu}");
+            Console.WriteLine($"targetCount={result.Targets.Count}");
+            return result.Success && result.Targets.Count > 0 ? 0 : 2;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"SAP ALV organization mapping diagnostic failed: {ex.Message}");
+            Log($"SAP ALV organization mapping diagnostic failed: {ex}");
             return 1;
         }
     }
@@ -1050,7 +1133,7 @@ static class Program
             return;
         }
 
-        p.Plants = NormalizeCsv(FirstNonEmpty(p.Plants, p.Plant));
+        p.Plants = NormalizePlantCodesCsv(FirstNonEmpty(p.Plants, p.Plant));
         p.BusinessAreas = NormalizeCsv(FirstNonEmpty(p.BusinessAreas, p.BusinessArea));
         p.Plant = FirstCsvValue(p.Plants);
         p.BusinessArea = FirstCsvValue(p.BusinessAreas);
@@ -1218,6 +1301,28 @@ WHERE tcode=$tcode AND enabled=1;
         return value;
     }
 
+    static string[] NormalizePlantCodeArray(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return Array.Empty<string>();
+
+        // Plant code lists are comma-separated. Do not reinterpret shell/path separators as list delimiters.
+        return value.Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .Select(SanitizePlantCode)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    static string NormalizePlantCodesCsv(string value)
+    {
+        return string.Join(",", NormalizePlantCodeArray(value));
+    }
+
+    static string PlantCodesToJsonArray(string value)
+    {
+        return JsonSerializer.Serialize(NormalizePlantCodeArray(value), JsonOptions);
+    }
+
     static string SanitizeConfigId(string id, string label)
     {
         string value = (id ?? "").Trim().ToUpperInvariant();
@@ -1294,12 +1399,21 @@ WHERE tcode=$tcode AND enabled=1;
 
     static void RunBridgeServer()
     {
-        InitializeDatabase(seedFromScripts: true);
+        using var serverMutex = new Mutex(false, BridgeServerMutexId);
+        if (!serverMutex.WaitOne(TimeSpan.Zero, false))
+        {
+            Log("Bridge API is already running; this duplicate --serve process will exit without recovering queue state.");
+            return;
+        }
 
         using var listener = new HttpListener();
         string prefix = GetApiPrefix();
         listener.Prefixes.Add(prefix);
         listener.Start();
+        InitializeDatabase(seedFromScripts: true);
+        int interruptedRunCount = RecoverInterruptedRunsAfterExecutorRestart();
+        if (interruptedRunCount > 0)
+            Log($"Recovered {interruptedRunCount} run(s) interrupted by a previous SAP RPA executor process.");
         Log($"Bridge API 已启动: {prefix}");
         Console.WriteLine($"Bridge API running: {prefix}");
 
@@ -2461,6 +2575,7 @@ WHERE EXISTS (SELECT 1 FROM transactions WHERE transactions.tcode = transaction_
             string fixedPlants = FirstNonEmpty(
                 JsonArrayToCsv(item, "fixedPlants"),
                 GetMetadataFixedPlants(tcode, metadata));
+            fixedPlants = NormalizePlantCodesCsv(fixedPlants);
             string scriptVersion = metadata.TryGetValue("version", out string? version) ? version ?? "" : "";
             string scriptHash = string.IsNullOrWhiteSpace(scriptText) ? "" : Sha256Hex(scriptText);
             int timeoutSeconds = GetJsonInt(item, "timeoutSeconds", GetJsonInt(item, "timeout", 0));
@@ -2513,7 +2628,7 @@ INSERT OR IGNORE INTO transactions (
             command.Parameters.AddWithValue("$icon", GetJsonString(item, "icon"));
             command.Parameters.AddWithValue("$paramsJson", JsonArrayPropertyToJson(item, "params"));
             command.Parameters.AddWithValue("$factoryRule", GetJsonString(item, "factoryRule"));
-            command.Parameters.AddWithValue("$fixedPlantsJson", CsvToJsonArray(fixedPlants));
+            command.Parameters.AddWithValue("$fixedPlantsJson", PlantCodesToJsonArray(fixedPlants));
             command.Parameters.AddWithValue("$defaultGroup", GetJsonString(item, "defaultPlantGroup"));
             command.Parameters.AddWithValue("$automation", GetJsonString(item, "automation"));
             command.Parameters.AddWithValue("$timeoutSeconds", timeoutSeconds);
@@ -2815,6 +2930,7 @@ ORDER BY name;
             item.FixedPlantsCsv,
             JsonElementArrayToCsv(item.FixedPlants),
             GetMetadataFixedPlants(tcode, metadata));
+        fixedPlants = NormalizePlantCodesCsv(fixedPlants);
         string scriptVersion = FirstNonEmpty(
             item.ScriptVersion,
             metadata.TryGetValue("version", out string? version) ? version ?? "" : "");
@@ -2863,7 +2979,7 @@ ON CONFLICT(tcode) DO UPDATE SET
         command.Parameters.AddWithValue("$icon", FirstNonEmpty(item.Icon, "terminal"));
         command.Parameters.AddWithValue("$paramsJson", TransactionParamsToJson(item.Params));
         command.Parameters.AddWithValue("$factoryRule", item.FactoryRule ?? "");
-        command.Parameters.AddWithValue("$fixedPlantsJson", CsvToJsonArray(fixedPlants));
+        command.Parameters.AddWithValue("$fixedPlantsJson", PlantCodesToJsonArray(fixedPlants));
         command.Parameters.AddWithValue("$defaultGroup", item.DefaultPlantGroup ?? "");
         command.Parameters.AddWithValue("$automation", FirstNonEmpty(item.Automation, item.DefaultRunMode, "openOnly"));
         command.Parameters.AddWithValue("$timeoutSeconds", timeoutSeconds);
@@ -3316,11 +3432,11 @@ WHERE code=$code;
         InitializeDatabase(seedFromScripts: true);
         string id = SanitizeConfigId(FirstNonEmpty(routeId, item.Id), "plant group id");
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        string[] plants = NormalizeStringArray(FirstNonEmpty(item.PlantsCsv, JsonElementArrayToCsv(item.Plants)));
+        string[] plants = NormalizePlantCodeArray(FirstNonEmpty(item.PlantsCsv, JsonElementArrayToCsv(item.Plants)));
         string zfi019nlAreasJson = CsvToJsonArray(FirstNonEmpty(item.Zfi019nlAreasCsv, JsonElementArrayToCsv(item.Zfi019nlAreas)));
         string zfi080AreasJson = CsvToJsonArray(FirstNonEmpty(item.Zfi080AreasCsv, JsonElementArrayToCsv(item.Zfi080Areas)));
-        string zfi072PlantsJson = CsvToJsonArray(FirstNonEmpty(item.Zfi072PlantsCsv, JsonElementArrayToCsv(item.Zfi072Plants)));
-        string zco019PlantsJson = CsvToJsonArray(FirstNonEmpty(item.Zco019PlantsCsv, JsonElementArrayToCsv(item.Zco019Plants)));
+        string zfi072PlantsJson = PlantCodesToJsonArray(FirstNonEmpty(item.Zfi072PlantsCsv, JsonElementArrayToCsv(item.Zfi072Plants)));
+        string zco019PlantsJson = PlantCodesToJsonArray(FirstNonEmpty(item.Zco019PlantsCsv, JsonElementArrayToCsv(item.Zco019Plants)));
 
         using var connection = OpenDatabaseConnection();
         using var tx = connection.BeginTransaction();
@@ -3411,7 +3527,7 @@ WHERE id=$id;
         InitializeDatabase(seedFromScripts: true);
         string tcode = SanitizeTCode(FirstNonEmpty(routeTCode, item.TCode, item.Code)).ToUpperInvariant();
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        string fixedPlantsJson = CsvToJsonArray(FirstNonEmpty(
+        string fixedPlantsJson = PlantCodesToJsonArray(FirstNonEmpty(
             item.FixedPlantsCsv,
             JsonElementArrayToCsv(item.FixedPlants),
             item.PlantsCsv,
@@ -3905,7 +4021,8 @@ WHERE id=$id;
             plantsCsv = "";
         else if (!item.HasExplicitPlantSelection)
             plantsCsv = ResolveSchedulePlants(tcode, defaultBusinessScope);
-        string plantsJson = CsvToJsonArray(plantsCsv);
+        plantsCsv = NormalizePlantCodesCsv(plantsCsv);
+        string plantsJson = PlantCodesToJsonArray(plantsCsv);
         string paramsJson = BuildScheduleParamsJson(item, tcode, defaultBusinessScope, plantsCsv);
         string rawFrequency = FirstNonEmpty(item.Frequency, item.ScheduleType, item.FrequencyCode);
         string frequency = string.IsNullOrWhiteSpace(rawFrequency) && !string.IsNullOrWhiteSpace(item.Cron)
@@ -4141,7 +4258,7 @@ ORDER BY sort_order, plant_code;
             }
         }
 
-        string plants = NormalizeCsv(FirstNonEmpty(
+        string plants = NormalizePlantCodesCsv(FirstNonEmpty(
             plantsCsv,
             !item.HasExplicitPlantSelection && values.TryGetValue("plants", out string? existingPlants) ? existingPlants ?? "" : ""));
         bool dateRangeOnly = UsesDateRangeOnlyInputs(tcode);
@@ -4369,7 +4486,7 @@ WHERE task_id=$taskId
             Params = ParseScheduleParams(task.ParamsJson)
         };
 
-        string plants = NormalizeCsv(FirstNonEmpty(task.Plants, GetParamValue(request.Params, "plants")));
+        string plants = NormalizePlantCodesCsv(FirstNonEmpty(task.Plants, GetParamValue(request.Params, "plants")));
         if (!UsesDateRangeOnlyInputs(request.TransactionCode ?? request.TCode ?? request.Code ?? "") && !string.IsNullOrWhiteSpace(plants))
         {
             request.Params["plants"] = plants;
@@ -4574,7 +4691,7 @@ WHERE run_id=$runId;
             GetParamValue(request.Params, "plantlist"),
             GetParamValue(request.Params, "plant"),
             GetParamValue(request.Params, "werks"));
-        plants = NormalizeCsv(plants);
+        plants = NormalizePlantCodesCsv(plants);
         if (!UsesDateRangeOnlyInputs(request.TransactionCode ?? request.TCode ?? request.Code ?? "") && !string.IsNullOrWhiteSpace(plants))
         {
             request.Params["plants"] = plants;
@@ -5250,7 +5367,7 @@ WHERE child_run_id=$childRunId;
             update.ExecuteNonQuery();
         }
 
-        AppendRunLog(parentRunId, status.Equals("success", StringComparison.OrdinalIgnoreCase) ? "INFO" : "WARN",
+        AppendRunLog(parentRunId, IsFailureRunStatus(status) ? "WARN" : "INFO",
             $"batch item {itemValue} finished: status={status}, child={childRunId}");
         TryFinalizeBatchParent(parentRunId, batchTotal);
         return parentRunId;
@@ -5337,7 +5454,7 @@ WHERE run_id=$parentRunId
             CleanupSapGuiSessionAfterRunId(parentRunId);
             CloseExportedExcelWindowsForTransaction(parentTransactionCode, parentRunId);
             UpdateScheduleRunStatusForRun(parentRunId, parentStatus, message);
-            NotifyRunEvent(parentRunId, parentStatus.Equals("success", StringComparison.OrdinalIgnoreCase) ? "success" : "failure", message);
+            NotifyRunEvent(parentRunId, IsCompletedWithoutFailure(parentStatus) ? "success" : "failure", message);
         }
     }
 
@@ -5346,7 +5463,6 @@ WHERE run_id=$parentRunId
         var files = new List<RunFile>();
         var seenPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         bool normalizeDirectPlantOutput = UsesDirectPlantAlvOutput(transactionCode);
-        bool normalizeBusinessAreaOutput = UsesBusinessAreaAlvOutput(transactionCode);
 
         foreach (var item in latestItems.OrderBy(i => i.BatchIndex))
         {
@@ -5370,17 +5486,8 @@ WHERE run_id=$parentRunId
                     logs: null,
                     updateStoredRunFiles: true);
             }
-            else if (normalizeBusinessAreaOutput)
-            {
-                childFiles = NormalizeBusinessAreaAlvFiles(
-                    parentRunId,
-                    item.Plant,
-                    item.ChildRunId,
-                    transactionCode,
-                    childFiles,
-                    logs: null,
-                    updateStoredRunFiles: true);
-            }
+            // ALV organization routing is completed by each child run before its files are stored.
+            // Do not re-run the legacy business-area-to-factory split on an already aggregated workbook.
 
             foreach (var file in childFiles)
             {
@@ -5488,6 +5595,78 @@ WHERE run_id=$parentRunId
             ReplaceRunFiles(childRunId, normalized);
 
         return normalized;
+    }
+
+    static List<RunFile> RouteAlvFilesToOrganization(
+        SapRunParams p,
+        string effectivePlants,
+        List<RunFile> files,
+        List<RunLogLine> logs)
+    {
+        if (files.Count == 0 || !SupportsAlvExport(p.TCode))
+            return files;
+
+        AlvOrganizationMappingKind mappingKind = GetAlvOrganizationMappingKind(p.TCode);
+        SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
+        if (!connectionConfig.IsComplete(out string configError))
+            throw new InvalidOperationException($"ALV organization mapping cannot start: {configError}");
+
+        string transactionName = ResolveTransactionDisplayName(p.TCode);
+        string plantIdentity = FirstNonEmpty(FirstCsvValue(effectivePlants), p.Plant, "scope");
+        DateTime archiveDate = ResolveAlvArchiveDate(p);
+        var mappingFetcher = new AlvOrganizationMappingFetcher();
+        var routed = new Dictionary<string, RunFile>(StringComparer.OrdinalIgnoreCase);
+
+        AlvOrganizationMappingResult Lookup(string sourceCode)
+        {
+            AlvOrganizationMappingResult mapping = mappingFetcher.Fetch(connectionConfig, mappingKind, sourceCode);
+            string sourceLabel = mappingKind == AlvOrganizationMappingKind.Plant ? "plant" : "businessArea";
+            logs.Add(new RunLogLine
+            {
+                Level = mapping.Success ? "INFO" : "ERROR",
+                Message = $"ALV organization mapping: source={sourceLabel}:{sourceCode}; {mapping.Message}"
+            });
+            return mapping;
+        }
+
+        foreach (var file in files)
+        {
+            string sourcePath = Environment.ExpandEnvironmentVariables(file.Path ?? "");
+            if (string.IsNullOrWhiteSpace(sourcePath) || !File.Exists(sourcePath) || !IsExcelWorkbookPath(sourcePath))
+                continue;
+
+            string outputTransactionName = ResolveAlvOutputTransactionName(p.TCode, transactionName, sourcePath);
+
+            IReadOnlyList<RunFile> outputs = mappingKind == AlvOrganizationMappingKind.Plant
+                ? AlvOrganizationExport.RoutePlantWorkbook(
+                    sourcePath,
+                    AlvExportDataDirectory,
+                    p.TCode,
+                    outputTransactionName,
+                    plantIdentity,
+                    archiveDate,
+                    Lookup)
+                : AlvOrganizationExport.RouteBusinessAreaWorkbook(
+                    sourcePath,
+                    AlvExportDataDirectory,
+                    p.TCode,
+                    outputTransactionName,
+                    archiveDate,
+                    plantIdentity,
+                    Lookup);
+
+            foreach (var output in outputs)
+            {
+                routed[Path.GetFullPath(output.Path)] = output;
+                logs.Add(new RunLogLine
+                {
+                    Level = "INFO",
+                    Message = $"ALV export organized by SAP hierarchy: {output.Path}"
+                });
+            }
+        }
+
+        return routed.Values.OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
     static List<RunFile> NormalizeBusinessAreaAlvFiles(
@@ -5681,9 +5860,26 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
     static bool IsTerminalRunStatus(string status)
     {
         return status.Equals("success", StringComparison.OrdinalIgnoreCase) ||
+               status.Equals("no_data", StringComparison.OrdinalIgnoreCase) ||
                status.Equals("failed", StringComparison.OrdinalIgnoreCase) ||
                status.Equals("partial_failed", StringComparison.OrdinalIgnoreCase) ||
                status.Equals("canceled", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool IsNoDataRunStatus(string status)
+    {
+        return status.Equals("no_data", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool IsCompletedWithoutFailure(string status)
+    {
+        return status.Equals("success", StringComparison.OrdinalIgnoreCase) ||
+               IsNoDataRunStatus(status);
+    }
+
+    static bool IsFailureRunStatus(string status)
+    {
+        return IsTerminalRunStatus(status) && !IsCompletedWithoutFailure(status);
     }
 
     static List<BatchItemStatus> LatestBatchItemsByPlant(List<BatchItemStatus> items)
@@ -5703,10 +5899,11 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
     static string ResolveBatchParentStatus(List<BatchItemStatus> items)
     {
         int success = items.Count(i => i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
-        int failed = items.Count(i => !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
-        if (success == items.Count)
-            return "success";
-        if (success > 0 && failed > 0)
+        int noData = items.Count(i => IsNoDataRunStatus(i.Status));
+        int failed = items.Count(i => IsFailureRunStatus(i.Status));
+        if (failed == 0)
+            return success > 0 ? "success" : "no_data";
+        if (success + noData > 0)
             return "partial_failed";
         return "failed";
     }
@@ -5714,14 +5911,17 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
     static string BuildBatchSummaryMessage(string parentRunId, List<BatchItemStatus> items)
     {
         int success = items.Count(i => i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
-        int failed = items.Count(i => !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
+        int noData = items.Count(i => IsNoDataRunStatus(i.Status));
+        int failed = items.Count(i => IsFailureRunStatus(i.Status));
         var parent = LoadRun(parentRunId, includeDetails: false);
         string tcode = parent?.TransactionCode ?? "";
         string itemLabel = ResolveBatchItemLabel(parentRunId, parent);
-        string failedValues = string.Join(",", items.Where(i => !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase)).Select(i => i.Plant));
+        string noDataValues = string.Join(",", items.Where(i => IsNoDataRunStatus(i.Status)).Select(i => i.Plant));
+        string failedValues = string.Join(",", items.Where(i => IsFailureRunStatus(i.Status)).Select(i => i.Plant));
+        string noDataText = noData == 0 ? "" : $"，无数据 {noData} 个{itemLabel}：{noDataValues.Replace(",", "、")}";
         return failed == 0
-            ? $"{tcode} 批次执行完成：成功 {success}/{items.Count} 个{itemLabel}"
-            : $"{tcode} 批次执行完成：成功 {success}/{items.Count} 个{itemLabel}，失败 {failed} 个，失败{itemLabel}：{failedValues.Replace(",", "、")}";
+            ? $"{tcode} 批次执行完成：成功 {success}/{items.Count} 个{itemLabel}{noDataText}"
+            : $"{tcode} 批次执行完成：成功 {success}/{items.Count} 个{itemLabel}{noDataText}，失败 {failed} 个，失败{itemLabel}：{failedValues.Replace(",", "、")}";
     }
 
     static string ResolveBatchItemLabel(string parentRunId, RunRecordView? parent = null)
@@ -5756,7 +5956,8 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
             itemLabel,
             total = itemsForRun.Length > 0 ? itemsForRun.Length : itemList.Count,
             success = itemList.Count(i => i.Status.Equals("success", StringComparison.OrdinalIgnoreCase)),
-            failed = itemList.Count(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase)),
+            noData = itemList.Count(i => IsNoDataRunStatus(i.Status)),
+            failed = itemList.Count(i => IsFailureRunStatus(i.Status)),
             pending = itemList.Count == 0 ? itemsForRun.Length : itemList.Count(i => !IsTerminalRunStatus(i.Status)),
             plants = itemsForRun,
             batchItems = itemsForRun,
@@ -5790,7 +5991,7 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
         var items = LoadBatchItems(parentRunId);
         var latestByValue = LatestBatchItemsByValue(items);
         var failedItems = latestByValue
-            .Where(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+            .Where(i => IsFailureRunStatus(i.Status))
             .OrderBy(i => i.BatchIndex)
             .ToList();
 
@@ -6143,9 +6344,12 @@ SELECT run_id
 FROM runs
 WHERE status='running'
   AND COALESCE(run_type, 'single') <> 'parent'
+  AND (locked_by=$queueLockOwner OR locked_by=$legacyLockOwner)
   AND COALESCE(NULLIF(locked_at, ''), NULLIF(started_at, ''), queued_at) < $threshold;
 """;
                 select.Parameters.AddWithValue("$threshold", threshold);
+                select.Parameters.AddWithValue("$queueLockOwner", QueueExecutorLockOwner);
+                select.Parameters.AddWithValue("$legacyLockOwner", ExecutorId);
                 using var reader = select.ExecuteReader();
                 while (reader.Read())
                 {
@@ -6167,12 +6371,18 @@ WHERE status='running'
 UPDATE runs
 SET status='failed',
     message=$message,
-    finished_at=$finishedAt
-WHERE run_id=$runId AND status='running';
+    finished_at=$finishedAt,
+    locked_by='',
+    locked_at=''
+WHERE run_id=$runId
+  AND status='running'
+  AND (locked_by=$queueLockOwner OR locked_by=$legacyLockOwner);
 """;
                 update.Parameters.AddWithValue("$runId", runId);
                 update.Parameters.AddWithValue("$message", $"运行状态超过 {StaleRunningTimeoutHours} 小时未结束，已由队列守护进程标记失败");
                 update.Parameters.AddWithValue("$finishedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+                update.Parameters.AddWithValue("$queueLockOwner", QueueExecutorLockOwner);
+                update.Parameters.AddWithValue("$legacyLockOwner", ExecutorId);
                 update.ExecuteNonQuery();
             }
 
@@ -6189,6 +6399,77 @@ WHERE run_id=$runId AND status='running';
             }, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
             NotifyRunEvent(runId, "finish", "任务运行超时，已释放 SAP 串行队列");
         }
+    }
+
+    // The single SAP GUI worker cannot survive a process restart. Recover its old locks immediately;
+    // waiting for the ordinary timeout would otherwise block all new requests for up to six hours.
+    static int RecoverInterruptedRunsAfterExecutorRestart()
+    {
+        InitializeDatabase(seedFromScripts: false);
+        const string failureMessage = "SAP RPA 服务重启，前一执行器的运行已中断；如有 ALV 本机暂存文件将保留供排障，未标记为网络归档成功。";
+        string finishedAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        var interruptedRunIds = new List<string>();
+
+        using (var connection = OpenDatabaseConnection())
+        {
+            using (var select = connection.CreateCommand())
+            {
+                select.CommandText = """
+SELECT run_id
+FROM runs
+WHERE status='running'
+  AND COALESCE(run_type, 'single') <> 'parent'
+  AND (locked_by=$queueLockOwner OR locked_by=$legacyLockOwner);
+""";
+                select.Parameters.AddWithValue("$queueLockOwner", QueueExecutorLockOwner);
+                select.Parameters.AddWithValue("$legacyLockOwner", ExecutorId);
+                using var reader = select.ExecuteReader();
+                while (reader.Read())
+                    interruptedRunIds.Add(reader.GetString(0));
+            }
+
+            if (interruptedRunIds.Count == 0)
+                return 0;
+
+            using var tx = connection.BeginTransaction();
+            foreach (string runId in interruptedRunIds)
+            {
+                using var update = connection.CreateCommand();
+                update.Transaction = tx;
+                update.CommandText = """
+UPDATE runs
+SET status='failed',
+    message=$message,
+    finished_at=$finishedAt,
+    locked_by='',
+    locked_at=''
+WHERE run_id=$runId
+  AND status='running'
+  AND (locked_by=$queueLockOwner OR locked_by=$legacyLockOwner);
+""";
+                update.Parameters.AddWithValue("$runId", runId);
+                update.Parameters.AddWithValue("$message", failureMessage);
+                update.Parameters.AddWithValue("$finishedAt", finishedAt);
+                update.Parameters.AddWithValue("$queueLockOwner", QueueExecutorLockOwner);
+                update.Parameters.AddWithValue("$legacyLockOwner", ExecutorId);
+                update.ExecuteNonQuery();
+            }
+
+            tx.Commit();
+        }
+
+        foreach (string runId in interruptedRunIds)
+        {
+            AppendRunLog(runId, "ERR", "executor restart interrupted this running task; local ALV staging was retained");
+            UpdateBatchAfterChildCompletion(runId, "failed", new RunResultRequest
+            {
+                Status = "failed",
+                Message = failureMessage
+            }, finishedAt);
+            NotifyRunEvent(runId, "finish", "SAP RPA 服务重启导致任务中断，未标记为网络归档成功；请确认本机暂存后重新运行。");
+        }
+
+        return interruptedRunIds.Count;
     }
 
     static RunRecordView? LoadRun(string runId, bool includeDetails)
@@ -6304,7 +6585,7 @@ WHERE run_id=$runId AND status='queued';
 """;
             update.Parameters.AddWithValue("$runId", runId);
             update.Parameters.AddWithValue("$startedAt", startedAt);
-            update.Parameters.AddWithValue("$lockedBy", ExecutorId);
+            update.Parameters.AddWithValue("$lockedBy", QueueExecutorLockOwner);
             if (update.ExecuteNonQuery() != 1)
             {
                 tx.Commit();
@@ -6452,7 +6733,7 @@ WHERE run_id=$runId;
 
             if (plants.Length == 0)
             {
-                string message = $"GET_GS03 returned no step2 plants for businessArea={area}";
+                string message = $"业务范围 {area} 的上游物料已获取，但 SAP 集 Z31 未维护该业务范围对应的可执行工厂，无法执行 ZFI057 与 ZCO020 后续步骤。请维护“业务范围-工厂”映射，或从任务范围中移除该业务范围。";
                 aggregate.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"ZFI057 workflow scope failed; businessArea={area}; {message}" });
                 scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "failed", message));
                 continue;
@@ -6650,7 +6931,7 @@ WHERE run_id=$runId;
         string detail = CleanDingTalkDisplayText(FirstNonEmpty(result.Message, ""));
         return string.IsNullOrWhiteSpace(detail)
             ? $"{area}运行失败"
-            : $"{area}运行失败（{Truncate(detail, 80)}）";
+            : $"{area}运行失败（{Truncate(detail, 160)}）";
     }
 
     static bool IsSuccessResult(RunResultRequest result)
@@ -7192,7 +7473,8 @@ WHERE run_id=$runId;
                tcode.Equals("ZFI080B", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZCO019", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
-               tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase);
+               tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI148", StringComparison.OrdinalIgnoreCase);
     }
 
     static AlvExportTarget BuildAlvExportTarget(SapRunParams p, string effectivePlants)
@@ -7235,6 +7517,20 @@ WHERE run_id=$runId;
         }
     }
 
+    static string ResolveAlvOutputTransactionName(string tcode, string transactionName, string sourcePath)
+    {
+        if (!tcode.Equals("ZCO019", StringComparison.OrdinalIgnoreCase))
+            return transactionName;
+
+        string stem = Path.GetFileNameWithoutExtension(sourcePath ?? "");
+        if (stem.EndsWith("_detail", StringComparison.OrdinalIgnoreCase))
+            return transactionName + "_\u660e\u7ec6";
+        if (stem.EndsWith("_saved", StringComparison.OrdinalIgnoreCase))
+            return transactionName + "_\u4fdd\u5b58";
+
+        return transactionName;
+    }
+
     static bool UsesDirectPlantAlvOutput(string tcode)
     {
         return tcode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) ||
@@ -7242,12 +7538,43 @@ WHERE run_id=$runId;
                tcode.Equals("ZFI080", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI080B", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZCO019", StringComparison.OrdinalIgnoreCase) ||
-               tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase);
+               tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI148", StringComparison.OrdinalIgnoreCase);
     }
 
     static bool UsesBusinessAreaAlvOutput(string tcode)
     {
         return tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static AlvOrganizationMappingKind GetAlvOrganizationMappingKind(string tcode)
+    {
+        return tcode.Equals("ZFI080", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI080B", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI148", StringComparison.OrdinalIgnoreCase)
+            ? AlvOrganizationMappingKind.BusinessArea
+            : AlvOrganizationMappingKind.Plant;
+    }
+
+    static DateTime ResolveAlvArchiveDate(SapRunParams p)
+    {
+        if (int.TryParse(p.Year, NumberStyles.Integer, CultureInfo.InvariantCulture, out int year) &&
+            int.TryParse(p.Week, NumberStyles.Integer, CultureInfo.InvariantCulture, out int week) &&
+            year is >= 1 and <= 9999 && week is >= 1 and <= 53)
+        {
+            try { return ISOWeek.ToDateTime(year, week, DayOfWeek.Monday); }
+            catch (ArgumentOutOfRangeException) { }
+        }
+
+        foreach (string value in new[] { p.Period, p.WeekEnd })
+        {
+            if (DateTime.TryParseExact(value, new[] { "yyyy.MM.dd", "yyyy-MM-dd", "yyyyMMdd" }, CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime date))
+                return date;
+        }
+
+        return DateTime.Now;
     }
 
     static string BuildAlvDirectPlantFileName(string tcode, string transactionName, string plant, DateTime at)
@@ -7860,14 +8187,14 @@ WHERE run_id=$runId;
         var thread = new Thread(() =>
         {
             while (!stop.Wait(TimeSpan.FromSeconds(QueueHeartbeatIntervalSeconds)))
-                RefreshRunHeartbeat(runId);
+                RefreshRunHeartbeat(runId, QueueExecutorLockOwner);
         })
         {
             IsBackground = true,
             Name = $"SapRpaRunHeartbeat-{runId}"
         };
         thread.Start();
-        RefreshRunHeartbeat(runId);
+        RefreshRunHeartbeat(runId, QueueExecutorLockOwner);
         return new RunHeartbeatScope(runId, stop, thread, CompleteRunHeartbeat);
     }
 
@@ -7883,7 +8210,7 @@ WHERE run_id=$runId;
             return ActiveExecutingRunIds.Contains(runId);
     }
 
-    static void RefreshRunHeartbeat(string runId)
+    static void RefreshRunHeartbeat(string runId, string lockOwner)
     {
         try
         {
@@ -7898,7 +8225,7 @@ WHERE run_id=$runId
 """;
             command.Parameters.AddWithValue("$runId", runId);
             command.Parameters.AddWithValue("$lockedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
-            command.Parameters.AddWithValue("$lockedBy", ExecutorId);
+            command.Parameters.AddWithValue("$lockedBy", lockOwner);
             command.ExecuteNonQuery();
         }
         catch (Exception ex)
@@ -7989,7 +8316,9 @@ SET status=$status,
     sap_status_text=$sapStatusText,
     message=$message,
     finished_at=$finishedAt,
-    duration_ms=$durationMs
+    duration_ms=$durationMs,
+    locked_by='',
+    locked_at=''
 WHERE run_id=$runId;
 """;
             command.Parameters.AddWithValue("$runId", runId);
@@ -8056,11 +8385,13 @@ VALUES($runId, $type, $name, $path, $size);
 
         string notifyMessage = status == "success"
             ? "任务执行完成"
-            : $"任务执行失败：{FirstNonEmpty(result.Message ?? "", result.SapStatusText ?? "", status)}";
+            : IsNoDataRunStatus(status)
+                ? "任务执行完成，本次查询无数据"
+                : $"任务执行失败：{FirstNonEmpty(result.Message ?? "", result.SapStatusText ?? "", status)}";
         CleanupSapGuiSessionAfterRunId(runId);
         UpdateScheduleRunStatusForRun(runId, status, notifyMessage);
         bool vbsAlreadySentSapDingTalk = HasVbsSapDingTalkNotifyResult(result);
-        NotifyRunEvent(runId, status == "success" ? "success" : "failure", notifyMessage, vbsAlreadySentSapDingTalk);
+        NotifyRunEvent(runId, IsCompletedWithoutFailure(status) ? "success" : "failure", notifyMessage, vbsAlreadySentSapDingTalk);
     }
 
     static TransactionScriptInfo LoadScriptInfo(string tcode)
@@ -8607,7 +8938,8 @@ ORDER BY 1;
         try
         {
             var run = LoadRun(runId, includeDetails: false);
-            string title = eventName.Equals("success", StringComparison.OrdinalIgnoreCase) ? "SAP RPA 执行成功" :
+            string title = run?.Status.Equals("no_data", StringComparison.OrdinalIgnoreCase) == true ? "SAP RPA 执行完成（无数据）" :
+                eventName.Equals("success", StringComparison.OrdinalIgnoreCase) ? "SAP RPA 执行成功" :
                 eventName.Equals("start", StringComparison.OrdinalIgnoreCase) ? "SAP RPA 开始执行" :
                 "SAP RPA 执行结束";
             string text = $"{title}\n\n" +
@@ -8824,10 +9156,13 @@ ORDER BY 1;
         var latestItems = LatestBatchItemsByPlant(run.BatchItems);
         int total = latestItems.Count;
         int success = latestItems.Count(i => i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
-        int failed = latestItems.Count(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase));
+        int noData = latestItems.Count(i => IsNoDataRunStatus(i.Status));
+        int failed = latestItems.Count(i => IsFailureRunStatus(i.Status));
         int pending = latestItems.Count(i => !IsTerminalRunStatus(i.Status));
 
         var parts = new List<string> { $"\u6210\u529F {success}/{total}" };
+        if (noData > 0)
+            parts.Add($"\u65E0\u6570\u636E {noData}");
         if (failed > 0)
             parts.Add($"\u5931\u8D25 {failed}");
         if (pending > 0)
@@ -8843,14 +9178,14 @@ ORDER BY 1;
         if (!string.IsNullOrWhiteSpace(cleaned))
             return cleaned;
 
-        return run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
+        return IsCompletedWithoutFailure(run.Status)
             ? "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
             : "\u81EA\u52A8\u5316\u6267\u884C\u5B8C\u6210\uFF0C\u8BF7\u5728\u8FD0\u884C\u65E5\u5FD7\u67E5\u770B\u8BE6\u60C5";
     }
 
     static string SelectDingTalkSapMessageSource(RunRecordView run, string fallbackMessage)
     {
-        if (!run.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+        if (IsFailureRunStatus(run.Status))
         {
             string failureLog = run.Logs
                 .AsEnumerable()
@@ -8866,7 +9201,7 @@ ORDER BY 1;
                 return candidate;
         }
 
-        return run.Status.Equals("success", StringComparison.OrdinalIgnoreCase)
+        return IsCompletedWithoutFailure(run.Status)
             ? "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C"
             : FirstNonEmpty(fallbackMessage, "\u81EA\u52A8\u5316\u6267\u884C\u5B8C\u6210\uFF0C\u8BF7\u5728\u8FD0\u884C\u65E5\u5FD7\u67E5\u770B\u8BE6\u60C5");
     }
@@ -8925,6 +9260,8 @@ ORDER BY 1;
     {
         if (status.Equals("success", StringComparison.OrdinalIgnoreCase))
             return "\u6210\u529F";
+        if (status.Equals("no_data", StringComparison.OrdinalIgnoreCase))
+            return "\u65E0\u6570\u636E";
         if (status.Equals("partial_failed", StringComparison.OrdinalIgnoreCase))
             return "\u90E8\u5206\u5931\u8D25";
         if (status.Equals("failure", StringComparison.OrdinalIgnoreCase) || status.Equals("failed", StringComparison.OrdinalIgnoreCase))
@@ -8945,6 +9282,7 @@ ORDER BY 1;
         return value switch
         {
             "success" => "\u2705",
+            "no_data" => "\u2139\uFE0F",
             "running" or "queued" or "pending" => "\u23F3",
             "partial_failed" => "\u26A0\uFE0F",
             "canceled" or "cancelled" => "\u23F9\uFE0F",
@@ -8958,6 +9296,7 @@ ORDER BY 1;
         return value switch
         {
             "success" => "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C",
+            "no_data" => "\u81EA\u52A8\u5316\u5DF2\u5B8C\u6210\uFF08\u65E0\u6570\u636E\uFF09",
             "running" or "queued" or "pending" => "\u81EA\u52A8\u5316\u5F00\u59CB\u6267\u884C",
             "partial_failed" => "\u81EA\u52A8\u5316\u90E8\u5206\u5931\u8D25",
             "canceled" or "cancelled" => "\u81EA\u52A8\u5316\u5DF2\u53D6\u6D88",
@@ -9448,7 +9787,7 @@ ORDER BY 1;
         string itemLabel = ResolveBatchItemLabelForRun(run);
         string failedLabel = itemLabel.Equals("业务范围", StringComparison.OrdinalIgnoreCase) ? "失败业务范围" : "失败工厂";
         var values = run.BatchItems
-            .Where(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+            .Where(i => IsFailureRunStatus(i.Status))
             .OrderBy(i => i.BatchIndex)
             .Select(i => i.Plant)
             .Where(v => !string.IsNullOrWhiteSpace(v))
@@ -9604,7 +9943,7 @@ ORDER BY 1;
     static string FormatFailedPlantTagsForDingTalk(RunRecordView run)
     {
         var failedPlants = run.BatchItems
-            .Where(i => IsTerminalRunStatus(i.Status) && !i.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+            .Where(i => IsFailureRunStatus(i.Status))
             .OrderBy(i => i.BatchIndex)
             .Select(i => i.Plant)
             .Where(p => !string.IsNullOrWhiteSpace(p))
@@ -9614,7 +9953,7 @@ ORDER BY 1;
         if (failedPlants.Length > 0)
             return "\u26A0\uFE0F " + string.Join(" ", failedPlants.Select(p => $"**[{p}]**"));
 
-        if (run.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+        if (IsCompletedWithoutFailure(run.Status))
             return "\u65E0";
 
         string plants = ExtractRunParamValue(run.RequestJson, "plants");
@@ -10284,7 +10623,7 @@ ORDER BY 1;
         string value = (status ?? "").Trim().ToLowerInvariant();
         return value switch
         {
-            "queued" or "running" or "success" or "failed" or "partial_failed" or "canceled" => value,
+            "queued" or "running" or "success" or "no_data" or "failed" or "partial_failed" or "canceled" => value,
             "ok" or "done" => "success",
             "error" or "abort" => "failed",
             _ => "failed"
@@ -11812,8 +12151,11 @@ WScript.Quit 0
             {
                 Console.WriteLine($"VBS 退出码: {proc.ExitCode}");
                 Log($"VBS 退出码: {proc.ExitCode}");
-                keepTempFile = true;
                 var failed = BuildRunResultFromVbs(stdOut, stdErr, proc.ExitCode, started);
+                if (IsNoDataRunStatus(failed.Status))
+                    return failed;
+
+                keepTempFile = true;
                 if (string.IsNullOrWhiteSpace(failed.Message))
                     failed.Message = $"VBS 执行失败，退出码 {proc.ExitCode}";
                 failed.Status = "failed";
@@ -11828,9 +12170,12 @@ WScript.Quit 0
             if (stdOut.Contains("ERROR:", StringComparison.OrdinalIgnoreCase) ||
                 stdErr.Contains("ERROR:", StringComparison.OrdinalIgnoreCase))
             {
+                var failed = BuildRunResultFromVbs(stdOut, stdErr, proc?.ExitCode ?? 0, started);
+                if (IsNoDataRunStatus(failed.Status))
+                    return failed;
+
                 keepTempFile = true;
                 Log($"VBS 返回错误，保留脚本文件: {tmpFile}");
-                var failed = BuildRunResultFromVbs(stdOut, stdErr, proc?.ExitCode ?? 0, started);
                 failed.Status = "failed";
                 if (string.IsNullOrWhiteSpace(failed.Message))
                     failed.Message = string.IsNullOrWhiteSpace(mergedOutput)
@@ -11846,9 +12191,12 @@ WScript.Quit 0
 
             if (!stdOut.Contains("INFO: transaction script executed", StringComparison.OrdinalIgnoreCase))
             {
+                var failed = BuildRunResultFromVbs(stdOut, stdErr, proc?.ExitCode ?? 0, started);
+                if (IsNoDataRunStatus(failed.Status))
+                    return failed;
+
                 keepTempFile = true;
                 Log($"VBS 未返回成功标记，保留脚本文件: {tmpFile}");
-                var failed = BuildRunResultFromVbs(stdOut, stdErr, proc?.ExitCode ?? 0, started);
                 failed.Status = "failed";
                 failed.Message = string.IsNullOrWhiteSpace(mergedOutput)
                     ? $"VBS 未返回成功标记，脚本已保留: {tmpFile}"
@@ -11880,19 +12228,24 @@ WScript.Quit 0
                     parsed.Logs,
                     updateStoredRunFiles: false);
             }
-            else if (UsesBusinessAreaAlvOutput(p.TCode) && parsed.Files.Count > 0)
-            {
-                string businessAreaForLog = FirstNonEmpty(FirstCsvValue(p.BusinessAreas), p.BusinessArea, p.FactoryGroup, "scope");
-                NormalizeBusinessAreaAlvFilesForRunResult(
-                    parsed,
-                    p.RunId,
-                    businessAreaForLog,
-                    p.RunId,
-                    p.TCode);
-            }
 
             if (SupportsAlvExport(p.TCode) &&
-                !parsed.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
+                parsed.Status.Equals("success", StringComparison.OrdinalIgnoreCase) &&
+                parsed.Files.Count > 0)
+            {
+                try
+                {
+                    parsed.Files = RouteAlvFilesToOrganization(p, effectivePlants, parsed.Files, parsed.Logs);
+                }
+                catch (Exception ex)
+                {
+                    parsed.Status = "failed";
+                    parsed.Message = $"ALV export was created but SAP hierarchy organization failed: {ex.Message}";
+                    parsed.Logs.Add(new RunLogLine { Level = "ERROR", Message = parsed.Message });
+                }
+            }
+
+            if (SupportsAlvExport(p.TCode) && IsFailureRunStatus(parsed.Status))
             {
                 keepTempFile = true;
                 parsed.Logs.Add(new RunLogLine
@@ -11925,7 +12278,12 @@ WScript.Quit 0
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 
         if (stagingRoot.Equals(archiveRoot, StringComparison.OrdinalIgnoreCase))
-            return true;
+        {
+            result.Status = "failed";
+            result.Message = "ALV staging and archive directories must be different; SAP GUI must write the local staging directory before network archival.";
+            result.Logs.Add(new RunLogLine { Level = "ERROR", Message = result.Message });
+            return false;
+        }
 
         try
         {
@@ -12364,6 +12722,43 @@ WScript.Quit 0
         }
 
         {
+            string[] plants = NormalizePlantCodeArray("103c, 207M,103C");
+            bool ok = plants.SequenceEqual(new[] { "103C", "207M" }, StringComparer.Ordinal);
+            Check("plant code normalization", ok, string.Join(",", plants));
+        }
+
+        {
+            bool apiRejected = false;
+            bool protocolRejected = false;
+            try
+            {
+                NormalizeCreateRunParams(new CreateRunRequest
+                {
+                    TransactionCode = "ZFI072A",
+                    Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["plants"] = "103C;cmd"
+                    }
+                });
+            }
+            catch (ArgumentException)
+            {
+                apiRejected = true;
+            }
+
+            try
+            {
+                NormalizeBatchParams(new SapRunParams { TCode = "ZFI072A", Plants = "103C;cmd" });
+            }
+            catch (ArgumentException)
+            {
+                protocolRejected = true;
+            }
+
+            Check("plant code separators rejected", apiRejected && protocolRejected, $"apiRejected={apiRejected}, protocolRejected={protocolRejected}");
+        }
+
+        {
             bool weekFolderOk = Regex.IsMatch(GetAlvWeekFolderName(new DateTime(2026, 8, 4)), @"^2026_WK\d{2}$", RegexOptions.CultureInvariant);
             Check("ALV output week folder name", weekFolderOk, GetAlvWeekFolderName(new DateTime(2026, 8, 4)));
 
@@ -12375,6 +12770,14 @@ WScript.Quit 0
             string plantFileName = BuildAlvDirectPlantFileName("ZFI072N", "\u7EF4\u62A4\u91C7\u8D2D\u4EF7", "6700", new DateTime(2026, 7, 28, 13, 45, 53));
             bool plantFileNameOk = plantFileName.Equals("ZFI072N_\u7EF4\u62A4\u91C7\u8D2D\u4EF7_\u5DE5\u53826700_20260728134553.xlsx", StringComparison.Ordinal);
             Check("ALV direct plant file name", plantFileNameOk, plantFileName);
+
+            string zco019DetailName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", "ZCO019_plant1022_detail.xlsx");
+            string zco019SavedName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", "ZCO019_plant1022_saved.xlsx");
+            string nonZco019Name = ResolveAlvOutputTransactionName("ZFI080", "\u5b9e\u9645\u6750\u6599\u4fdd\u5b58", "ZFI080_plant1022_detail.xlsx");
+            bool zco019NameOk = zco019DetailName.Equals("\u6807\u51c6\u6750\u6599\u6210\u672c_\u660e\u7ec6", StringComparison.Ordinal) &&
+                                zco019SavedName.Equals("\u6807\u51c6\u6750\u6599\u6210\u672c_\u4fdd\u5b58", StringComparison.Ordinal) &&
+                                nonZco019Name.Equals("\u5b9e\u9645\u6750\u6599\u4fdd\u5b58", StringComparison.Ordinal);
+            Check("ZCO019 detail and saved outputs stay distinct", zco019NameOk, $"detail={zco019DetailName}, saved={zco019SavedName}, other={nonZco019Name}");
 
             bool factoryHeaderAliasesOk =
                 IsAlvFactoryHeader("WERKS") &&
@@ -12842,6 +13245,46 @@ WScript.Quit 0
         }
 
         {
+            var noData = BuildRunResultFromVbs(
+                "STATUS_TYPE=E\nSTATUS_TEXT=SAP status error after execute - No data found\nERROR=SAP status error after execute - No data found",
+                "",
+                6,
+                DateTime.UtcNow);
+            var realFailure = BuildRunResultFromVbs(
+                "STATUS_TYPE=E\nSTATUS_TEXT=ALV export entry not found or not usable before timeout\nERROR=ALV export entry not found or not usable before timeout",
+                "",
+                6,
+                DateTime.UtcNow);
+            var allNoData = new List<BatchItemStatus>
+            {
+                new() { Plant = "103C", Status = "no_data" },
+                new() { Plant = "103D", Status = "no_data" }
+            };
+            var mixed = new List<BatchItemStatus>
+            {
+                new() { Plant = "103C", Status = "success" },
+                new() { Plant = "103D", Status = "no_data" }
+            };
+            var partialFailure = new List<BatchItemStatus>
+            {
+                new() { Plant = "103C", Status = "no_data" },
+                new() { Plant = "103D", Status = "failed" }
+            };
+            var run = new RunRecordView { RunId = "RUN-SELFTEST-NO-DATA", Status = "no_data", TransactionCode = "ZFI072A" };
+            run.BatchItems.AddRange(allNoData);
+            string markdown = BuildSapDingTalkMarkdownContent(run, "\u672C\u6B21\u67E5\u8BE2\u65E0\u6570\u636E");
+            bool ok = noData.Status.Equals("no_data", StringComparison.OrdinalIgnoreCase) &&
+                      noData.SapStatusType.Equals("W", StringComparison.OrdinalIgnoreCase) &&
+                      realFailure.Status.Equals("failed", StringComparison.OrdinalIgnoreCase) &&
+                      ResolveBatchParentStatus(allNoData).Equals("no_data", StringComparison.OrdinalIgnoreCase) &&
+                      ResolveBatchParentStatus(mixed).Equals("success", StringComparison.OrdinalIgnoreCase) &&
+                      ResolveBatchParentStatus(partialFailure).Equals("partial_failed", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u65E0\u6570\u636E", StringComparison.OrdinalIgnoreCase) &&
+                      !markdown.Contains("\u5931\u8D25 2", StringComparison.OrdinalIgnoreCase);
+            Check("No-data results are completed, not failures", ok, $"noData={noData.Status}; realFailure={realFailure.Status}; allNoData={ResolveBatchParentStatus(allNoData)}; mixed={ResolveBatchParentStatus(mixed)}; partial={ResolveBatchParentStatus(partialFailure)}");
+        }
+
+        {
             string stdout = string.Join(Environment.NewLine, new[]
             {
                 "INFO: pressed execute ZFI057 group #1",
@@ -13279,6 +13722,20 @@ Item1=test888
                 GetParamValue(testStored, "period").Equals("2026.04.27", StringComparison.OrdinalIgnoreCase) &&
                 GetParamValue(testStored, "weekEnd").Equals("2026.05.03", StringComparison.OrdinalIgnoreCase);
             Check("schedule stored params apply test date policy", ok, $"prod={string.Join(",", prodStored.Select(pair => pair.Key + "=" + pair.Value))}; test={string.Join(",", testStored.Select(pair => pair.Key + "=" + pair.Value))}");
+        }
+
+        {
+            var missingPlantMapping = new Zfi057WorkflowScopeResult(
+                "2790",
+                Array.Empty<string>(),
+                "failed",
+                "业务范围 2790 的上游物料已获取，但 SAP 集 Z31 未维护该业务范围对应的可执行工厂，无法执行 ZFI057 与 ZCO020 后续步骤。请维护“业务范围-工厂”映射，或从任务范围中移除该业务范围。");
+            string summary = BuildZfi057WorkflowScopeResultMessage("failed", new[] { missingPlantMapping });
+            bool ok = summary.Contains("SAP 集 Z31", StringComparison.Ordinal) &&
+                      summary.Contains("业务范围-工厂", StringComparison.Ordinal) &&
+                      summary.Contains("ZFI057 与 ZCO020 后续步骤", StringComparison.Ordinal) &&
+                      !summary.Contains("GET_GS03 returned no step2 plants", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 missing plant mapping is explained in Chinese", ok, summary);
         }
 
         {
@@ -13839,6 +14296,243 @@ Item1=test888
             Check("V2 runtime root", ok, $"runtime={RuntimeRoot}, db={DatabaseFilePath}, config={ConfigFilePath}");
         }
 
+        {
+            string stagingRoot = RequiredAlvLocalStagingRoot;
+            bool ok = IsApprovedLocalAlvStagingDirectory(stagingRoot, stagingRoot) &&
+                      IsApprovedLocalAlvStagingDirectory(Path.Combine(stagingRoot, "2026_WK31", "103C"), stagingRoot) &&
+                      !IsApprovedLocalAlvStagingDirectory(@"\\10.0.16.31\rpa\staging", stagingRoot) &&
+                      !IsApprovedLocalAlvStagingDirectory(Path.Combine(RuntimeRoot, "outputs"), stagingRoot);
+            Check("ALV staging directory is local and contained", ok, $"approvedRoot={stagingRoot}");
+        }
+
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_organization_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            string rawRoot = Path.Combine(tempRoot, "raw", "factory");
+            string source103C = Path.Combine(rawRoot, "ZFI072A_103C.xlsx");
+            string source103CRerun = Path.Combine(rawRoot, "ZFI072A_103C_rerun.xlsx");
+            try
+            {
+                bool map103CToNewOrganization = false;
+                AlvOrganizationMappingResult PlantLookup(string plant)
+                {
+                    if (!plant.Equals("103C", StringComparison.OrdinalIgnoreCase))
+                        return new AlvOrganizationMappingResult { Success = true };
+
+                    return new AlvOrganizationMappingResult
+                    {
+                        Success = true,
+                        Targets = map103CToNewOrganization
+                            ? new[] { new AlvOrganizationTarget("BU3", "\u5E73\u6E56\u4E8C\u5382") }
+                            : new[]
+                            {
+                                new AlvOrganizationTarget("BU1", "\u5E73\u6E56\u4E5D\u5382"),
+                                new AlvOrganizationTarget("BU2", "\u5E73\u6E56\u4E03\u5382")
+                            }
+                    };
+                }
+
+                void WritePlantWorkbook(string path, params (string Material, string Plant)[] records)
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(path) ?? tempRoot);
+                    using var workbook = new XLWorkbook();
+                    var sheet = workbook.Worksheets.Add("ALV");
+                    sheet.Cell(1, 1).Value = "MATNR";
+                    sheet.Cell(1, 2).Value = "\u5DE5\u5382\u53F7";
+                    for (int index = 0; index < records.Length; index++)
+                    {
+                        sheet.Cell(index + 2, 1).Value = records[index].Material;
+                        sheet.Cell(index + 2, 2).Value = records[index].Plant;
+                    }
+                    workbook.SaveAs(path);
+                }
+
+                DateTime archiveDate = new DateTime(2026, 8, 5);
+                WritePlantWorkbook(source103C, ("M1", "103C"), ("M3", "103D"));
+                var firstOutputs = AlvOrganizationExport.RoutePlantWorkbook(
+                    source103C, tempRoot, "ZFI072A", "\u91C7\u8D2D\u4EF7\u6708\u8868", "103C", archiveDate, PlantLookup);
+                string expectedBu1 = Path.Combine(tempRoot, "BU1", "\u5E73\u6E56\u4E5D\u5382", "2026_WK32", "ZFI072A_\u91C7\u8D2D\u4EF7\u6708\u8868_WK32.xlsx");
+                string expectedBu2 = Path.Combine(tempRoot, "BU2", "\u5E73\u6E56\u4E03\u5382", "2026_WK32", "ZFI072A_\u91C7\u8D2D\u4EF7\u6708\u8868_WK32.xlsx");
+                string expectedBu3 = Path.Combine(tempRoot, "BU3", "\u5E73\u6E56\u4E8C\u5382", "2026_WK32", "ZFI072A_\u91C7\u8D2D\u4EF7\u6708\u8868_WK32.xlsx");
+                string expectedFallback = Path.Combine(tempRoot, "\u96C6\u91C7\u5DE5\u5382", "2026_WK32", "ZFI072A_\u91C7\u8D2D\u4EF7\u6708\u8868_WK32_\u5DE5\u5382103D.xlsx");
+                bool initialTargetsCreated = firstOutputs.Count == 3 &&
+                                             File.Exists(expectedBu1) &&
+                                             File.Exists(expectedBu2) &&
+                                             File.Exists(expectedFallback);
+
+                WritePlantWorkbook(source103CRerun, ("M2", "103C"));
+                map103CToNewOrganization = true;
+                _ = AlvOrganizationExport.RoutePlantWorkbook(
+                    source103CRerun, tempRoot, "ZFI072A", "\u91C7\u8D2D\u4EF7\u6708\u8868", "103C", archiveDate, PlantLookup);
+                using var rerunWorkbook = new XLWorkbook(expectedBu3);
+                var rerunRows = rerunWorkbook.Worksheets.First().RangeUsed()?.RowsUsed().ToList() ?? new List<IXLRangeRow>();
+                using var fallbackWorkbook = new XLWorkbook(expectedFallback);
+                var fallbackRows = fallbackWorkbook.Worksheets.First().RangeUsed()?.RowsUsed().ToList() ?? new List<IXLRangeRow>();
+
+                bool ok = initialTargetsCreated &&
+                          File.Exists(expectedFallback) &&
+                          !File.Exists(source103C) &&
+                          !Directory.Exists(rawRoot) &&
+                          !File.Exists(expectedBu1) &&
+                          !File.Exists(expectedBu2) &&
+                          File.Exists(expectedBu3) &&
+                          rerunRows.Count == 2 &&
+                          rerunRows[1].Cell(1).GetString().Equals("M2", StringComparison.OrdinalIgnoreCase) &&
+                          fallbackRows.Count == 2 &&
+                          fallbackRows[1].Cell(1).GetString().Equals("M3", StringComparison.OrdinalIgnoreCase);
+                Check("ALV organization plant mapping, remap cleanup, and fallback", ok,
+                    $"oldBU1={expectedBu1}; oldBU2={expectedBu2}; newBU3={expectedBu3}; fallback={expectedFallback}; rawRootExists={Directory.Exists(rawRoot)}; rerunRows={rerunRows.Count}; fallbackRows={fallbackRows.Count}");
+            }
+            finally
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_zco019_outputs_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            string detailSource = Path.Combine(tempRoot, "ZCO019_plant1022_detail.xlsx");
+            string savedSource = Path.Combine(tempRoot, "ZCO019_plant1022_saved.xlsx");
+            try
+            {
+                void WriteZco019Workbook(string path, string material)
+                {
+                    using var workbook = new XLWorkbook();
+                    var sheet = workbook.Worksheets.Add("ALV");
+                    sheet.Cell(1, 1).Value = "MATNR";
+                    sheet.Cell(1, 2).Value = "WERKS";
+                    sheet.Cell(2, 1).Value = material;
+                    sheet.Cell(2, 2).Value = "1022";
+                    workbook.SaveAs(path);
+                }
+
+                AlvOrganizationMappingResult PlantLookup(string plant) => plant.Equals("1022", StringComparison.OrdinalIgnoreCase)
+                    ? new AlvOrganizationMappingResult
+                    {
+                        Success = true,
+                        Targets = new[] { new AlvOrganizationTarget("BU1", "\u5e73\u6e56\u4e00\u5382") }
+                    }
+                    : new AlvOrganizationMappingResult { Success = true };
+
+                DateTime archiveDate = new DateTime(2026, 8, 5);
+                WriteZco019Workbook(detailSource, "DETAIL_ROW");
+                WriteZco019Workbook(savedSource, "SAVED_ROW");
+                string detailName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", detailSource);
+                string savedName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", savedSource);
+                _ = AlvOrganizationExport.RoutePlantWorkbook(detailSource, tempRoot, "ZCO019", detailName, "1022", archiveDate, PlantLookup);
+                _ = AlvOrganizationExport.RoutePlantWorkbook(savedSource, tempRoot, "ZCO019", savedName, "1022", archiveDate, PlantLookup);
+
+                string detailTarget = Path.Combine(tempRoot, "BU1", "\u5e73\u6e56\u4e00\u5382", "2026_WK32", "ZCO019_\u6807\u51c6\u6750\u6599\u6210\u672c_\u660e\u7ec6_WK32.xlsx");
+                string savedTarget = Path.Combine(tempRoot, "BU1", "\u5e73\u6e56\u4e00\u5382", "2026_WK32", "ZCO019_\u6807\u51c6\u6750\u6599\u6210\u672c_\u4fdd\u5b58_WK32.xlsx");
+                using var detailWorkbook = new XLWorkbook(detailTarget);
+                using var savedWorkbook = new XLWorkbook(savedTarget);
+                string detailMaterial = detailWorkbook.Worksheets.First().Cell(2, 1).GetString();
+                string savedMaterial = savedWorkbook.Worksheets.First().Cell(2, 1).GetString();
+                bool ok = File.Exists(detailTarget) &&
+                          File.Exists(savedTarget) &&
+                          !detailTarget.Equals(savedTarget, StringComparison.OrdinalIgnoreCase) &&
+                          detailMaterial.Equals("DETAIL_ROW", StringComparison.Ordinal) &&
+                          savedMaterial.Equals("SAVED_ROW", StringComparison.Ordinal);
+                Check("ZCO019 detail and saved outputs route to separate workbooks", ok,
+                    $"detail={detailTarget}; saved={savedTarget}; detailMaterial={detailMaterial}; savedMaterial={savedMaterial}");
+            }
+            finally
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_business_area_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            string source = Path.Combine(tempRoot, "ZFI080_103C.xlsx");
+            string rerunSource = Path.Combine(tempRoot, "ZFI080_103C_rerun.xlsx");
+            try
+            {
+                void WriteBusinessAreaWorkbook(string path, params (string Material, string BusinessArea, string Plant)[] records)
+                {
+                    using var workbook = new XLWorkbook();
+                    var sheet = workbook.Worksheets.Add("ALV");
+                    sheet.Cell(1, 1).Value = "MATNR";
+                    sheet.Cell(1, 2).Value = "GSBER";
+                    sheet.Cell(1, 3).Value = "WERKS";
+                    for (int index = 0; index < records.Length; index++)
+                    {
+                        sheet.Cell(index + 2, 1).Value = records[index].Material;
+                        sheet.Cell(index + 2, 2).Value = records[index].BusinessArea;
+                        sheet.Cell(index + 2, 3).Value = records[index].Plant;
+                    }
+                    workbook.SaveAs(path);
+                }
+
+                string organizationPath = Path.Combine(tempRoot, "BU1", "\u5E73\u6E56\u4E00\u5382", "2026_WK32", "ZFI080_\u5B9E\u9645\u6750\u6599\u4FDD\u5B58_WK32.xlsx");
+                string fallbackPath = Path.Combine(tempRoot, "\u96C6\u91C7\u5DE5\u5382", "2026_WK32", "ZFI080_\u5B9E\u9645\u6750\u6599\u4FDD\u5B58_WK32_\u5DE5\u5382103D.xlsx");
+                Directory.CreateDirectory(Path.GetDirectoryName(organizationPath) ?? tempRoot);
+                using (var legacyWorkbook = new XLWorkbook())
+                {
+                    var legacySheet = legacyWorkbook.Worksheets.Add("ALV");
+                    legacySheet.Cell(1, 1).Value = "MATNR";
+                    legacySheet.Cell(1, 2).Value = "GSBER";
+                    legacySheet.Cell(1, 3).Value = "WERKS";
+                    legacySheet.Cell(1, 4).Value = "__SAP_RPA_SOURCE_KEY";
+                    legacySheet.Cell(2, 1).Value = "LEGACY_103C";
+                    legacySheet.Cell(2, 2).Value = "2800";
+                    legacySheet.Cell(2, 3).Value = "103C";
+                    legacySheet.Cell(2, 4).Value = "ZFI080|businessArea|2800";
+                    legacySheet.Column(4).Hide();
+                    legacyWorkbook.SaveAs(organizationPath);
+                }
+
+                WriteBusinessAreaWorkbook(
+                    source,
+                    ("M1", "2800", "103C"),
+                    ("M2", "2800", "103D"),
+                    ("M3", "2900", "103D"));
+
+                AlvOrganizationMappingResult BusinessAreaLookup(string businessArea) => businessArea.Equals("2800", StringComparison.OrdinalIgnoreCase)
+                    ? new AlvOrganizationMappingResult
+                    {
+                        Success = true,
+                        Targets = new[] { new AlvOrganizationTarget("BU1", "\u5E73\u6E56\u4E00\u5382") }
+                    }
+                    : new AlvOrganizationMappingResult { Success = true };
+
+                var outputs = AlvOrganizationExport.RouteBusinessAreaWorkbook(
+                    source,
+                    tempRoot,
+                    "ZFI080",
+                    "\u5B9E\u9645\u6750\u6599\u4FDD\u5B58",
+                    new DateTime(2026, 8, 5),
+                    "103C",
+                    BusinessAreaLookup);
+                WriteBusinessAreaWorkbook(rerunSource, ("R1", "2800", "103C"));
+                _ = AlvOrganizationExport.RouteBusinessAreaWorkbook(
+                    rerunSource,
+                    tempRoot,
+                    "ZFI080",
+                    "\u5B9E\u9645\u6750\u6599\u4FDD\u5B58",
+                    new DateTime(2026, 8, 5),
+                    "103C",
+                    BusinessAreaLookup);
+                using var organizationWorkbook = new XLWorkbook(organizationPath);
+                var organizationRows = organizationWorkbook.Worksheets.First().RangeUsed()?.RowsUsed().ToList() ?? new List<IXLRangeRow>();
+                bool ok = outputs.Count == 2 &&
+                          File.Exists(organizationPath) &&
+                          File.Exists(fallbackPath) &&
+                          !File.Exists(source) &&
+                          organizationRows.Count == 3 &&
+                          organizationRows.Skip(1).Select(row => row.Cell(1).GetString()).OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                              .SequenceEqual(new[] { "M2", "R1" });
+                Check("ALV business-area routing merges organizations, preserves other plants, and names fallback by plant", ok,
+                    $"organization={organizationPath}; fallback={fallbackPath}; outputs={outputs.Count}; organizationRows={organizationRows.Count}");
+            }
+            finally
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+
         Console.WriteLine($"\n=== 总计: {passed} PASS, {failed} FAIL, {(failed == 0 ? "全部通过" : "有失败项")} ===");
         return failed == 0 ? 0 : 1;
     }
@@ -13928,7 +14622,54 @@ Item1=test888
             result.Logs.LastOrDefault()?.Message ?? "",
             exitCode == 0 ? "transaction script executed" : $"VBS exit code {exitCode}");
 
+        if (IsExplicitNoDataResult(result))
+        {
+            result.Status = "no_data";
+            result.SapStatusType = "W";
+            result.Message = "SAP query completed with no matching data";
+            result.Logs.Add(new RunLogLine { Level = "INFO", Message = "classified SAP result as no_data; no export or archive is required" });
+        }
+
         return result;
+    }
+
+    static bool IsExplicitNoDataResult(RunResultRequest result)
+    {
+        // A successful run can legitimately mention no-data windows alongside
+        // completed work (for example, a partial ZFI057 scope). Only downgrade
+        // an otherwise failed result when every error is an explicit no-data signal.
+        if (!NormalizeRunStatus(result.Status).Equals("failed", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        var candidates = new List<string>
+        {
+            result.SapStatusText ?? "",
+            result.Message ?? ""
+        };
+        candidates.AddRange(result.Logs.Select(line => line.Message ?? ""));
+
+        if (!candidates.Any(IsExplicitNoDataText))
+            return false;
+
+        return result.Logs
+            .Where(line => line.Level.Equals("ERROR", StringComparison.OrdinalIgnoreCase))
+            .All(line => IsExplicitNoDataText(line.Message ?? ""));
+    }
+
+    static bool IsExplicitNoDataText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        string compact = Regex.Replace(text.Trim(), @"\s+", " ");
+        return compact.Contains("no data", StringComparison.OrdinalIgnoreCase) ||
+               compact.Contains("no records", StringComparison.OrdinalIgnoreCase) ||
+               compact.Contains("no matching", StringComparison.OrdinalIgnoreCase) ||
+               compact.Contains("\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u6570\u636E", StringComparison.OrdinalIgnoreCase) ||
+               compact.Contains("\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u6570\u636E", StringComparison.OrdinalIgnoreCase) ||
+               compact.Contains("\u6CA1\u6709\u627E\u5230\u7B26\u5408\u6761\u4EF6\u7684\u6570\u636E", StringComparison.OrdinalIgnoreCase) ||
+               compact.Contains("\u67E5\u8BE2\u65E0\u6570\u636E", StringComparison.OrdinalIgnoreCase) ||
+               compact.Contains("\u65E0\u6570\u636E", StringComparison.OrdinalIgnoreCase);
     }
 
     static void ScheduleDelayedExcelWorkbookClose(string outputFile, List<RunLogLine> logs)

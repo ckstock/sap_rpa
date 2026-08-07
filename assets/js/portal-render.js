@@ -1563,10 +1563,22 @@ ${scheduleTestDateOverride}
         : normalizeRulePlantList(rangeMeta.isBusinessArea
           ? (customBusinessAreas.length ? customBusinessAreas : defaultBusinessAreas)
           : (customPlants.length ? customPlants : defaultPlants));
+      const linkedBusinessAreas = rangeMeta.isBusinessArea || rangeMeta.isDateRange
+        ? []
+        : getBusinessAreasForSelection(data.code, resolvedPlants, selectedGroupId);
+      const unmappedPlants = rangeMeta.isBusinessArea || rangeMeta.isDateRange
+        ? []
+        : resolvedPlants.filter(code => !plantCatalog[code]?.area);
       const rangeEditorAdd = rangeMeta.isDateRange ? "" : `
             <div class="rule-plant-add">
               <input id="cfgRulePlantAdd" placeholder="${rangeMeta.addPlaceholder}">
               <button type="button" class="btn small" data-action="add-rule-plant">${icon("plus")}新增</button>
+            </div>`;
+      const linkedBusinessAreaPreview = rangeMeta.isBusinessArea || rangeMeta.isDateRange ? "" : `
+            <div class="schedule-plant-preview">
+              <div class="schedule-plant-title">关联业务范围</div>
+              <div id="cfgRuleBusinessAreaChips" class="area-chips">${renderCodeChips(linkedBusinessAreas)}</div>
+              <div id="cfgRuleUnmappedPlants" class="table-hint">${unmappedPlants.length ? `未在工厂主数据配置业务范围：${esc(unmappedPlants.join(", "))}` : ""}</div>
             </div>`;
       return `
         <div class="form-grid">
@@ -1582,6 +1594,7 @@ ${scheduleTestDateOverride}
             <input type="hidden" id="cfgRulePlants" value="${esc(resolvedPlants.join(","))}">
             <div id="cfgRulePlantChips" class="area-chips">${renderRulePlantChips(resolvedPlants, data)}</div>
 ${rangeEditorAdd}
+${linkedBusinessAreaPreview}
           </div>
           <div class="field"><label>状态</label><label class="radio-chip"><input id="cfgRuleEnabled" type="checkbox" ${data.enabled !== false ? "checked" : ""}>启用</label></div>
         </div>

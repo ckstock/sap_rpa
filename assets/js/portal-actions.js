@@ -135,6 +135,13 @@
       });
       const ruleGroup = document.getElementById("cfgRuleDefaultGroup");
       if (ruleGroup) ruleGroup.addEventListener("change", () => resetRuleRangeInput());
+      const rulePlantAdd = document.getElementById("cfgRulePlantAdd");
+      if (rulePlantAdd) rulePlantAdd.addEventListener("keydown", event => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          addRulePlant();
+        }
+      });
       const schedulePlantAdd = document.getElementById("schedulePlantAdd");
       if (schedulePlantAdd) schedulePlantAdd.addEventListener("keydown", event => {
         if (event.key === "Enter") {
@@ -402,6 +409,16 @@
       input.value = plantsList.join(",");
       chips.innerHTML = renderRulePlantChips(plantsList, getTCode(readInputValue("cfgRuleCode")));
       chips.querySelectorAll("[data-action='remove-rule-plant']").forEach(btn => btn.addEventListener("click", () => removeRulePlant(btn.dataset.plant || "")));
+      const businessAreaChips = document.getElementById("cfgRuleBusinessAreaChips");
+      const unmappedPlants = document.getElementById("cfgRuleUnmappedPlants");
+      if (businessAreaChips || unmappedPlants) {
+        const code = readInputValue("cfgRuleCode");
+        const groupId = readInputValue("cfgRuleDefaultGroup");
+        const areas = getBusinessAreasForSelection(code, plantsList, groupId);
+        const missing = plantsList.filter(plant => !plantCatalog[plant]?.area);
+        if (businessAreaChips) businessAreaChips.innerHTML = renderCodeChips(areas);
+        if (unmappedPlants) unmappedPlants.textContent = missing.length ? `未在工厂主数据配置业务范围：${missing.join(", ")}` : "";
+      }
     }
 
     function resetRuleRangeInput() {
@@ -464,9 +481,19 @@
     function addRulePlant() {
       const input = document.getElementById("cfgRulePlantAdd");
       const code = normalizeRulePlantCode(input?.value);
-      if (!code) return;
-      setRulePlantInput([...getRulePlantInput(), code]);
-      input.value = "";
+      if (!code) return toast("请输入工厂代码", "warn");
+      const current = getRulePlantInput();
+      if (current.includes(code)) {
+        input?.focus();
+        input?.select();
+        return toast(`工厂 ${code} 已在当前规则中`, "warn");
+      }
+      setRulePlantInput([...current, code]);
+      if (input) {
+        input.value = "";
+        input.focus();
+      }
+      toast(`已新增工厂 ${code}`, "ok");
     }
 
     function removeRulePlant(code) {
@@ -888,17 +915,17 @@
           setStep(3, "run");
           addRunStatusLog("INFO", "running-" + runId, "执行器已领取任务，开始占用 SAP GUI 桌面会话");
         }
-        if (status === "success" || status === "partial_failed" || status === "failed" || status === "canceled") {
+        if (status === "success" || status === "no_data" || status === "partial_failed" || status === "failed" || status === "canceled") {
           setStep(1, "done");
           setStep(2, "done");
-          setStep(3, status === "success" ? "done" : "fail");
-          setStep(4, status === "success" ? "done" : "fail");
+          setStep(3, status === "success" || status === "no_data" ? "done" : "fail");
+          setStep(4, status === "success" || status === "no_data" ? "done" : "fail");
           if (!Array.isArray(run.logs) || run.logs.length === 0) {
-            addLog(status === "success" ? "OK" : "ERR", run.message || run.sapStatusText || status);
+            addLog(status === "success" || status === "no_data" ? "OK" : "ERR", run.message || run.sapStatusText || status);
           }
           state.executing = false;
           await refreshBridgeData({ silent: true });
-          toast(status === "success" ? "执行成功，结果已写入 SQLite" : "执行结束，存在失败项，结果已写入 SQLite", status === "success" ? "ok" : "warn");
+          toast(status === "success" ? "执行成功，结果已写入 SQLite" : status === "no_data" ? "执行完成，本次查询无数据" : "执行结束，存在失败项，结果已写入 SQLite", status === "success" || status === "no_data" ? "ok" : "warn");
           return;
         }
         render();

@@ -16,6 +16,7 @@ Dim SapGuiAuto, application, connection, session, connIndex, sessIndex
 Dim retries, maxRetries, sleepMs, statusType, statusText, operationError
 Dim longRunTimeoutMs, saveTimeoutMs, saveButtonTimeoutMs, exportTimeoutMs, sapCloseOk, shouldCloseSapAtEnd
 Dim alvExportDir, alvExportFilename, alvOutputFile, unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
+Dim scriptDir, alvHelperLoaded
 
 tcode = "{OK_CODE}"
 targetSystem = "{SAP_SYSTEM}"
@@ -30,6 +31,7 @@ periodValue = "{PERIOD}"
 weekEndValue = "{WEEK_END}"
 alvExportDir = "{ALV_EXPORT_DIR}"
 alvExportFilename = "{ALV_EXPORT_FILENAME}"
+scriptDir = "{SCRIPT_DIR}"
 maxRetries = 100
 longRunTimeoutMs = 3600000
 If CsvContains(plantsCsv, "9301") Then longRunTimeoutMs = 7200000
@@ -40,6 +42,7 @@ noDataResult = False
 alvExportReady = False
 fatalError = False
 fatalExitCode = 0
+alvHelperLoaded = False
 unresolvedPlantsToken = "{" & "PLANTS" & "}"
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
 unresolvedParentRunIdToken = "{" & "PARENT_RUN_ID" & "}"
@@ -56,6 +59,7 @@ If Trim(CStr(targetClient)) = unresolvedSapClientToken Then targetClient = ""
 If Trim(CStr(targetUser)) = unresolvedSapUserToken Then targetUser = ""
 If Trim(CStr(alvExportDir)) = unresolvedAlvExportDirToken Then alvExportDir = ""
 If Trim(CStr(alvExportFilename)) = unresolvedAlvExportFilenameToken Then alvExportFilename = ""
+If Trim(CStr(scriptDir)) = "{" & "SCRIPT_DIR" & "}" Then scriptDir = ""
 If UCase(Trim(CStr(tcode))) <> "ZFI072A" Then
    EmitError "ZFI072A script refuses non-ZFI072A tcode=" & CStr(tcode)
    WScript.Quit 10
@@ -797,6 +801,51 @@ Sub ConfirmExportOverwriteIfPresent()
    Next
 End Sub
 
+Function LoadAlvExportHelper()
+   Dim fso, helperPath, textFile, helperText
+   On Error Resume Next
+   LoadAlvExportHelper = False
+   If alvHelperLoaded Then
+      LoadAlvExportHelper = True
+      Exit Function
+   End If
+
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If Err.Number <> 0 Then
+      operationError = Err.Description
+      Err.Clear
+      FailAndQuit "create FileSystemObject for ALV export helper failed - " & operationError, 8
+      Exit Function
+   End If
+   If Trim(CStr(scriptDir)) = "" Then scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+   helperPath = CombinePath(scriptDir, "sap_alv_export_helper.vbs")
+   If Not fso.FileExists(helperPath) Then
+      FailAndQuit "ALV export helper not found: " & helperPath, 8
+      Exit Function
+   End If
+
+   Err.Clear
+   Set textFile = fso.OpenTextFile(helperPath, 1, False, -2)
+   If Err.Number <> 0 Then
+      operationError = Err.Description
+      Err.Clear
+      FailAndQuit "open ALV export helper failed - " & operationError, 8
+      Exit Function
+   End If
+   helperText = textFile.ReadAll
+   textFile.Close
+   Err.Clear
+   ExecuteGlobal helperText
+   If Err.Number <> 0 Then
+      operationError = Err.Description
+      Err.Clear
+      FailAndQuit "load ALV export helper failed - " & operationError, 8
+      Exit Function
+   End If
+   alvHelperLoaded = True
+   LoadAlvExportHelper = True
+End Function
+
 Function ExportAlvIfConfigured(exportDir, exportFilename, timeoutMs)
    On Error Resume Next
    ExportAlvIfConfigured = False
@@ -821,22 +870,17 @@ Function ExportAlvIfConfigured(exportDir, exportFilename, timeoutMs)
       Exit Function
    End If
 
-   WScript.Echo "INFO: wait for ALV export button before press"
-   If Not WaitForAnyObject("ALV export button", Array("wnd[0]/tbar[1]/btn[43]"), timeoutMs) Then
-      EchoSessionContext "ERROR_CONTEXT"
-      FailAndQuit "ALV export button not found before timeout", 8
+   If Not LoadAlvExportHelper() Then
+      If Not fatalError Then FailAndQuit "ALV export helper could not be loaded", 8
       Exit Function
    End If
 
-   Err.Clear
-   session.findById("wnd[0]/tbar[1]/btn[43]").press
-   If Err.Number <> 0 Then
-      operationError = Err.Description
-      Err.Clear
-      FailAndQuit "press ALV export button failed - " & operationError, 8
+   WScript.Echo "INFO: open ALV export entry through shared helper"
+   If Not AlvPressExportEntry(session, timeoutMs) Then
+      EchoSessionContext "ERROR_CONTEXT"
+      FailAndQuit "ALV export entry not found or not usable before timeout", 8
       Exit Function
    End If
-   WScript.Echo "INFO: pressed ALV export button"
 
    If Not WaitForObject("wnd[1]", 10000) Then
       EchoSessionContext "ERROR_CONTEXT"

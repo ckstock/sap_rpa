@@ -2,6 +2,8 @@
 
 本文档是 Windows Server 上线 runbook。当前安装包不再提供一键安装器；上线由管理员按清单手工执行、核对和验收。
 
+> **2026-08-06 ALV 归档优先规则：**保存类 ALV 的正式结果不是旧的 `yyyy_WKnn\工厂号` 目录。SAP GUI 只能写本机暂存；后端从 ALV Excel 实际 `WERKS` 或 `GSBER` 读取来源，使用只读 `ZTFI48B` 或 `ZTFI48A` 查询出 `ZBU/ZSBU`，再写入 `<alvExportDataDirectory>\ZBU\ZSBU\yyyy_WKnn\事务码_卡片名称_WKnn.xlsx`。同组织工厂合并，一厂多组织复制到多个目标。查询成功但没有映射才使用 `<alvExportDataDirectory>\集采工厂\yyyy_WKnn` 回退路径；查询失败或 Excel 缺必需列必须失败并保留暂存。上线验收必须跑真实保存类卡片，检查网络盘最终 Excel 和重跑不重复行。
+
 ## 1. 前置条件
 
 1. 使用固定 Windows 执行账号登录服务器交互式桌面。
@@ -338,7 +340,7 @@ Invoke-RestMethod "http://127.0.0.1:8080/api/health"
 7. 已登录 SAP GUI 时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
 8. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
 9. 页面/API 不返回 SAP 密码、钉钉 `appSecret`、token。
-10. 含“保存”的 7 个事务码 `ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL` 跑完后，Excel 必须落在 `fileStorage.alvExportDataDirectory` 配置目录下的 `yyyy_WKnn_工厂` 文件夹；业务范围型导出按 Excel 工厂列拆分，只有表头/无数据时清理 raw 目录且不当技术失败。
+10. 含“保存”的 8 个事务码 `ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`、`ZFI148` 跑完后，Excel 必须落在 `fileStorage.alvExportDataDirectory` 下的 `ZBU\ZSBU\yyyy_WKnn`；查询成功但无映射时落在 `集采工厂\yyyy_WKnn`。业务范围型导出按 Excel 实际 `GSBER` 路由，只有表头/无数据时清理 raw 目录且不当技术失败。
 
 ## 10. 常见漏项
 

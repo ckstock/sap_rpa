@@ -95,6 +95,84 @@ Function AlvWaitForObject(sapSession, id, timeoutMs)
    AlvWaitForObject = False
 End Function
 
+Function AlvIsExportDialog(sapSession)
+   ' A generic wnd[1] can be a stale SAP popup. Only accept known export UI.
+   On Error Resume Next
+   AlvIsExportDialog = False
+   If Not AlvObjectExists(sapSession, "wnd[1]") Then Exit Function
+   If AlvObjectExists(sapSession, "wnd[1]/usr/ctxtDY_PATH") Then
+      AlvIsExportDialog = True
+      Exit Function
+   End If
+   AlvIsExportDialog = AlvObjectExists(sapSession, "wnd[1]/tbar[0]/btn[0]")
+End Function
+
+Function AlvPopupTitle(sapSession)
+   On Error Resume Next
+   AlvPopupTitle = ""
+   If Not AlvObjectExists(sapSession, "wnd[1]") Then Exit Function
+   Err.Clear
+   AlvPopupTitle = CStr(sapSession.findById("wnd[1]").Text)
+   Err.Clear
+End Function
+
+Function AlvDismissUnexpectedDialog(sapSession, ByRef detail)
+   Dim waited
+   On Error Resume Next
+   AlvDismissUnexpectedDialog = False
+   detail = ""
+   If Not AlvObjectExists(sapSession, "wnd[1]") Then
+      AlvDismissUnexpectedDialog = True
+      Exit Function
+   End If
+   If AlvIsExportDialog(sapSession) Then
+      AlvDismissUnexpectedDialog = True
+      Exit Function
+   End If
+
+   detail = "unexpected SAP popup before export, title=" & AlvPopupTitle(sapSession)
+   Err.Clear
+   sapSession.findById("wnd[1]").sendVKey 12
+   If Err.Number <> 0 Then
+      detail = detail & "; cancel failed - " & Err.Description
+      Err.Clear
+      Exit Function
+   End If
+
+   waited = 0
+   Do While waited <= 3000
+      If Not AlvObjectExists(sapSession, "wnd[1]") Then
+         WScript.Echo "INFO: dismissed " & detail
+         AlvDismissUnexpectedDialog = True
+         Exit Function
+      End If
+      WScript.Sleep 200
+      waited = waited + 200
+   Loop
+   detail = detail & "; cancel did not close the popup"
+End Function
+
+Function AlvWaitForExportDialog(sapSession, timeoutMs, ByRef detail)
+   Dim waited
+   On Error Resume Next
+   AlvWaitForExportDialog = False
+   detail = ""
+   waited = 0
+   Do While waited <= CLng(timeoutMs)
+      If AlvIsExportDialog(sapSession) Then
+         AlvWaitForExportDialog = True
+         Exit Function
+      End If
+      If AlvObjectExists(sapSession, "wnd[1]") Then
+         detail = "unexpected SAP popup instead of ALV export dialog, title=" & AlvPopupTitle(sapSession)
+         Exit Function
+      End If
+      WScript.Sleep 250
+      waited = waited + 250
+   Loop
+   detail = "ALV export dialog did not open"
+End Function
+
 Function AlvFileReady(filePath)
    Dim fso, fileObj, size1, size2
    On Error Resume Next
@@ -149,48 +227,180 @@ Sub AlvConfirmOverwriteIfPresent(sapSession)
    Next
 End Sub
 
-Function AlvPressExportEntry(sapSession, timeoutMs)
-   Dim grid
+Function AlvTryRecordedContextExport(sapSession, grid, dialogTimeoutMs, ByRef detail)
+   ' Generalized from Script1.vbs. The recorder-specific btn[8], row 8 and
+   ' SMAKTX column are intentionally excluded because they are not portable
+   ' across reports; contextMenu + &XXL is the shared ALV export behavior.
    On Error Resume Next
-   AlvPressExportEntry = False
+   AlvTryRecordedContextExport = False
+   detail = ""
 
    Err.Clear
-   If AlvObjectExists(sapSession, "wnd[0]/tbar[1]/btn[43]") Then
-      sapSession.findById("wnd[0]/tbar[1]/btn[43]").press
-      If Err.Number = 0 Then
-         WScript.Echo "INFO: pressed ALV export button 43"
-         AlvWaitReady sapSession, timeoutMs
-         AlvPressExportEntry = True
-         Exit Function
-      End If
+   grid.contextMenu
+   If Err.Number <> 0 Then
+      detail = "fallback ALV grid contextMenu is not ready - " & Err.Description
+      Err.Clear
+      Exit Function
    End If
 
+   WScript.Sleep 250
    Err.Clear
-   Set grid = sapSession.findById("wnd[0]/usr/cntlGRID1/shellcont/shell")
-   If Err.Number = 0 And IsObject(grid) Then
+   grid.selectContextMenuItem "&XXL"
+   If Err.Number <> 0 Then
+      detail = "fallback ALV grid contextMenu &XXL failed - " & Err.Description
       Err.Clear
-      grid.pressToolbarContextButton "&MB_EXPORT"
-      If Err.Number = 0 Then
-         grid.selectContextMenuItem "&XXL"
-         If Err.Number = 0 Then
-            WScript.Echo "INFO: pressed ALV grid context export &XXL"
-            AlvWaitReady sapSession, timeoutMs
+      Exit Function
+   End If
+
+   If Not AlvWaitForExportDialog(sapSession, dialogTimeoutMs, detail) Then
+      detail = "fallback ALV grid contextMenu export failed - " & detail
+      Exit Function
+   End If
+
+   WScript.Echo "INFO: pressed fallback ALV grid contextMenu export &XXL from Script1"
+   AlvTryRecordedContextExport = True
+End Function
+
+Function AlvElapsedMilliseconds(startedSeconds)
+   Dim currentSeconds
+   currentSeconds = Timer
+   If currentSeconds < startedSeconds Then currentSeconds = currentSeconds + 86400
+   AlvElapsedMilliseconds = CLng((currentSeconds - startedSeconds) * 1000)
+End Function
+
+Function AlvPressExportEntry(sapSession, timeoutMs)
+   Dim grid, waited, lastError, startedAt, popupDetail
+   On Error Resume Next
+   AlvPressExportEntry = False
+   waited = 0
+   lastError = ""
+   startedAt = Timer
+
+   ' ALV toolbars and context menus can appear after the grid itself is ready.
+   ' Retry until the configured export timeout instead of treating the first
+   ' unavailable toolbar state as a report failure.
+   Do While AlvElapsedMilliseconds(startedAt) <= CLng(timeoutMs)
+      If AlvObjectExists(sapSession, "wnd[1]") Then
+         If AlvIsExportDialog(sapSession) Then
+            WScript.Echo "INFO: ALV export dialog is already open"
             AlvPressExportEntry = True
+            Exit Function
+         End If
+         popupDetail = ""
+         If Not AlvDismissUnexpectedDialog(sapSession, popupDetail) Then
+            lastError = popupDetail
+            WScript.Echo "WARN: cannot clear unexpected SAP popup before ALV export - " & lastError
             Exit Function
          End If
       End If
 
-      Err.Clear
-      grid.pressToolbarButton "&XXL"
-      If Err.Number = 0 Then
-         WScript.Echo "INFO: pressed ALV grid toolbar &XXL"
-         AlvWaitReady sapSession, timeoutMs
-         AlvPressExportEntry = True
+      ' selectAll can leave the ALV control temporarily busy even though the
+      ' preceding report execution already returned. Do not reacquire controls
+      ' until the SAP GUI scripting session reports idle.
+      If Not AlvWaitReady(sapSession, 30000) Then
+         lastError = "SAP GUI session did not become idle before ALV export"
+         WScript.Echo "WARN: " & lastError
          Exit Function
       End If
-   End If
+      WScript.Sleep 300
+
+      Err.Clear
+      Set grid = sapSession.findById("wnd[0]/usr/cntlGRID1/shellcont/shell")
+      If Err.Number = 0 And IsObject(grid) Then
+         grid.pressToolbarContextButton "&MB_EXPORT"
+         If Err.Number = 0 Then
+            WScript.Sleep 250
+            Err.Clear
+            grid.selectContextMenuItem "&XXL"
+            If Err.Number = 0 Then
+               If AlvWaitForExportDialog(sapSession, 3000, popupDetail) Then
+                  WScript.Echo "INFO: pressed ALV grid context export &XXL"
+                  AlvPressExportEntry = True
+                  Exit Function
+               End If
+               lastError = "ALV grid context export did not open an export dialog - " & popupDetail
+            Else
+               lastError = "ALV grid context menu &XXL failed - " & Err.Description
+            End If
+         Else
+            lastError = "ALV grid export context button is not ready - " & Err.Description
+         End If
+
+         Err.Clear
+         grid.pressToolbarButton "&XXL"
+         If Err.Number = 0 Then
+            If AlvWaitForExportDialog(sapSession, 3000, popupDetail) Then
+               WScript.Echo "INFO: pressed ALV grid toolbar &XXL"
+               AlvPressExportEntry = True
+               Exit Function
+            End If
+            lastError = "ALV grid toolbar &XXL did not open an export dialog - " & popupDetail
+         Else
+            lastError = "ALV grid toolbar &XXL is not ready - " & Err.Description
+         End If
+
+         ' Script1.vbs fallback is only used after normal toolbar paths fail.
+         If AlvTryRecordedContextExport(sapSession, grid, 3000, lastError) Then
+            AlvPressExportEntry = True
+            Exit Function
+         End If
+      Else
+         lastError = "ALV grid control is not ready - " & Err.Description
+      End If
+
+      ' The recorder-confirmed grid paths run before a guessed global toolbar
+      ' button. Some reports do not expose btn[43] and SAP can reject probes
+      ' while the ALV control is becoming available.
+      If Not AlvObjectExists(sapSession, "wnd[1]") Then
+         Err.Clear
+         If AlvObjectExists(sapSession, "wnd[0]/tbar[1]/btn[43]") Then
+            sapSession.findById("wnd[0]/tbar[1]/btn[43]").press
+            If Err.Number = 0 Then
+               If AlvWaitForExportDialog(sapSession, 3000, popupDetail) Then
+                  WScript.Echo "INFO: pressed ALV export button 43"
+                  AlvPressExportEntry = True
+                  Exit Function
+               End If
+               lastError = "toolbar button 43 did not open an export dialog - " & popupDetail
+            Else
+               lastError = "toolbar button 43 press failed - " & Err.Description
+            End If
+         End If
+      End If
+
+      waited = AlvElapsedMilliseconds(startedAt)
+      If waited > 0 And (waited Mod 5000) < 500 Then
+         WScript.Echo "INFO: waiting for ALV export entry, waitedMs=" & CStr(waited) & ", last=" & lastError
+      End If
+      Err.Clear
+      WScript.Sleep 500
+   Loop
+
+   waited = AlvElapsedMilliseconds(startedAt)
+   AlvLogToolbarButtons sapSession
+   WScript.Echo "WARN: ALV export entry did not become ready, waitedMs=" & CStr(waited) & ", last=" & lastError
    Err.Clear
 End Function
+
+Sub AlvLogToolbarButtons(sapSession)
+   Dim buttonIndex, button, tooltipText, textValue
+   On Error Resume Next
+   For buttonIndex = 0 To 80
+      Err.Clear
+      Set button = sapSession.findById("wnd[0]/tbar[1]/btn[" & CStr(buttonIndex) & "]")
+      If Err.Number = 0 And IsObject(button) Then
+         tooltipText = ""
+         textValue = ""
+         Err.Clear
+         tooltipText = CStr(button.Tooltip)
+         Err.Clear
+         textValue = CStr(button.Text)
+         Err.Clear
+         WScript.Echo "INFO: ALV toolbar button id=btn[" & CStr(buttonIndex) & "], tooltip=" & tooltipText & ", text=" & textValue
+      End If
+      Err.Clear
+   Next
+End Sub
 
 Function AlvExportedWorkbookIsOpen(filePath)
    Dim targetPath, excelApp, workbookIndex, workbook, workbookPath
