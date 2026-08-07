@@ -1,0 +1,839 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAP RPA V2 功能说明书</title>
+  <style>
+    :root {
+      --bg: #f4faed;
+      --sidebar: #e8f3e0;
+      --primary: #5b8c5a;
+      --accent: #7cb342;
+      --text: #2e3b2e;
+      --muted: #6b806b;
+      --soft: #eef7e8;
+      --line: #d6e7cc;
+      --code-bg: #1b2b1b;
+      --code: #c8e6c9;
+      --warn-bg: #fff8e1;
+      --warn: #e65100;
+      --err-bg: #ffebee;
+      --err: #c62828;
+      --info-bg: #e3f2fd;
+      --info: #1565c0;
+      --shadow: 0 12px 34px rgba(74, 104, 74, .12);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--text);
+      background: var(--bg);
+      font: 15px/1.75 "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+    }
+    a { color: inherit; text-decoration: none; }
+    code {
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: #edf5e9;
+      color: #315f31;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      font-size: .92em;
+    }
+    .sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      width: 280px;
+      background: var(--sidebar);
+      border-right: 1px solid var(--line);
+      overflow-y: auto;
+      z-index: 20;
+    }
+    .brand {
+      padding: 24px 20px 20px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      color: white;
+    }
+    .brand h1 {
+      margin: 0 0 8px;
+      font-size: 20px;
+      line-height: 1.25;
+      letter-spacing: 0;
+    }
+    .brand .version {
+      display: inline-flex;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(255,255,255,.2);
+      font-size: 12px;
+    }
+    .nav { padding: 14px 12px 26px; }
+    .nav-item { margin: 6px 0; }
+    .nav-main {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 10px;
+      background: transparent;
+      color: var(--text);
+      text-align: left;
+      cursor: pointer;
+      font: inherit;
+    }
+    .nav-main:hover, .nav-main.active { background: rgba(91, 140, 90, .12); }
+    .nav-main .num {
+      flex: 0 0 24px;
+      height: 24px;
+      border-radius: 50%;
+      display: inline-grid;
+      place-items: center;
+      background: var(--primary);
+      color: white;
+      font-size: 12px;
+    }
+    .nav-main .title { flex: 1; font-weight: 700; }
+    .nav-main .chev { color: var(--muted); transition: transform .18s ease; }
+    .nav-item.open .chev { transform: rotate(90deg); }
+    .nav-sub {
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height .22s ease;
+      padding-left: 42px;
+    }
+    .nav-item.open .nav-sub { max-height: 340px; }
+    .nav-sub a {
+      display: block;
+      padding: 5px 0;
+      color: var(--muted);
+      font-size: 13px;
+    }
+    .nav-sub a:hover { color: var(--primary); }
+    .mobile-toggle { display: none; }
+    .content {
+      margin-left: 280px;
+      padding: 28px 34px 56px;
+      max-width: 1260px;
+    }
+    .hero {
+      padding: 32px;
+      border-radius: 16px;
+      background: white;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(214, 231, 204, .8);
+      margin-bottom: 22px;
+    }
+    .hero h1 {
+      margin: 0 0 12px;
+      font-size: 30px;
+      line-height: 1.2;
+      letter-spacing: 0;
+    }
+    .hero p { margin: 0; color: var(--muted); max-width: 920px; }
+    .status-row {
+      margin-top: 18px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .status-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .status-tag.success { background: #e8f5e9; color: #2e7d32; }
+    .status-tag.warning { background: var(--warn-bg); color: var(--warn); }
+    .status-tag.info { background: var(--info-bg); color: var(--info); }
+    .status-tag.error { background: var(--err-bg); color: var(--err); }
+    .section {
+      margin: 22px 0;
+      padding: 26px;
+      border-radius: 14px;
+      background: white;
+      box-shadow: var(--shadow);
+      border: 1px solid rgba(214, 231, 204, .82);
+    }
+    .section:hover { box-shadow: 0 16px 42px rgba(74, 104, 74, .15); }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .section-num {
+      width: 44px;
+      height: 44px;
+      border-radius: 12px;
+      display: grid;
+      place-items: center;
+      color: white;
+      font-weight: 800;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      flex: 0 0 44px;
+    }
+    h2 { margin: 0; font-size: 24px; line-height: 1.25; }
+    h3 {
+      margin: 24px 0 12px;
+      padding-left: 12px;
+      border-left: 4px solid var(--accent);
+      font-size: 18px;
+      line-height: 1.35;
+    }
+    p { margin: 10px 0; }
+    .grid {
+      display: grid;
+      gap: 14px;
+    }
+    .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .mini-card, .flow-step {
+      padding: 15px;
+      border-radius: 12px;
+      background: var(--soft);
+      border: 1px solid var(--line);
+    }
+    .mini-card strong, .flow-step strong { display: block; margin-bottom: 6px; color: #315f31; }
+    .flow {
+      display: grid;
+      gap: 10px;
+      counter-reset: step;
+    }
+    .flow-step {
+      display: grid;
+      grid-template-columns: 34px 1fr;
+      gap: 12px;
+      align-items: start;
+    }
+    .flow-step::before {
+      counter-increment: step;
+      content: counter(step);
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      display: grid;
+      place-items: center;
+      background: var(--primary);
+      color: white;
+      font-weight: 800;
+      font-size: 13px;
+    }
+    .tip-box, .warning-box, .constraint-box, .error-box {
+      margin: 14px 0;
+      padding: 14px 16px;
+      border-radius: 12px;
+      border-left: 5px solid var(--primary);
+      background: #f7fbf2;
+    }
+    .warning-box { border-left-color: var(--warn); background: var(--warn-bg); }
+    .error-box { border-left-color: var(--err); background: var(--err-bg); }
+    .constraint-box { border-left-color: var(--info); background: var(--info-bg); }
+    .table-wrap {
+      overflow: hidden;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      margin: 14px 0;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+    }
+    thead th {
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      color: white;
+      font-weight: 700;
+      text-align: left;
+      padding: 11px 12px;
+    }
+    td {
+      padding: 11px 12px;
+      border-bottom: 1px solid #edf4e8;
+      vertical-align: top;
+    }
+    tbody tr:hover td { background: #f6fbf1; }
+    .nowrap { white-space: nowrap; }
+    .code-block {
+      position: relative;
+      margin: 14px 0;
+      padding: 18px;
+      border-radius: 12px;
+      background: var(--code-bg);
+      color: var(--code);
+      overflow-x: auto;
+      font-family: Consolas, "Cascadia Mono", monospace;
+      white-space: pre;
+      line-height: 1.6;
+    }
+    .code-block::after {
+      content: attr(data-lang);
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      color: #a5d6a7;
+      font-size: 12px;
+    }
+    @media (max-width: 900px) {
+      .mobile-toggle {
+        display: block;
+        position: fixed;
+        top: 12px;
+        left: 12px;
+        z-index: 40;
+        border: 0;
+        border-radius: 10px;
+        padding: 8px 10px;
+        background: var(--primary);
+        color: white;
+      }
+      .sidebar {
+        transform: translateX(-100%);
+        transition: transform .2s ease;
+      }
+      body.nav-open .sidebar { transform: translateX(0); }
+      .content { margin-left: 0; padding: 58px 14px 34px; }
+      .grid.cols-2, .grid.cols-3 { grid-template-columns: 1fr; }
+      .hero, .section { padding: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <button class="mobile-toggle" type="button" id="mobileToggle">目录</button>
+  <aside class="sidebar">
+    <div class="brand">
+      <h1>SAP RPA V2 功能说明书</h1>
+      <span class="version">Windows Server / 本地 API / SQLite</span>
+    </div>
+    <nav class="nav" aria-label="文档目录">
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="scope"><span class="num">1</span><span class="title">功能范围</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#scope-users">使用对象</a>
+          <a href="#scope-boundary">系统边界</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="entry"><span class="num">2</span><span class="title">页面入口</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#entry-login">页面入口与身份来源</a>
+          <a href="#entry-nav">导航页签</a>
+          <a href="#entry-installer">本机安装入口</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="execute"><span class="num">3</span><span class="title">执行任务</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#execute-zfi072a">ZFI072A</a>
+          <a href="#execute-queue">排队与日志</a>
+          <a href="#execute-batch">分工厂拆批</a>
+          <a href="#execute-chain">跨事务 result 传参</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="config"><span class="num">4</span><span class="title">基础配置</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#config-plant">工厂与业务范围</a>
+          <a href="#config-rule">事务码规则</a>
+          <a href="#config-delete">删除与停用</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="report"><span class="num">5</span><span class="title">报表与历史</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#report-metrics">统计指标</a>
+          <a href="#report-history">历史与审计</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="schedule"><span class="num">6</span><span class="title">定时任务</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#schedule-save">保存规则</a>
+          <a href="#schedule-run">无人值守执行</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="notify"><span class="num">7</span><span class="title">钉钉通知</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#notify-target">通知对象</a>
+          <a href="#notify-template">消息内容</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="exception"><span class="num">8</span><span class="title">异常处理</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#exception-installer">手工安装</a>
+          <a href="#exception-sop">处理 SOP</a>
+          <a href="#exception-validation">验收检查</a>
+        </div>
+      </div>
+      <div class="nav-item">
+        <button class="nav-main" type="button" data-target="handoff"><span class="num">9</span><span class="title">交接事项</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#handoff-files">关键文件</a>
+          <a href="#handoff-next">后续优先级</a>
+        </div>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <header class="hero">
+      <h1>SAP RPA V2 功能说明书</h1>
+      <p>本文面向业务使用者、实施人员和后续 AI 接手者，说明 SAP RPA V2 每个页面入口、按钮行为、数据落点、状态含义、执行链路、异常处理和验收方式。技术细节详见同目录的 <code>SapRpa_V2_技术设计说明.html</code>。</p>
+      <div class="status-row">
+        <span class="status-tag success">本地 API</span>
+        <span class="status-tag info">SQLite 主配置源</span>
+        <span class="status-tag warning">SAP GUI 串行执行</span>
+        <span class="status-tag info">钉钉通知</span>
+      </div>
+    </header>
+
+    <section class="section">
+      <div class="warning-box"><strong>2026-08-06 ALV 组织归档规则，优先于本文此前所有“按周/工厂号目录”描述：</strong>保存类 ALV 由 SAP GUI 先写本机暂存，后端再按导出 Excel 的实际来源值归档。<code>ZFI080</code>、<code>ZFI080B</code>、<code>ZFI019NL</code>、<code>ZFI019NA</code>、<code>ZFI148</code> 读取 <code>GSBER</code>/业务范围并只读查询 <code>ZTFI48A-GSBER -&gt; ZBU/ZSBU</code>；其余保存类读取 <code>WERKS</code>/工厂并只读查询 <code>ZTFI48B-WERKS -&gt; ZBU/ZSBU</code>。一个 Excel 的多个工厂或业务范围逐值分组；命中后的最终路径为 <code>&lt;alvExportDataDirectory&gt;\ZBU\ZSBU\yyyy_WKnn\事务码_卡片名称_WKnn.xlsx</code>。相同组织、周和事务码合并，一厂多组织各写一份，重跑同来源时替换旧行。仅在 SAP 查询成功但无映射时，才回退到 <code>&lt;alvExportDataDirectory&gt;\集采工厂\yyyy_WKnn</code>；业务范围型 Excel 只要实际含 <code>WERKS</code>，回退文件也必须带 <code>工厂&lt;WERKS&gt;</code> 后缀，只有无工厂列时才使用 <code>业务范围&lt;GSBER&gt;</code>。<code>集采工厂</code> 与 <code>BU1</code>、<code>BU2</code> 同级且没有 <code>ZSBU</code> 层。查询失败、缺列或缺值时任务失败、保留暂存并通过钉钉通知。网络盘根目录只由 <code>D:\RPA\config.local.json</code> 的 <code>fileStorage.alvExportDataDirectory</code> 控制，UNC 路径不能直接传给 SAP GUI。</div>
+    </section>
+
+    <section id="scope" class="section">
+      <div class="section-header"><div class="section-num">1</div><h2>功能范围</h2></div>
+      <p>SAP RPA V2 用于在公司 Windows Server 上集中执行 SAP GUI 自动化任务。业务人员在页面选择事务码和工厂，系统把任务写入本地 API 队列，由服务器上的 SapWebLauncher 串行调用 VBS 和 SAP GUI 完成操作，并把结果、日志、文件和通知状态写入 SQLite。</p>
+      <p>V2 同时包含服务器上线安装包和部署步骤。当前安装包不再提供一键安装器，正式交付方式是“手工安装指南 + 上线核对清单 + 必要脚本”；不得把当前开发机路径当作正式服务器前提。</p>
+      <h3 id="scope-users">使用对象</h3>
+      <div class="grid cols-3">
+        <div class="mini-card"><strong>业务执行人员</strong>发起事务码任务、查看执行进度、接收钉钉通知、下载或追溯结果。</div>
+        <div class="mini-card"><strong>配置维护人员</strong>维护工厂、业务范围、事务码、事务码与工厂规则、定时任务。</div>
+        <div class="mini-card"><strong>系统管理员</strong>按手工安装清单部署 SapWebLauncher、配置 SAP 登录信息、初始化 SQLite、核对运行目录、检查队列和服务状态。</div>
+      </div>
+      <h3 id="scope-boundary">系统边界</h3>
+      <div class="constraint-box"><strong>安全边界：</strong>浏览器页面不保存、不接收 SAP 密码；钉钉 appKey、appSecret、agentId 和 SAP 登录配置只允许保存在服务器本机环境变量、<code>config.local.json</code> 或 DPAPI/Windows 凭据管理器中，不返回前端，不提交 Git。</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>范围</th><th>V2 当前支持</th><th>不做或后续再做</th></tr></thead>
+          <tbody>
+            <tr><td>事务执行</td><td>ZFI072A 优先打通；其他事务码可配置展示，但脚本未验证前不作为生产自动化承诺。</td><td>不并发操作同一个 SAP GUI 桌面会话。</td></tr>
+            <tr><td>配置源</td><td>SQLite 是当前主配置源，页面从 API 读取。</td><td>SQL Server/PostgreSQL 可作为后续迁移目标。</td></tr>
+            <tr><td>身份与通知</td><td>页面可从对方平台 URL token 解析钉钉 ID 和姓名；执行页复选框勾选时使用联调默认 <code>11464769</code>，取消勾选时必须使用本次 URL token 的钉钉 ID，未解析到钉钉 ID 则禁止提交。</td><td>正式身份应由公司门户 URL token 或 SSO 交给 API 侧验签确认。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="entry" class="section">
+      <div class="section-header"><div class="section-num">2</div><h2>页面入口</h2></div>
+      <p>用户打开正式入口 <code>https://fi_automation.srv.lstech.com/rpa/</code> 后进入本地操作台；兼容排障入口按目标服务器 IPv4 生成，格式为 <code>http://&lt;服务器IP&gt;:6174/rpa/</code>。当前联调服务器示例为 <code>http://10.0.41.158:6174/rpa/</code>，正式系统 IP 为 <code>10.0.2.120</code>，正式系统兼容入口应为 <code>http://10.0.2.120:6174/rpa/</code>。所有真实配置、执行和历史数据都通过服务器本机 <code>http://127.0.0.1:8080</code> 的 API 获取，并由 <code>D:\RPA\gateway\rpa-gateway.js</code> 代理到当前访问域名的 <code>/rpa/api/*</code>。当前前端入口由 <code>index.html</code> 和同目录 <code>assets/js/*.js</code> 共同组成；运行目录缺少 <code>assets/js</code> 时，页面可能白屏、下拉不刷新或按钮无响应。</p>
+      <h3 id="entry-login">页面入口与身份来源</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>入口/控件</th><th>用户可见行为</th><th>数据落点</th></tr></thead>
+          <tbody>
+            <tr><td>对方平台 URL token 直跳</td><td><code>https://lydctest.lstech.com/dataAnalysis.financial.sapschedule</code> 的 SAP 数据调度入口调用本页面，并通过 <code>?token=&lt;jwt&gt;</code>、<code>?authorization=Bearer ...</code> 或 <code>?access_token=&lt;jwt&gt;</code> 传入身份。页面启动时兼容解析 <code>Account/Ddid/ddid/DingTalkUserId/UserId</code> 作为钉钉 ID，兼容解析 <code>UserName/Name/RealName/DisplayName</code> 作为姓名；成功后进入执行任务页，顶部身份位置同时显示姓名和钉钉 ID，并自动取消“勾选固定通知 11464769”。被对方平台 iframe 嵌入时，页面强制按执行员角色打开，避免沿用浏览器旧的 <code>portalRole=viewer</code> 缓存导致“查询员/只读”禁用提交。</td><td>前端状态 <code>state.externalAuth.claimedAccount</code>、<code>state.externalAuth.claimedUserName</code> 和 <code>state.page=execute</code>；提交 <code>POST /api/runs</code> 时写入 <code>operator.dingTalkUserId</code> 和 <code>operator.ddid</code>；页面不保存 token 原文，解析后清理 URL 参数。iframe 场景会把 <code>localStorage.portalRole</code> 纠正为 <code>executor</code>。</td></tr>
+            <tr><td>无账号密码登录页</td><td>页面打开后直接进入 SAP 门户，不再显示钉钉账号/手机号、密码、扫码登录界面或“清除身份”按钮。普通打开时执行页默认勾选固定通知 <code>11464769</code>。</td><td>页面不接收账号密码；通知目标只由执行页复选框和本次 URL token 解析出的钉钉 ID 决定。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="entry-nav">导航页签</h3>
+      <div class="grid cols-2">
+        <div class="mini-card"><strong>工作台</strong>按业务流程展示事务码卡片入口：采购价（ZFI072A → ZFI072N）、产值拆分（只展示 ZFI057 单入口，后台自动执行 ZFI019NL → ZFI057 → ZCO020）、实际领料（ZFIR034 → ZFI080 → ZFI080B）、标准价（ZCO019-明细、ZCO019汇总）、周结完工成本明细表（ZFI019NL、ZFI019NA、ZFI148）。执行页和定时任务弹窗的事务码下拉只允许选择工作台卡片已有事务码；不在该清单内的事务码不再作为前台提交入口展示，但基础配置、后端历史数据和已存在 run 记录保留。带保存或导出动作的卡片只加粗加黑名称里的“保存”两个字；如果名称没有“保存”字样，页面会在名称后补 <code>（保存）</code>，并只加粗其中“保存”两个字。</div>
+          <div class="mini-card"><strong>保存类 ALV 组织归档</strong><code>ZFI072A</code>、<code>ZFI072N</code>、<code>ZFI080</code>、<code>ZFI080B</code>、<code>ZCO019</code>、<code>ZFI019NA</code>、<code>ZFI019NL</code>、<code>ZFI148</code> 共八张生产保存类卡片共用后端组织归档；旧 <code>ZFI019NI</code> 没有生产 VBS 和工作台入口。SAP GUI 只能先写本机 <code>D:\RPA\临时文件\ALV本地暂存</code>，后端在确认文件落盘、大小稳定并关闭本次 Excel 后，按导出 Excel 的实际来源值读取 SAP 映射并复制到网络根目录 <code>fileStorage.alvExportDataDirectory</code>。<code>ZFI080</code>、<code>ZFI080B</code>、<code>ZFI019NL</code>、<code>ZFI019NA</code>、<code>ZFI148</code> 按 <code>GSBER -&gt; ZTFI48A-GSBER -&gt; ZBU/ZSBU</code> 路由；<code>ZFI072A</code>、<code>ZFI072N</code>、<code>ZCO019</code> 按 <code>WERKS -&gt; ZTFI48B-WERKS -&gt; ZBU/ZSBU</code> 路由。命中后的路径为 <code>&lt;根目录&gt;\ZBU\ZSBU\yyyy_WKnn\事务码_卡片名称_WKnn.xlsx</code>，相同组织、周和卡片的数据合并，一厂多组织各写一份；未命中才回退到同级 <code>集采工厂\yyyy_WKnn</code> 并在文件名追加实际工厂。来源列必须来自 Excel，不能用 <code>ZTSD001</code>、SQLite、页面入参或本地配置推断；只有表头视为无数据并清理暂存，有业务行但缺来源列、映射查询失败或网络归档失败均为失败并保留本机暂存。重跑按来源键替换旧行，不重复追加；<code>ZCO019</code> 的“明细”和“保存”分别归档，绝不互相合并或覆盖。</div>
+        <div class="mini-card"><strong>ZFI072N / ZFI080B</strong><code>ZFI072N</code> 和 <code>ZFI080B</code> 已由 <code>openOnly</code> 改为真实 VBS 自动执行。两个事务码均按工厂拆父子 run，VBS 写入 <code>S_WERKS-LOW</code> 和 <code>S_BUDAT-LOW/HIGH</code> 后执行、全选结果并保存/导出；钉钉执行入参只展示工厂和真实过账日期，不再把年周当作 SAP 输入。<code>ZFI072N</code> 在保存前先导出当前 ALV 分片；跨月拆成两段日期窗口时，同一个 child 会输出 <code>_part1</code>、<code>_part2</code> 多个 <code>OUTPUT_FILE</code>，后端收尾时合并为一个工厂文件，避免第二段覆盖第一段且避免最终目录残留 part。<code>ZFI072N</code> 的过账日期按上一完整周推导：同月时执行“当月 1 号至周截止日”，跨月时连续执行两段“上月 1 号至上月底”和“本月 1 号至周截止日”；如果拆成两段，通知会列出第 1 次、第 2 次过账日期。</div>
+        <div class="mini-card"><strong>ZFI148</strong><code>ZFI148</code> 是“周结完工成本明细表”第 3 步，已由 <code>openOnly</code> 改为真实 VBS 自动执行。页面和 API 只要求选择工厂，后端按工厂拆父子 run，并按服务器系统日期计算上一完整周；VBS 将上一完整周的开始日期作为 year 来源，自动写入 <code>S_WERKS-LOW</code>、<code>P_GJAHR</code>、<code>P_WEEK</code>，然后执行录屏确认的 <code>btn[8]</code>、<code>btn[16]</code>、<code>btn[13]</code>。运行目录必须同步 <code>D:\RPA\transactions\ZFI148.vbs</code>，并通过 <code>PUT /api/transactions/ZFI148</code> 让 SQLite 中 <code>automation=script</code> 且 <code>scriptHash</code> 为 64 位哈希。</div>
+        <div class="mini-card"><strong>执行任务</strong>选择事务码和参数，提交到后台串行队列。</div>
+        <div class="mini-card"><strong>统计报表</strong>默认按当天统计，可手工调整统计周期；执行总次数、成功率、平均耗时、节省工时、事务码排行和导出历史都跟随同一日期范围。</div>
+        <div class="mini-card"><strong>定时任务</strong>维护定时任务配置，保存到 API/SQLite，真正执行依赖后端常驻队列或调度。</div>
+        <div class="mini-card"><strong>基础配置</strong>维护工厂、业务范围、事务码和事务码与工厂/业务范围规则。</div>
+      </div>
+      <h3 id="entry-card-backend-audit">生产卡片后台审计（2026-08）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>工作台卡片 / 事务码</th><th>后台执行与拆批</th><th>输出、结束与异常口径</th></tr></thead>
+          <tbody>
+            <tr><td><code>ZFI072A</code> 采购价月表</td><td>VBS 自动化；未填写时后端按服务器日期补上一完整周的年度/周次；多工厂创建父 run 和按工厂串行 child run。</td><td>保存类 ALV：本机暂存后归档到网络盘。单工厂导出及归档成功才算成功；失败保留暂存并钉钉通知。</td></tr>
+            <tr><td><code>ZFI072N</code> 模切周结-采购价（保存）</td><td>VBS 自动化；按工厂拆批；后端补上一完整周的 <code>period/weekEnd</code>，VBS 跨月时按两个过账日期窗口顺序执行。</td><td>保存类 ALV；同一 child 的多窗口 part 文件合并为一个最终工厂文件后归档。</td></tr>
+            <tr><td><code>ZFI057</code> 产值拆分</td><td>唯一的产值拆分前台入口；按业务范围顺序执行 <code>ZFI019NL -&gt; ZFI057 -&gt; ZCO020</code>。RPA 的直接 SAP GUI 入口是 <code>/nZFI057</code>，不是直接调用 <code>ZFI085_MAINTAIN</code>；步骤一经 NCo 取 memory 物料，步骤二一次性将该业务范围全部工厂写入多选，步骤三检查 <code>TBTCO</code> 后再次执行验证。</td><td>业务范围可分别成功、无数据或失败；若上游物料已获取但 SAP 集 <code>Z31</code> 未维护可执行工厂，明确提示维护“业务范围-工厂”映射或移除该范围；汇总后统一通知并执行 SAP GUI <code>/nex</code> 清理。</td></tr>
+            <tr><td><code>ZFIR034</code> 实际领料链路起始卡片</td><td>VBS 自动化；只接收日期范围，不接收工厂或业务范围；后端按服务器日期补上一完整周。</td><td>不属于 Excel 保存类；状态、日志与钉钉按单 run 回写。</td></tr>
+            <tr><td><code>ZFI080</code> 实际材料保存</td><td>VBS 自动化；多工厂按工厂 child run 串行执行，日期范围由后端补齐。</td><td>保存类 ALV；使用本机暂存、后端归档、失败通知的统一口径。</td></tr>
+            <tr><td><code>ZFI080B</code> 实际材料明细（保存）</td><td>VBS 自动化；多工厂按工厂 child run 串行执行，按上一完整周过账日期运行。</td><td>保存类 ALV；使用本机暂存、后端归档、失败通知的统一口径。</td></tr>
+            <tr><td><code>ZCO019</code> 标准材料成本</td><td>VBS 自动化；多工厂按工厂 child run 串行执行，日期范围由后端补齐。</td><td>保存类 ALV；多窗口 part 文件在同一工厂内合并后归档。</td></tr>
+            <tr><td><code>ZFI019NA</code> 周损益生成</td><td>VBS 自动化；多工厂按工厂 child run 串行执行，日期范围由后端补齐。</td><td>保存类 ALV；使用本机暂存、后端归档、失败通知的统一口径。</td></tr>
+            <tr><td><code>ZFI019NL</code> 周损益保存导出</td><td>VBS 自动化；多业务范围创建父 run 和按业务范围 child run；同时作为 ZFI057 工作流的第一步被 NCo memory 调用。</td><td>保存类 ALV；业务范围原始文件按 Excel 实际工厂列拆分，只有表头为无数据；缺工厂列或归档失败为失败。</td></tr>
+            <tr><td><code>ZFI148</code> 推送大数据平台</td><td>VBS 自动化；多工厂按工厂 child run 串行执行；年度/周次按上一完整周推导。</td><td>不属于 ALV Excel 保存类；以脚本执行、SAP 状态和 run 日志判断结果。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tip-box"><strong>非生产卡片边界：</strong><code>ZFI014D</code>、<code>ZFI085</code>、<code>ZPP063</code>、<code>ZPP063X</code>、<code>ZFI019NC</code> 仅保留旧配置或 <code>openOnly</code> 定义，不是当前生产自动化承诺；<code>ZCO020</code> 是 ZFI057 工作流的内部第三步，不作为独立工作台卡片提交。若需要确认 SAP 事务 <code>ZFI057</code> 在系统内部绑定的维护程序，必须由 SAP 管理员在 <code>SE93</code> 只读核验；RPA 脚本和后端没有对 <code>ZFI085_MAINTAIN</code> 的直接调用。</div>
+      <h3 id="entry-zfi057-zco020">产值拆分链路（ZFI057 单入口，后台三步）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>事务码</th><th>当前自动化状态</th><th>实际 SAP 入参</th><th>运行日志追溯</th></tr></thead>
+          <tbody>
+            <tr><td><code>ZFI057</code></td><td>工作台只展示这一个产值拆分入口；后端识别 <code>runStrategy=auto3step</code>、默认 <code>ZFI057</code> 队列任务或 <code>sap-rpa://run</code> 直接协议入口后，按业务范围顺序执行 <code>ZFI019NL → ZFI057 → ZCO020</code>。RPA 第二步的直接 SAP GUI 操作是 <code>/nZFI057</code>，后端和 <code>ZFI057.vbs</code> 都不直接调用 <code>ZFI085_MAINTAIN</code>。</td><td>执行页显示和编辑的是“业务范围”，不是工厂。页面/API 提供业务范围和日期范围；当前联调默认勾选“指定测试周”，按页面选择的开始/截止日期传 <code>period/weekEnd</code>。取消勾选后前端不传日期，由后端按服务器系统日期计算上一完整周，作为正式上线口径。第一步不运行 <code>ZFI019NL.vbs</code>，而是后端通过 SAP NCo 调用 <code>ZFI_SAP_API_GATEWAY</code> 的 <code>REPORT_SUBMIT/MEMORY_EXPORT</code>，只按 <code>S_BUDAT</code>、<code>S_GSBER</code> 和 <code>zfi057Workflow.zfi019nlMemory</code> 配置从 <code>ZFI019NL</code> memory 输出取物料集合；<code>GET_GS03</code> 默认传 SAP 集 <code>IV_SET_NAME=Z31</code>，从返回表筛 <code>TITLE=业务范围</code> 的行并取 <code>FROM</code> 作为工厂，解析出的工厂不作为步骤一入参。第二步只针对 <code>ZFI057</code> 工作流生效：后端把该业务范围匹配出的全部工厂一次性传给 <code>ZFI057.vbs</code>；VBS 先填日期和 <code>S_MTART-LOW=*</code>，再把首个工厂写入 <code>S_WERKS-LOW</code> 作为 SAP 必填校验种子值，多工厂时继续把全部工厂粘贴到 <code>S_WERKS</code> 多选，单工厂时只使用 <code>S_WERKS-LOW</code>。同时填写 <code>S_MATNR</code> 多选。跨月日期窗口按 VBS 实际逻辑拆分，日志会记录每个窗口的 <code>S_KADKY</code>、<code>S_KADAT</code> 和 <code>ZFI_SPLIT</code> 查询条件；第三步执行 <code>ZCO020.vbs</code> 验证。</td><td>后端 run 日志按 <code>[workflow]</code>、<code>[scope]</code>、<code>[step 1]</code>、<code>[step 2]</code>、<code>[step 3]</code> 记录原始入参、业务范围/工厂映射、每步 query、脚本结果摘要和 VBS 输出。步骤二 query 只记录非物料入参、<code>S_WERKS-LOW.seed</code>、<code>S_WERKS.items</code> 和 <code>materialCount</code>，不输出物料明细、样例或哈希；如果步骤二本次 <code>ZFI057</code> 执行返回“没有符合条件数据”，后端将该业务范围记为 <code>no_data</code>，跳过该业务范围的 <code>ZCO020</code> 并继续后续业务范围。若第一步已有物料但 SAP 集 <code>Z31</code> 未维护该业务范围对应的可执行工厂，范围状态为失败，用户提示为“业务范围 N 的上游物料已获取，但 SAP 集 Z31 未维护该业务范围对应的可执行工厂，无法执行 ZFI057 与 ZCO020 后续步骤。请维护业务范围-工厂映射，或从任务范围中移除该业务范围。”步骤一物料日志同时记录 <code>method=MEMORY_EXPORT</code>、<code>S_BUDAT</code>、<code>S_GSBER</code>、<code>rawLines</code>、<code>alvRows</code>、<code>finalRows</code>、<code>selectedSource</code>、<code>selectedCount</code>、<code>selectedSample</code>、<code>selectedHash</code> 和 <code>customTableCount</code>；全量物料清单写入 <code>D:\RPA\outputs\zfi057\*_materials.csv</code> 并挂到运行记录文件列表，用于逐项确认最终传给步骤二的物料集合。其中 <code>source,index,material</code> 区记录最终选用和上游物料，<code>material,source</code> 区只列本次从 <code>ZFI_SPLIT</code> 等自定义表查出的物料及来源，不再重复列 <code>ZFI019NL</code> memory 全量物料。某个业务范围第一步未输出物料时，后端将该业务范围记录为无数据并继续后续业务范围；不再要求用户手工传 <code>materials</code>，也不会静默按全物料运行。</td></tr>
+            <tr><td><code>ZCO020</code></td><td>保留后端事务配置和 <code>D:\RPA\transactions\ZCO020.vbs</code>，但不在工作台作为独立卡片展示。</td><td>作为 <code>ZFI057</code> workflow 第三步内部调用，写入 <code>S_BUDAT-LOW/HIGH</code> 与 <code>S_GSBER-LOW</code>，执行后按 <code>ZBZ1 = zpp063</code> 过滤、全选并保存/导出。</td><td>VBS 标准输出会记录业务范围、日期范围、过滤字段和保存动作。后端在每个业务范围的第一次 <code>ZCO020</code> 完成后，不再通过 SAP GUI 打开 <code>SM37</code>，而是通过 NCo 的 <code>RFC_READ_TABLE</code> 查询 <code>TBTCO</code>：<code>JOBNAME='ZFI057'</code>、<code>SDLUNAME=本次 SAP GUI 登录用户</code>，并按第一次 <code>ZCO020</code> 完成时间作为下界、当前轮询时间加 1 分钟作为 <code>high_date/high_time</code> 上界做时间窗口卡控。只要 job 到达终态即可继续，不区分成功或失败；最多等待 10 分钟，超过仍未终态才将该业务范围记为失败。job 到终态后再执行第二次 <code>ZCO020</code>。第二次 <code>ZCO020</code> 执行成功后当前业务范围结束，不再继续查询 job；如果第二次 <code>ZCO020</code> 执行失败，该业务范围记为失败并继续后续业务范围。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="warning-box"><strong>当前边界：</strong><code>ZFI057</code> workflow 的第一步已经接入 SAP NCo/RFC，不再依赖 <code>ZFI019NL.vbs</code>。运行目录必须包含 <code>sapnco.dll</code>、<code>sapnco_utils.dll</code>、<code>ijwhost.dll</code>、<code>cpc4n.dll</code> 和 <code>System.Configuration.ConfigurationManager.dll</code>，且 <code>D:\RPA\config.local.json</code> 必须配置 <code>sapNco</code> 与 <code>zfi057Workflow.zfi019nlMemory</code>。上线验证 ZFI057 时，如果某个业务范围第一步未输出物料，workflow 会将该业务范围记为无数据并继续其他业务范围；可用 <code>D:\RPA\bin\SapWebLauncher.exe --test-zfi057-get-gs03 --businessArea 2800 --setName Z31</code> 单独验证 <code>ZFI_SAP_API_GATEWAY / GET_GS03</code> 工厂映射，可用 <code>D:\RPA\bin\SapWebLauncher.exe --test-zfi019nl-memory --businessArea 2800 --period 2026.04.27 --weekEnd 2026.05.03</code> 单独验证步骤一。诊断日志 <code>D:\RPA\outputs\zfi057\DIAG-ZFI019NL-*_diagnostic.log</code> 会追加 <code>step2Inputs</code> 段，按业务范围列出步骤二一次执行的全部工厂、<code>S_WERKS-LOW</code> 种子值、非物料入参、拆月窗口和 <code>ZFI_SPLIT</code> 查询条件；主诊断日志只写 <code>materialCount</code> 和 <code>materials=omitted</code>，不写物料集合、样例或哈希，具体物料清单以同目录 <code>*_materials.csv</code> 为准。</div>
+      <div class="tip-box"><strong>ZFI057 最新运行口径：</strong>业务范围到工厂映射不再读取 <code>ZTSD001</code>、SQLite <code>plants</code> 或 VBS 本地硬编码映射；运行时必须通过 NCo 调用 <code>ZFI_SAP_API_GATEWAY</code>，传 <code>IV_ACTION=GET_GS03</code> 和 <code>IV_SET_NAME=Z31</code>（可由 <code>zfi057Workflow.gs03SetName</code> 覆盖），按返回的 <code>RT_SET_VALUES-TITLE</code> 匹配业务范围，取对应行的 <code>RT_SET_VALUES-FROM</code> 作为工厂；同一 <code>TITLE</code> 返回多行时必须全部取 <code>FROM</code>，不能只取第一条。目标 SAP 系统必须已部署 <code>GET_GS03</code> action；<code>GET_GS03</code> 结果只用于步骤二 <code>S_WERKS</code> 多选入参，不参与步骤一 <code>ZFI019NL</code> memory 取数条件。<code>ZFI057</code> 生产入口必须传业务范围；只传工厂不会反推业务范围。如果某业务范围步骤一有物料但 <code>GET_GS03</code> 没有返回任何工厂，该业务范围会失败并继续后续业务范围，不再静默改用旧表、本地工厂表或旧 VBS 单工厂配置。执行顺序以业务范围为外层循环：每个业务范围先执行步骤一 <code>ZFI019NL</code> memory 取物料，再把步骤一得到的物料集合和 <code>GET_GS03</code> 得到的全部工厂传给步骤二 <code>ZFI057.vbs</code>；步骤二对该业务范围只执行一次，VBS 先用首个工厂写 <code>S_WERKS-LOW</code> 通过 SAP 必填校验，再按多选规则粘贴全部工厂。步骤二至少一个日期窗口成功后，执行第一次步骤三 <code>ZCO020.vbs</code>，然后通过 <code>TBTCO</code> 表查询 <code>ZFI057</code> 后台 job。查询窗口以下界“第一次 <code>ZCO020</code> 完成时间减 1 分钟”、上界“当前轮询时间加 1 分钟的 SAP 日期 <code>high_date</code> 和 SAP 时间 <code>high_time</code>”为准，轮询上限 10 分钟；job 到达完成/取消/失败等任意终态后即执行第二次 <code>ZCO020.vbs</code>，不因 job 失败终态阻断第二次 <code>ZCO020</code>。第二次 <code>ZCO020</code> 成功后当前业务范围结束，不再继续查 job，然后进入下一个业务范围。单个业务范围无数据或失败不会提前终止整个 workflow，后端会继续后续业务范围，全部业务范围结束后再统一触发 SAP cleanup，发送 <code>/nex</code> 退出目标 SAP GUI 会话。钉钉通知的“执行入参”按运行日志里的实际解析结果展示 <code>[业务范围]-&gt;工厂</code>；如果运行日志缺失 <code>GET_GS03</code> 工厂映射，只显示“未解析（GET_GS03日志缺失）”，不会在通知阶段再次查 SAP 或使用本地兜底。若 <code>ZFI057</code> 因跨月拆成两次执行，通知会额外展示 <code>ZFI057日期入参</code>，分别列出第 1 次和第 2 次的“成本核算日期”和“成本核算日期起于”范围；该段优先从 VBS <code>date input group</code> 或后端 <code>window1/window2</code> 执行日志解析，日志没有时才按请求参数或服务器默认上一完整周推导。“SAP消息”按业务范围汇总结果，例如 <code>业务范围：2800无数据，2900运行成功/运行失败</code>。</div>
+      <div class="tip-box"><strong>ZFI057 日期入参规则：</strong><code>S_KADKY-LOW</code> 仍取成本核算日期窗口所在月份 1 号；<code>S_KADAT-LOW</code>（成本核算日期起于）必须取该窗口月份 2 号。同月单窗口和跨月拆出的每个窗口都按这个规则生成，钉钉展示必须与 VBS 实际写入 SAP GUI 的值一致。</div>
+      <div class="tip-box"><strong>ZFI057 无数据判断：</strong>步骤二不再按工厂拆成多次执行，而是在一次 <code>ZFI057.vbs</code> 中把该业务范围全部工厂写入 <code>S_WERKS</code> 多选。跨月时一次步骤二可能拆成多个日期窗口；单个窗口返回“没有符合条件数据”时，VBS 继续跑后续窗口。只要任意日期窗口执行成功，就认为该业务范围步骤二有数据，后续仍进入步骤三 <code>ZCO020</code>；只有本次步骤二所有日期窗口都无数据时，才把该业务范围记为 no-data 并跳过该业务范围的步骤三。</div>
+      <h3 id="entry-installer">本机启动与安装入口</h3>
+      <p>管理员部署或排错时以 <code>上线安装包\上线安装文档清单.md</code> 和 <code>上线安装包\最终上线部署步骤\README_V2_Windows_Server_上线部署.md</code> 为准。当前服务器的 Git 源码目录是 <code>D:\RPA\RpaProject</code>，实际运行根目录是 <code>D:\RPA</code>；运行进程读取 <code>D:\RPA\bin</code>、<code>D:\RPA\assets</code>、<code>D:\RPA\transactions</code> 和 <code>D:\RPA\data</code>。只在源码目录 <code>git pull</code> 或修改代码不会自动让线上生效。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>入口</th><th>作用</th><th>注意事项</th></tr></thead>
+          <tbody>
+            <tr><td><code>上线安装文档清单.md</code></td><td>上线前、上线中、上线后的人工核对清单。</td><td>必须先填清源码目录、运行目录、后端 exe、SAP 登录配置、钉钉真实配置和对外访问入口。</td></tr>
+            <tr><td><code>04_配置SAP登录信息.bat</code></td><td>在目标 Windows 执行账号下生成 SAP 登录配置。</td><td>密码使用当前 Windows 用户 DPAPI 保护，生成的 <code>%LOCALAPPDATA%\SapWebLauncher\config.json</code> 不能复制到其他账号或机器。</td></tr>
+            <tr><td><code>启动脚本\00_register_sap_gui_components.cmd</code></td><td>生产机首次部署、SAP GUI 重装或程序反复登录时，管理员提权注册 SAP GUI 脚本组件。</td><td>脚本注册 <code>saprotwr.dll</code> 和 <code>sapfewse.ocx</code>，会读取组件 PE machine 类型自动选择 <code>SysWOW64\regsvr32.exe</code>、<code>System32\regsvr32.exe</code> 或 32 位 PowerShell 场景下的 <code>Sysnative\regsvr32.exe</code>，并可用 <code>00_register_sap_gui_components.ps1 -CheckOnly</code> 验证 <code>SapROTWr.SapROTWrapper</code> 与 <code>Sapgui.ScriptingCtrl.1</code> 均为 <code>True</code>。</td></tr>
+            <tr><td>源码更新发布</td><td>从 <code>D:\RPA\RpaProject</code> 构建 publish，再复制到 <code>D:\RPA\bin</code>，并同步 <code>index.html</code>、<code>assets</code>、<code>gateway</code>、<code>transactions</code> 到 <code>D:\RPA</code>。</td><td>复制后只重启本项目的 <code>D:\RPA\bin\SapWebLauncher.exe --serve</code> 和 <code>D:\RPA\gateway\start-rpa-gateway.ps1</code>；不要动其他端口、其他 Node 服务或其他项目进程。</td></tr>
+            <tr><td>整包拷贝 <code>D:\RPA</code></td><td>可把当前运行目录作为程序包整体拷贝到生产机。</td><td>只能把它当作程序文件包；生产机必须重新填写真实 <code>config.local.json</code>、重新生成 SAP DPAPI 登录配置、重新放置生产证书。升级已有生产机时默认保留生产机自己的 SQLite、证书、日志、输出和真实配置。</td></tr>
+            <tr><td><code>00_生成上线安装包.cmd</code></td><td>开发/打包机生成上线包。</td><td>生成包只包含文档、必要脚本、发布产物、前端资源、VBS 和配置模板，不包含真实 <code>config.local.json</code>、SQLite、日志或 SAP 登录配置。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="availability" class="section">
+      <div class="section-header"><div class="section-num">2.5</div><h2>生产可用性与重启恢复</h2></div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>项目</th><th>生产口径</th></tr></thead>
+          <tbody>
+            <tr><td>正式用户入口</td><td><code>https://fi_automation.srv.lstech.com/rpa/</code>，由 Node gateway 的 443 端口承载。</td></tr>
+            <tr><td>HTTP 兼容入口</td><td><code>http://10.0.2.120:6174/rpa/</code>，仅作内网兼容和排障使用；不替代 HTTPS 正式入口。</td></tr>
+            <tr><td>本机 API</td><td><code>SapWebLauncher.exe --serve</code> 仅监听 <code>127.0.0.1:8080</code>，gateway 将 <code>/rpa/api/*</code> 转发给该本机 API。</td></tr>
+            <tr><td>登录后恢复</td><td><code>SAP_RPA_StartupMonitor</code> 在 <code>marcus</code> 交互式登录后立即启动，持续每 10 秒检查本机 API 和 6174 gateway；任一不可达时只调用项目 <code>01_start_sap_rpa_services.ps1</code> 恢复。</td></tr>
+            <tr><td>服务器重启限制</td><td>SAP GUI 自动化必须在交互式桌面会话运行。未配置 Windows 自动登录时，服务器重启后必须先登录 <code>marcus</code>，上述监控才能运行；配置受控自动登录属于 IT/安全策略事项，不能把密码写入 Git、普通安装包或功能配置。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="execute" class="section">
+      <div class="section-header"><div class="section-num">3</div><h2>执行任务</h2></div>
+      <p>执行任务是 V2 的核心功能。页面提交后，API 创建 run，SQLite 记录参数快照，后台串行 worker 领取任务，SapWebLauncher 调用 VBS 和 SAP GUI 执行，结束后回写状态和通知。</p>
+      <div class="tip-box"><strong>ALV 组织/周归档：</strong>保存类 ALV 的最终文件按组织和周保存：命中 SAP 映射时为 <code>&lt;alvExportDataDirectory&gt;\ZBU\ZSBU\yyyy_WKnn\文件名.xlsx</code>；未命中时为 <code>&lt;alvExportDataDirectory&gt;\集采工厂\yyyy_WKnn\文件名.xlsx</code>。同一组织、周和事务码的工厂数据合并到同一 Excel；一厂多组织各写一份。SAP GUI 本机暂存固定在 <code>D:\RPA\临时文件\ALV本地暂存</code>，后端归档成功后才清理，不允许直接写最终 UNC 目录。</div>
+      <h3 id="execute-test-date-override">V2 测试日期覆盖</h3>
+      <p>测试日期只是一层日期入参覆盖，不改变事务码、VBS、排队、通知、导出或 SAP 登录流程。页面仅以 <code>GET /api/health</code> 的 <code>allowTestDateOverride=true</code> 决定是否显示“指定测试用日期”。后端只在 <code>sapNco.connectionName</code> 或 <code>sapNco.name</code> 大小写严格等于 <code>test888</code> 时返回该值；<code>TEST888</code>、<code>Test888</code>、带空格或前后缀的值均不允许。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>场景</th><th>页面与提交</th><th>后端最终行为</th></tr></thead>
+          <tbody>
+            <tr><td><code>test888</code> 测试系统</td><td>日期控件按 VBS 实际消费的 <code>{PERIOD}/{WEEK_END}/{YEAR}/{WEEK}</code> 占位符和 SAP 写屏字段显示，不能只看可能滞后的 <code>@params</code> 注释，默认不勾选。<code>ZFI072A</code> 只显示 ISO 周，写入 year/week 及派生 period/weekEnd，不显示或提交开始/截止日期字段。<code>ZFI057</code> 同屏显示 ISO 周、开始日期和截止日期：改周会回填该周日期范围，改开始日期会回填对应 ISO 周；提交始终带齐 <code>year/week/period/weekEnd</code>。手工日期范围提交时不带 <code>testIsoWeek</code>，避免后端按整周覆盖该范围。<code>ZCO019</code>、<code>ZCO020</code>、<code>ZFI019NA</code>、<code>ZFI019NL</code>、<code>ZFI072N</code>、<code>ZFI080</code>、<code>ZFI080B</code>、<code>ZFI148</code>、<code>ZFIR034</code> 都只显示可编辑开始/截止日期。保存类卡片全部提供测试日期输入：<code>ZFI072A</code> 输入周，其余保存类输入日期范围；周结完工成本明细表的 <code>ZFI019NL</code>、<code>ZFI019NA</code>、<code>ZFI148</code> 三张卡均输入日期范围。</td><td>勾选时写入 <code>dateMode=testOverride</code>、<code>testDateMode=testOverride</code> 和标准化的 <code>period/weekEnd/year/week</code>；年周始终由日期范围 low 值推导。</td></tr>
+            <tr><td>未勾选</td><td>不发送测试 marker，也不发送 <code>period/weekEnd/year/week</code>。</td><td>按服务器系统日期计算上一完整周。</td></tr>
+            <tr><td>正式或非 <code>test888</code> 系统</td><td>测试日期控件完全隐藏；localStorage 遗留输入不得进入 API 或 <code>sap-rpa://run</code> payload。</td><td>即使外部请求、SQLite 历史定时任务或失败重跑带有测试 marker，也会清除测试日期及历史别名后，按服务器上一完整周执行。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tip-box"><strong>日期相关范围：</strong><code>ZFI072A</code>、<code>ZFI072N</code>、<code>ZFI057</code>、<code>ZCO020</code>、<code>ZFIR034</code>、<code>ZFI080</code>、<code>ZFI080B</code>、<code>ZCO019</code>、<code>ZFI019NL</code>、<code>ZFI019NA</code>、<code>ZFI148</code>。以 <code>2026-W18</code> 执行 <code>ZFI057</code> 时，仍使用原 <code>auto3step</code> 三步流程，只将三步共享的日期标准化为 <code>2026.04.27</code> 至 <code>2026.05.03</code>。</div>
+      <h3 id="execute-zfi072a">采购价保存/导出规则（ZFI072A、ZFI072N）</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>项目</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>事务码</td><td><code>ZFI072A</code> 采购价月表、<code>ZFI072N</code> 维护采购价；两个事务码都属于采购价链路的保存/导出类自动化。</td></tr>
+            <tr><td>输入参数</td><td>年度、周、工厂列表、业务范围、备注等由页面/API 传给执行器，再由执行器传入 VBS。</td></tr>
+            <tr><td>工厂来源</td><td>来自 SQLite 配置中的事务码规则和业务范围，不允许在 VBS 中硬编码固定工厂。</td></tr>
+            <tr><td>ALV 导出</td><td>所有保存类卡片都先由 SAP GUI 写本机暂存，再由后端组织归档到 <code>alvExportDataDirectory</code>。后端按 Excel 中的实际 <code>WERKS</code> 或 <code>GSBER</code> 逐值读取 SAP 映射；命中时路径为 <code>&lt;alvExportDataDirectory&gt;\ZBU\ZSBU\yyyy_WKnn\事务码_卡片名称_WKnn.xlsx</code>，相同组织、周和事务码的数据合并为一个 Excel；一厂多组织各写一份。查询成功但无映射时路径为 <code>&lt;alvExportDataDirectory&gt;\集采工厂\yyyy_WKnn\...</code>，保留工厂或业务范围后缀避免不同来源覆盖。VBS 会等待本机暂存文件存在、大小稳定且对应工作簿关闭后输出 <code>OUTPUT_FILE</code>；后端归档成功后删除本机暂存。映射、缺字段或网络归档失败时任务失败、保留本机暂存并通知钉钉。SAP 状态栏出现“已传递 xx 个字节”表示前端导出已传输完成，不是失败消息。</td></tr>
+            <tr><td>批次文件</td><td>父 run 完成时不再合并跨工厂总 Excel，而是读取所有 child 的 <code>run_files</code>，把每个工厂自己的最终 Excel 逐个登记到父 run 的 <code>run_files</code>。同一个 child 如果存在 <code>_part1/_part2</code>，会先在该工厂目录内合并成一个最终工厂 Excel，再登记父 run。业务范围 child 如果导出的是包含多工厂的原始 ALV，后端会按 Excel 工厂字段拆成多个工厂文件后再登记；拆分成功后 raw 文件、业务范围子目录和空的 <code>_raw_business_area</code> 根目录会清理。如果业务范围导出只有表头或没有工厂数据行，raw 文件和空目录也会清理，父子 run 不登记无用文件，且不会因为“没数据”被判为技术失败。因此父任务结果里只会看到真实拆出的工厂文件，文件夹也按工厂拆开；不再生成 <code>yyyy_WKnn\事务码_卡片名称_yyyyMMddHHmmss.xlsx</code> 这种跨工厂总表，也不再生成“合并数据”“合并异常”或“分片清单”工作簿。</td></tr>
+            <tr><td>成功判断</td><td>当前以 VBS 完成流程、ALV 分片文件落盘、SAP 状态栏消息、脚本退出码和执行器记录为依据；对 <code>ZFI072A</code>，ALV 导出文件确认完成即该工厂成功，不再强制等待后续 SAP 保存按钮；对 <code>ZFI072N</code>，必须先完成 ALV 分片导出，再继续全选并执行原有 SAP 保存动作。对 <code>ZFI019NL</code>，查询阶段 SAP 状态栏明确提示“没有符合条件数据”或导出的业务范围 Excel 只有表头时，按无业务数据处理，输出 warning/成功标记并清理 raw 临时文件，不作为技术失败。</td></tr>
+            <tr><td>Excel 清理</td><td>SAP GUI 标准 Excel 导出通常会短暂打开 Excel。VBS 导出完成后按本次分片完整路径关闭对应工作簿；如果 Excel 没有把工作簿注册到 COM，VBS 会通过 WMI 查询 <code>EXCEL.EXE</code> 的 <code>CommandLine</code>，只终止命令行包含本次分片完整路径的 Excel 进程，并确认该路径不再被 Excel 打开后才输出 <code>OUTPUT_FILE</code>、继续下一个日期段或工厂。父 run 结束时后端从 child run 的 <code>run_files</code> 读取实际分片完整路径，并只对这些路径调度 Excel 关闭 helper；helper 同样带路径级 WMI 兜底。禁止按进程名粗暴关闭全部 Excel，避免影响用户手工打开的其他工作簿。</td></tr>
+            <tr><td>结束清理</td><td>每个任务完成后应通过 SAP GUI 执行清理逻辑，优先对已登录 session 发送 <code>/NEX</code>，并遍历多个匹配 session；对没有命令框的登录前窗口或弹窗尝试关闭并记录日志，避免服务器桌面堆积窗口。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="warning-box"><strong>生产文件落盘口径：</strong>所有保存类 ALV 卡片（ZFI072A、ZFI072N、ZFI080、ZFI080B、ZCO019、ZFI019NA、ZFI019NL、ZFI148）均由 SAP GUI 先写入本机暂存目录 <code>D:\RPA\临时文件\ALV本地暂存</code>，不把 UNC 网络路径直接传给 SAP GUI。后端在确认 <code>OUTPUT_FILE</code>、文件存在且大小稳定后，按 Excel 实际 <code>WERKS</code> 或 <code>GSBER</code> 查 SAP 组织映射，再归档到 <code>fileStorage.alvExportDataDirectory</code> 的 <code>ZBU\ZSBU\yyyy_WKnn</code> 或 <code>集采工厂\yyyy_WKnn</code>。复制完成后校验最终文件存在和大小，再删除本机暂存文件及空目录。归档失败时 child run 必须标记为 <code>failed</code>、写入 <code>ERROR</code> 日志、保留暂存文件供排障，并进入钉钉失败通知；不得把“SAP GUI 已导出”误判成整个卡片成功。</div>
+      <h3 id="execute-queue">排队、进度和日志</h3>
+      <div class="flow">
+        <div class="flow-step"><div><strong>提交入队</strong>页面调用 <code>POST /api/runs</code>，传入事务码、工厂、操作人、钉钉 ID 和通知目标。</div></div>
+        <div class="flow-step"><div><strong>排队等待</strong>API 写入 <code>runs.status=queued</code>，页面显示 runId、前方任务数和排队状态。</div></div>
+        <div class="flow-step"><div><strong>串行执行</strong>后台 worker 将任务改为 <code>running</code>，同一交互式 SAP GUI 桌面一次只执行一个任务。</div></div>
+        <div class="flow-step"><div><strong>日志回写</strong>VBS stdout、SAP 状态栏、输出文件和通知结果写入 <code>run_logs</code>、<code>run_files</code>。</div></div>
+        <div class="flow-step"><div><strong>页面轮询</strong>页面通过 <code>GET /api/runs/{runId}</code> 轮询状态，把 API 日志合并到黑底日志框。</div></div>
+      </div>
+      <div class="tip-box"><strong>黑底日志框说明：</strong>页面内存中只保留当前会话展示用即时日志；真正持久日志在 SQLite。刷新页面后，应按 runId 或历史列表重新从 API 读取。</div>
+      <h3 id="execute-batch">多工厂拆批与失败重跑</h3>
+      <p>当 ZFI072A 一次选择多个工厂时，推荐按“父 run + 工厂子 run”执行。父 run 表示用户的一次业务请求，子 run 表示每个工厂的实际执行结果。这样可以避免 A、B、C 分批执行时只有 B 失败，却无法准确追溯或重跑。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>状态</th><th>含义</th><th>用户处理</th></tr></thead>
+          <tbody>
+            <tr><td><code>success</code></td><td>所有工厂执行完成。</td><td>查看日志、文件和钉钉汇总。</td></tr>
+            <tr><td><code>no_data</code></td><td>SAP 已正常执行，但该工厂或批次没有符合条件的数据；不生成空 Excel，也不属于失败。</td><td>钉钉显示“自动化已完成（无数据）”。无数据项不进入“失败工厂”重跑范围。</td></tr>
+            <tr><td><code>partial_failed</code></td><td>部分工厂成功，部分工厂失败。</td><td>优先使用失败工厂重跑，不重复执行已成功工厂。</td></tr>
+            <tr><td><code>failed</code></td><td>任务整体失败或所有子任务失败。</td><td>按异常 SOP 检查 SAP 登录、脚本、工厂数据量或输出文件。</td></tr>
+            <tr><td>重跑失败工厂</td><td><code>POST /api/runs/{parentRunId}/rerun-failed</code> 根据失败工厂创建新父 run。</td><td>只重跑失败工厂，保留原 run 审计记录。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="execute-chain">跨事务链路与 result 传参</h3>
+      <p>对于“先跑报表 A、报表 B，计算 A+B 的最终 <code>result</code>，再把 <code>result</code> 和页面工厂入参一起传给报表 C”的场景，V2 应采用父子 run 或 chainRun 编排。父 run 表示一次链路请求，子 run 分别表示 A 取数、B 取数、result 计算、C 执行。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>步骤</th><th>责任方</th><th>数据要求</th></tr></thead>
+          <tbody>
+            <tr><td>A/B 报表取数</td><td>后端通过本地 SAP NCo 报表取数工具、<code>ZFM_NCO_SUBMIT</code> 或等价服务取回 list/spool 数据。</td><td>原始 A/B 结果必须关联 <code>runId</code> 保存，不能只写进页面黑底日志。</td></tr>
+            <tr><td>result 计算</td><td>后端或后台 worker 做清洗、匹配、合并、冲突处理和空值处理。</td><td>必须明确字段映射：A 哪些字段、B 哪些字段、合并公式、格式转换、空值规则和冲突规则。</td></tr>
+            <tr><td>result 落库/落盘</td><td>小结果写 SQLite 结构化字段；大结果写 <code>outputs/&lt;runId&gt;/result-for-C.json</code>、CSV 或 XLSX。</td><td>C 不从页面临时状态、截图或黑底日志推断 result，只接收 <code>resultId</code> 或 <code>resultFile</code>。</td></tr>
+            <tr><td>C 执行</td><td>若 C 可后台执行，优先 NCo/ABAP；若必须操作 SAP GUI，则 SapWebLauncher 串行调用 C 的 VBS。</td><td>C 入参包含页面工厂参数 + <code>resultId/resultFile</code>，大结果不得塞进 URL 或命令行。</td></tr>
+            <tr><td>重跑</td><td>可重跑失败步骤。</td><td>C 重跑必须绑定同一版 A/B result，或先重新执行 A/B 生成新版 result，不能混用旧 result。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="warning-box"><strong>链路门槛：</strong>C 只能在 A/B 都成功且 result 必填字段校验通过后执行。A/B 取数失败、result 缺字段或 C 入参校验失败时，链路状态应为 <code>failed</code> 或 <code>partial_failed</code>，不得误标成功。</div>
+    </section>
+
+    <section id="config" class="section">
+      <div class="section-header"><div class="section-num">4</div><h2>基础配置</h2></div>
+      <p>基础配置采用后台管理风格，目标是高效维护数据。页面只在 API 在线时允许新增、编辑、删除；离线时仅显示示例或缓存数据。</p>
+      <h3 id="config-plant">工厂与业务范围</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>配置项</th><th>用户维护内容</th><th>影响范围</th></tr></thead>
+          <tbody>
+            <tr><td>工厂配置</td><td>工厂代码、名称/说明、所属业务范围、排序、启停。</td><td>影响事务码规则、执行页工厂列表、定时任务工厂范围。</td></tr>
+            <tr><td>业务范围配置</td><td>业务范围 ID、名称、短名称、包含工厂、部分事务专用业务范围或工厂覆盖。</td><td>执行任务时根据事务码和业务范围自动带出工厂。</td></tr>
+            <tr><td>事务码配置</td><td>事务码、名称、模块、阶段、参数、超时秒数、重试次数、启停。</td><td>影响工作台卡片、执行任务列表、统计排行和定时任务可选项。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="config-rule">事务码与工厂/业务范围规则</h3>
+      <p>规则用于定义某事务码默认选择哪个业务范围，以及最终传给 VBS 的工厂列表。用户选择业务范围后，页面应自动带出对应工厂，并允许在规则维护中增删工厂。最终执行时以事务码规则解析出的工厂列表为准。规则弹窗新增工厂后会即时显示工厂标签和由工厂主数据推导的关联业务范围；输入框只在新增成功后清空。规则允许先保存有效 SAP 工厂代码，再补充门户工厂主数据；主数据缺失或缺少业务范围时页面会显示缺失提示，不会静默删除该规则代码。</p>
+      <div class="tip-box"><strong>日期范围事务：</strong><code>ZFIR034</code> 只接收 <code>period</code> 和 <code>weekEnd</code>，不接收工厂或业务范围，也不要求用户手工输入周次。页面、API、定时任务触发器按运行时服务器系统日期计算上一完整自然周，周一作为开始日期、周日作为截止日期；VBS 在 SAP 选择屏幕写入 <code>S_BUDAT-LOW/HIGH</code>，并按最终开始日期推导周次写入 <code>P_WEEK</code>。例如系统日期为 <code>2026-07-02</code> 时，执行日期范围为 <code>2026.06.22</code> 至 <code>2026.06.28</code>，<code>P_WEEK=26</code>。钉钉通知只展示该日期范围。</div>
+      <div class="constraint-box"><strong>配置源规则：</strong>API 在线时，配置来自 SQLite；页面不应以旧静态数组作为生产配置依据。API 离线时的 fallback 只用于演示和只读预览。</div>
+      <h3 id="config-delete">删除、停用和前端刷新</h3>
+      <p>工厂删除后，后端可能采用软删除方式返回 <code>enabled=false</code>。前端会从工厂主数据列表隐藏停用项；但业务范围和事务码规则中用户显式保存的工厂代码必须在 <code>GET /api/config</code> 刷新后保留，不能被前端静默清空。缺少主数据或业务范围映射时显示提示，由维护人员补齐主数据或规则后再执行。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>操作</th><th>行为</th><th>注意事项</th></tr></thead>
+          <tbody>
+            <tr><td>新增/编辑</td><td>调用对应配置 API，保存后刷新 <code>GET /api/config</code>。</td><td>保存失败时不得只改页面内存。</td></tr>
+            <tr><td>删除工厂</td><td>API 可软删除，页面过滤停用项。</td><td>删除后如仍出现，先检查 API 是否返回 <code>enabled=false</code> 和前端过滤逻辑。</td></tr>
+            <tr><td>停用事务码/规则</td><td>不再作为可执行生产入口展示或执行。</td><td>历史记录仍保留，用于审计。</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="report" class="section">
+      <div class="section-header"><div class="section-num">5</div><h2>统计报表与执行历史</h2></div>
+      <p>统计报表用于按时间周期查看自动化运行效果，页面默认统计当天；手工调整开始/截止日期后，事务码排行、执行总次数、历史列表和导出报表都跟随同一日期范围。历史列表用于追溯每次 run 的事务码、工厂、耗时、状态、结果摘要、日志和输出文件。</p>
+      <h3 id="report-metrics">统计指标口径</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>指标</th><th>口径</th><th>来源</th></tr></thead>
+          <tbody>
+            <tr><td>执行总次数</td><td>统计周期内 run 总数。</td><td><code>/api/reports/execution</code> 的 <code>summary.totalRuns</code></td></tr>
+            <tr><td>成功率</td><td>成功次数除以总次数，页面显示百分比。</td><td><code>summary.successRate</code></td></tr>
+            <tr><td>平均耗时</td><td>周期内平均执行耗时。</td><td><code>summary.avgDurationSeconds</code></td></tr>
+            <tr><td>节省工时</td><td>当前页面定义为累计自动化实际运行耗时，不再按人工估算。</td><td><code>summary.totalDurationSeconds</code></td></tr>
+            <tr><td>事务码排行</td><td>按事务码展示执行次数、成功、失败、成功率、平均耗时。</td><td><code>transactionRanking</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="report-history">历史与审计</h3>
+      <p>执行历史来自 <code>GET /api/runs</code>，日志详情来自 <code>GET /api/runs/{runId}</code>。如果页面刷新，黑底日志框中的即时日志会消失，但历史 run、后端日志和输出文件仍可从 SQLite/API 读取。</p>
+      <div class="tip-box"><strong>导出报表：</strong>页面导出的是当前历史/统计视图数据，适合业务人员留档；生产审计仍以 SQLite 中的 <code>runs</code>、<code>run_logs</code>、<code>run_files</code> 为准。</div>
+      <h3 id="report-chain">A/B 报表取数合并后驱动 C</h3>
+      <p>如果后续要先读取其他 SAP 报表 A、报表 B，再将 A+B 的最终结果 <code>result</code> 作为报表 C 的输入，推荐由后端编排完成，不把复杂取数和计算塞进 VBS。</p>
+      <div class="flow">
+        <div class="flow-step"><div><strong>页面提交</strong>页面只提交工厂、期间、事务链路等业务参数，API 创建父 run。</div></div>
+        <div class="flow-step"><div><strong>A/B 取数</strong>后端通过本地 NCo 报表取数工具或 <code>ZFM_NCO_SUBMIT</code> 以 <code>BACKGROUND_SPOOL</code> 方式取回 A、B 的 list/spool 数据。</div></div>
+        <div class="flow-step"><div><strong>后端计算</strong>API 或后台 worker 清洗、匹配和汇总 A/B 数据，生成最终 <code>result</code>。</div></div>
+        <div class="flow-step"><div><strong>结果落盘</strong>小结果可写 SQLite；大结果应保存到 <code>outputs/&lt;runId&gt;/result-for-C.json</code>、CSV 或 XLSX，并在 run 参数中只传 <code>resultId</code> 或 <code>resultFile</code>。</div></div>
+        <div class="flow-step"><div><strong>驱动 C</strong>如果 C 可后台执行，继续由 NCo/ABAP 调用 C；如果 C 必须操作 SAP GUI，则 SapWebLauncher 串行调用 C 的 VBS，把页面工厂参数和 <code>resultId/resultFile</code> 一起传入。</div></div>
+      </div>
+      <div class="constraint-box"><strong>设计边界：</strong>VBS 只负责把工厂和 result 文件/编号填入 SAP GUI，不负责 A/B 报表取数、复杂合并、数据清洗或重试审计。大结果不要放进 URL 或命令行，避免超长参数和日志泄露。</div>
+    </section>
+
+    <section id="schedule" class="section">
+      <div class="section-header"><div class="section-num">6</div><h2>定时任务</h2></div>
+      <p>定时任务用于提前保存周期性执行配置，例如周一固定执行某事务链路。页面负责维护配置，真正无人值守执行必须由后端常驻服务、任务计划程序或调度器承接。</p>
+      <h3 id="schedule-save">保存规则</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>字段</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>任务 ID/名称</td><td>新建时自动生成或由用户填写，用于列表和审计。</td></tr>
+            <tr><td>事务码</td><td>从工作台卡片已有且已启用的事务码中选择；后台配置里存在但工作台没有展示的事务码，不再出现在执行页或定时任务弹窗下拉框。</td></tr>
+            <tr><td>业务范围/工厂与日期</td><td>根据事务码规则显示对应范围。<code>ZFI057</code>、<code>ZFI019NL</code>、<code>ZCO020</code> 在定时任务中编辑和保存业务范围代码；普通工厂型事务仍编辑工厂代码。仅 <code>test888</code> 环境的日期相关事务显示“指定测试用日期”并允许保存测试周或日期范围；非 <code>test888</code> 环境隐藏控件，保存时不持久化测试 marker，触发旧任务时后端仍会二次清理并按服务器上一完整周执行。</td></tr>
+            <tr><td>执行时间/频率</td><td>用于后续调度器决定何时创建 run。</td></tr>
+            <tr><td>状态</td><td>继续表示定时任务是否启用或停用，仍由编辑弹窗的启用复选框控制，不和设置人混用。</td></tr>
+            <tr><td>设置人</td><td>列表新增独立“设置人”列，优先显示 <code>updatedBy/updated_by</code>，没有更新人时显示 <code>createdBy/created_by</code>。该列只用于审计展示，不改变数据库状态字段。</td></tr>
+            <tr><td>通知开关</td><td>控制开始、成功、失败等通知策略；保存时分别写入 <code>notify_on_start</code>、<code>notify_on_success</code>、<code>notify_on_failure</code>，并把当前页面解析到的钉钉 ID 写入 <code>notifyTarget=dingtalk:&lt;钉钉ID&gt;</code>。调度器发送通知时会再次读取这些开关，避免未勾选的成功或失败通知被误发。</td></tr>
+            <tr><td>删除</td><td>列表操作区提供“删除”按钮。确认后调用 <code>DELETE /api/schedules/{id}</code>，后端从 <code>schedule_tasks</code> 中彻底删除该定时配置，并同步删除该 task 的 <code>schedule_task_runs</code> 触发记录；已经产生的 <code>runs</code> 执行历史保留。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="schedule-run">无人值守执行</h3>
+      <div class="warning-box"><strong>重要：</strong>静态页面本身不能在无人值守时自动执行 SAP。上线时必须让 SapWebLauncher 或独立调度器读取定时任务配置并创建 run，同时确保 Windows 执行账号已登录交互式桌面。</div>
+      <p>如果定时任务执行 A/B/C 跨事务链路，调度器创建的是链路父 run，而不是单个事务 run。A、B、result 计算和 C 应分别记录子 run 或步骤状态，便于失败后只重跑失败步骤并追溯 result 版本。SapWebLauncher 读取到期定时任务时会把 <code>updated_by || created_by</code> 写入 run 操作人，并把 <code>notifyTarget=dingtalk:&lt;钉钉ID&gt;</code> 解析为 run 的 <code>ding_talk_user_id</code>；开始、完成或失败通知均按定时任务三个通知开关决定是否发送。</p>
+    </section>
+
+    <section id="notify" class="section">
+      <div class="section-header"><div class="section-num">7</div><h2>钉钉通知</h2></div>
+      <p>通知由后端 API 发送，不由 VBS 进入 SAP 再调用函数，也不由浏览器直接持有密钥。这样可以减少 SAP GUI 占用时间，也避免前端泄露 appSecret。执行页“勾选固定通知 11464769”只决定本次收件人 ID；真正发送还要求服务器本机配置 DingTalk OpenAPI 的 <code>baseUrl</code>、<code>appKey</code>、<code>appSecret</code>、<code>agentId</code>。</p>
+      <div class="warning-box"><strong>推送前提：</strong>如果 run 已成功但没有收到钉钉，优先查看该 run 日志。日志出现 <code>sap dingtalk openapi skipped: missing ... config</code> 时，说明 SAP 执行成功但服务器缺少钉钉发送凭据，不是勾选框或事务脚本失败。</div>
+      <h3 id="notify-target">通知对象</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>来源</th><th>当前规则</th><th>上线规则</th></tr></thead>
+          <tbody>
+            <tr><td>页面执行人</td><td>通知目标由执行页“勾选固定通知 11464769”复选框决定：勾选时提交 <code>11464769</code>；取消勾选时提交本次 URL token payload 中解析出的钉钉 ID，字段兼容 <code>Account/Ddid/ddid/DingTalkUserId/UserId</code>；取消勾选且未解析到钉钉 ID 时前端禁止提交，<code>POST /api/runs</code> 也不会写入空通知人。该字段只是接收人，不包含发送凭据。</td><td>应由公司门户 URL token 或公司 SSO 传给 API，并在后端验签后写入 run 操作人字段。</td></tr>
+            <tr><td>后台定时任务</td><td>定时任务保存时使用现有 <code>notify_target</code> 字段存 <code>dingtalk:&lt;钉钉ID&gt;</code>，后端触发 run 时把冒号后的 ID 写入 <code>runs.ding_talk_user_id</code>，并把设置人姓名写入 <code>operator_name</code>。</td><td>后续如支持多人或业务群，可继续扩展 <code>notify_target</code> 约定或增加独立配置表，但不能覆盖 <code>status/enabled</code> 的启停含义。</td></tr>
+            <tr><td>异常通知</td><td>失败、部分失败、通知失败应写入 run 日志。</td><td>应通知发起人和配置的运维/业务负责人。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="notify-template">消息内容</h3>
+      <p>通知内容应使用中文，避免暴露内部字段名如 OPERATOR。建议包含图标、事务码、事务名称、工厂、状态、耗时、runId、失败工厂、输出文件摘要。SAP 明确返回“无数据”“没有符合条件数据”“No data”或“No records”时，后端将其写为 <code>no_data</code> 并按成功通知开关发送“自动化已完成（无数据）”；批次汇总单列无数据数量，不把这些工厂计入失败。导出入口、文件归档、脚本或 SAP 登录异常仍属于失败。</p>
+      <div class="code-block" data-lang="通知文案示例">✅ 自动化已跑完
+事务：ZFI072A - 采购价月表
+工厂：5021, 9301
+状态：成功
+耗时：8分32秒
+任务号：RUN-20260618-001</div>
+    </section>
+
+    <section id="exception" class="section">
+      <div class="section-header"><div class="section-num">8</div><h2>异常处理</h2></div>
+      <h3 id="exception-installer">服务器手工安装核对</h3>
+      <p>服务器上线入口必须区分源码目录和运行目录。当前服务器源码/Git 目录是 <code>D:\RPA\RpaProject</code>，实际运行根目录是 <code>D:\RPA</code>。安装包只保留手工安装指南、上线核对清单和必要脚本；服务器根目录、源码根目录、钉钉真实配置和 SAP 登录配置必须由管理员上线前确认，不得把开发机路径当作上线前提。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>核对项</th><th>用户可见行为</th><th>数据与安全规则</th></tr></thead>
+          <tbody>
+            <tr><td>运行根目录</td><td>管理员确认服务器运行目录；当前服务器为 <code>D:\RPA</code>。</td><td>目录下保存页面、执行器、VBS、SQLite、日志、输出和配置。运行目录是线上权威目录，不等同于 Git 源码目录。</td></tr>
+            <tr><td>源码根目录</td><td>管理员确认 Git 拉取后的仓库根目录；当前服务器为 <code>D:\RPA\RpaProject</code>。</td><td>从这里构建 publish，并复制 <code>index.html</code>、<code>assets/js</code>、<code>transactions</code> 和后端发布产物到运行目录。</td></tr>
+            <tr><td>手工部署/升级</td><td>按 runbook 准备目录，或把 <code>D:\RPA</code> 作为程序包整体拷贝，再复制页面、<code>assets/js</code>、VBS、执行器、配置模板、初始化 SQLite、启动 API 并做真实任务验收。</td><td>默认保留生产机 SQLite、日志、输出、<code>config.local.json</code>、证书和 SAP DPAPI 登录配置；整包拷贝时不要用测试机运行态文件覆盖生产机状态，升级后必须验证实际进程来自 <code>D:\RPA\bin</code>。</td></tr>
+            <tr><td>手工源码发布</td><td>源码更新后必须先 publish <code>SapWebLauncher</code>，再复制 publish 输出到 <code>D:\RPA\bin</code>，并同步 <code>assets</code>、<code>gateway</code> 和 <code>transactions</code>。</td><td>完成复制后只重启 <code>D:\RPA\bin\SapWebLauncher.exe --serve</code> 和 <code>D:\RPA\gateway\start-rpa-gateway.ps1</code>。<code>git pull</code>、编译成功或文件已保存都不等于线上已生效。</td></tr>
+            <tr><td>HTTPS 网关</td><td>正式用户入口为 <code>https://fi_automation.srv.lstech.com/rpa/</code>，兼容入口为 <code>http://&lt;服务器IP&gt;:6174/rpa/</code>；联调示例 <code>http://10.0.41.158:6174/rpa/</code>，正式系统示例 <code>http://10.0.2.120:6174/rpa/</code>。</td><td>443 负责 HTTPS，6174 保持 HTTP；不要使用 <code>https://域名:6174/rpa/</code>。证书目录 <code>D:\RPA\certs\lstech.com</code> 不提交 Git，权限限制为执行账号、Administrators 和 SYSTEM。</td></tr>
+            <tr><td>服务器重启后启动</td><td>运行 <code>D:\RPA\启动脚本\start_sap_rpa_services.cmd</code>，再运行 <code>D:\RPA\启动脚本\check_sap_rpa_services.cmd</code>。正式机需要强制指定生产 IP 时追加 <code>-HttpCompatibilityHost 10.0.2.120</code>，或设置环境变量 <code>RPA_HTTP_COMPATIBILITY_HOST=10.0.2.120</code>。</td><td>必须启动三类本项目服务：<code>D:\RPA\bin\SapWebLauncher.exe --serve</code> 监听 <code>127.0.0.1:8080</code>，HTTP 网关监听 <code>0.0.0.0:6174</code>，HTTPS 网关监听 <code>0.0.0.0:443</code>；检查脚本同时输出 SAP GUI COM 注册状态。脚本只匹配本项目路径，不处理其他项目服务。</td></tr>
+            <tr><td>启动脚本副本边界</td><td><code>D:\RPA\启动脚本</code> 是线上运行入口；<code>D:\RPA\RpaProject\启动脚本</code> 是 Git 源码副本。</td><td>两处脚本默认 <code>RuntimeRoot = D:\RPA</code>，即使从源码目录双击，也会操作线上运行目录的本项目 API 和网关；不要把源码副本当作独立测试环境。</td></tr>
+            <tr><td>功能说明书同步（fs-skill）</td><td>跨前端、后端、VBS、数据库、网关、启动脚本、安装包、配置或部署规则的变更，必须同步本功能说明书和上线安装文档。</td><td>功能说明书是后续 agent 和人工运维的外置记忆。不能等上线出错后再补文档；新增坑点要同步到 <code>反思.md</code> 和安装清单。</td></tr>
+            <tr><td>配置 SAP 登录</td><td>在当前 Windows 执行账号下录入 SAP 登录信息。</td><td>密码写入 DPAPI 保护的 <code>%LOCALAPPDATA%\SapWebLauncher\config.json</code>，不进入页面和 Git。</td></tr>
+            <tr><td>初始化/迁移 SQLite</td><td>调用 <code>SapWebLauncher.exe --init-db</code>。</td><td>已有数据库先备份再迁移，不直接清空。</td></tr>
+            <tr><td>钉钉真实配置与保存路径</td><td>从 <code>config.local.example.json</code> 复制生成 <code>D:\RPA\config.local.json</code>，填写真实 <code>baseUrl/appKey/appSecret/agentId</code>，并确认 <code>fileStorage.alvExportDataDirectory</code> 是生产期望的 Excel 输出根目录；顶层 <code>multiLogonPolicy</code> 默认是 <code>takeover</code>。</td><td>真实配置不提交 Git，不返回前端；只有模板或只有固定通知人不会发送钉钉。保存路径在后端启动时读取，变更后只重启本项目执行器。<code>takeover</code> 表示 SAP 多重登录弹窗出现时继续服务器本次登录并终止同账号其他终端登录；如生产策略不允许踢人，改成 <code>fail</code> 或设置 <code>SAP_RPA_MULTI_LOGON_POLICY=fail</code>。</td></tr>
+            <tr><td>SAP GUI 组件</td><td>手工 SAP 登录正常但程序仍反复登录时，运行 <code>D:\RPA\启动脚本\00_register_sap_gui_components.cmd</code> 注册 <code>saprotwr.dll</code> 和 <code>sapfewse.ocx</code>。</td><td>脚本会弹 UAC 让管理员确认，并按组件位数选择 <code>regsvr32.exe</code>：32 位组件用 <code>C:\Windows\SysWOW64\regsvr32.exe</code>，64 位组件通常用 <code>C:\Windows\System32\regsvr32.exe</code>；如果当前 shell 是 32 位进程，使用 <code>C:\Windows\Sysnative\regsvr32.exe</code>。注册后 <code>00_register_sap_gui_components.ps1 -CheckOnly</code> 或 <code>check_sap_rpa_services.cmd</code> 必须显示 <code>SapROTWr.SapROTWrapper</code>、<code>Sapgui.ScriptingCtrl.1</code> 为 <code>True</code>。手工命令只作为排障兜底。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="tip-box"><strong>上线验证：</strong><code>SapWebLauncher.exe test</code> 和 <code>/api/health</code> 只能证明基础环境可达；还必须从网页提交一次受控任务，确认数据库有 run/log、VBS 执行的是运行目录脚本、SAP ready session 能复用、钉钉启用时出现 <code>sap dingtalk openapi sent</code>。</div>
+      <h3 id="exception-sop">处理 SOP</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>异常</th><th>表现</th><th>处理方式</th></tr></thead>
+          <tbody>
+            <tr><td>本地 API 未启动</td><td>页面显示 API 不可用、配置只读、无法保存或执行。</td><td>运行 <code>D:\RPA\bin\SapWebLauncher.exe --serve</code> 或上线步骤中的启动 API 脚本；当前正式入口是 <code>https://fi_automation.srv.lstech.com/rpa/</code>，兼容入口按本机 IPv4 访问，例如正式系统 <code>http://10.0.2.120:6174/rpa/</code>。</td></tr>
+            <tr><td>HTTPS 网关未启动</td><td>域名页面无法访问，但 <code>http://127.0.0.1:8080/api/health</code> 仍正常。</td><td>运行 <code>powershell -ExecutionPolicy Bypass -File D:\RPA\gateway\start-rpa-gateway.ps1</code>，确认 <code>0.0.0.0:443</code> 和 <code>0.0.0.0:6174</code> 均由本项目 <code>rpa-gateway.js</code> 监听。</td></tr>
+            <tr><td>API base 缓存漂移</td><td>正式域名页面能打开，但配置、执行或历史接口请求仍打到旧 IP、旧端口、<code>127.0.0.1</code> 或旧 <code>/charge</code>。</td><td>网关必须注入 <code>window.SAP_RPA_API_BASE = window.location.origin + "/rpa"</code> 并覆盖 <code>localStorage.sapRpaApiBase</code>；前端优先使用网关注入值。验收时用浏览器开发者工具确认请求为 <code>https://fi_automation.srv.lstech.com/rpa/api/*</code>。</td></tr>
+            <tr><td>父系统嵌套后不能提交</td><td>单独打开 <code>https://fi_automation.srv.lstech.com/rpa/</code> 可以进入执行页提交，但嵌入 <code>https://lydctest.lstech.com/dataAnalysis.financial.sapschedule</code> 后页面提示“查询员/只读”或提交按钮不可点。</td><td>确认运行目录 <code>D:\RPA\assets\js\portal-state.js</code> 和源码目录一致；iframe 场景应自动使用 <code>executor</code>，提交按钮不应因 <code>portalRole=viewer</code> 被禁用。若按钮可点但仍失败，再检查浏览器 Network 中 <code>/rpa/api/runs</code> 的真实请求地址和错误。</td></tr>
+            <tr><td>证书异常</td><td>443 端口可连接，但浏览器出现证书不受信任、域名不匹配或过期告警。</td><td>检查证书 SAN 是否包含 <code>*.srv.lstech.com</code>，有效期是否覆盖当前日期，客户端是否信任内部 CA；确认 <code>D:\RPA\certs\lstech.com</code> 私钥、PFX 和 <code>passwd.txt</code> 仅执行账号、Administrators、SYSTEM 可读。</td></tr>
+            <tr><td>HTTPS 检查误报</td><td>浏览器能打开正式域名，但 PowerShell 健康检查报 <code>CRYPT_E_REVOCATION_OFFLINE</code> 或 TLS 通道错误。</td><td>内网服务器可能访问不到证书吊销服务器。<code>check_sap_rpa_services.cmd</code> 对 HTTPS 使用 <code>curl.exe --ssl-no-revoke</code> 做 GET 检查，只跳过 CRL/OCSP 吊销查询，不跳过证书链和域名校验；最终仍以浏览器无证书告警为准。</td></tr>
+            <tr><td>SAP 登录失败</td><td>run 失败，日志出现登录、连接错误或多重登录确认未能处理。</td><td>重新运行 SAP 登录配置步骤，在服务器执行账号下生成 DPAPI 配置。默认多重登录策略为 <code>takeover</code>：服务器发起登录时，如 SAP 提示同账号已在其他电脑登录，程序会选择继续本次登录并终止该账号其他登录；若日志显示未找到 <code>MULTI_LOGON_OPT1</code>，需人工确认 SAP GUI 弹窗控件或截图。</td></tr>
+            <tr><td>标准登录页停在空用户</td><td>SAP GUI 显示 <code>S000</code> / <code>SAPMSYST</code>，user 为空，事务没有开始。</td><td>确认当前 Windows 执行账号已用登录配置脚本生成 DPAPI 凭据，并确认目标系统、client、user 正确。执行器只在目标会话、空 user 和标准登录页字段同时匹配时自动填写；密码仅经本次 <code>cscript.exe</code> 子进程环境变量传递，不写入临时 VBS、日志或 Git。提交后最多等待 30 秒确认 <code>session.Info.User</code>；超时后保留 run 失败日志供排障。</td></tr>
+            <tr><td>多重登录已选择但未进事务码</td><td>日志只有 <code>selected MULTI_LOGON_OPT1</code>，随后仍停在 <code>SAPMSYST screen=500</code> 或 <code>NO: scripting engine or connection not ready</code>，没有 <code>加载外部事务码脚本</code>。</td><td>这说明弹窗未真正确认或等待时间不足。程序必须按确认按钮或发送 Enter，并等待 <code>session.Info.User</code> 出现；处理弹窗的 <code>cscript //T</code> 超时必须长于内部确认等待。验收必须看到 <code>SAP GUI login is ready</code>、<code>INFO: transaction=&lt;事务码&gt;</code> 和 <code>CLEANUP: sent /nex</code>。</td></tr>
+            <tr><td>SAP GUI 组件未注册</td><td>手工 SAP GUI 已登录，但网页提交后仍反复打开登录窗口，或日志没有出现 <code>Detected ready SAP GUI session; skip sapshcut login</code>。</td><td>先运行 <code>D:\RPA\启动脚本\00_register_sap_gui_components.cmd</code>；再运行 <code>D:\RPA\启动脚本\00_register_sap_gui_components.ps1 -CheckOnly</code> 或 <code>check_sap_rpa_services.cmd</code>，确认两个 COM ProgID 均为 <code>True</code>，并确认 <code>Registration bitness plan</code> 中 32 位组件使用 <code>SysWOW64\regsvr32.exe</code>，64 位组件使用 <code>System32\regsvr32.exe</code> 或 32 位 PowerShell 场景下的 <code>Sysnative\regsvr32.exe</code>。</td></tr>
+            <tr><td>整包拷贝后状态错乱</td><td>生产机能打开页面，但钉钉不发、数据库记录不对、证书告警或 SAP 登录信息仍是测试机状态。</td><td>检查是否把测试机 <code>config.local.json</code>、<code>data\sap-rpa-config.db</code>、<code>certs</code> 或 SAP DPAPI 登录配置覆盖到了生产机。生产机真实配置、数据库、证书和 <code>%LOCALAPPDATA%\SapWebLauncher\config.json</code> 必须重新生成或从生产备份恢复。</td></tr>
+            <tr><td>工厂数据量过大</td><td>单个工厂执行时间过长，可能超过默认超时。</td><td>提高事务码超时秒数，按工厂拆批执行，失败后只重跑失败工厂。</td></tr>
+            <tr><td>VBS 未执行或脚本错误</td><td>run 无 SAP 步骤日志、退出码异常或标准输出为空。</td><td>检查脚本路径、VBS ASCII/WSH 格式、SAP GUI Scripting 权限和当前桌面会话。</td></tr>
+            <tr><td>输出文件缺失</td><td>任务成功但 run_files 无记录，或 <code>fileStorage.alvExportDataDirectory</code> 下没有 <code>ZBU\ZSBU\yyyy_WKnn</code> 或 <code>集采工厂\yyyy_WKnn</code> 目录和对应 Excel。</td><td>先检查 child run 是否有 <code>OUTPUT_FILE=...</code> 日志和最终文件；再检查日志中的 SAP 组织映射、health 返回的 <code>alvExportDataRoot</code>、目标组织/周目录、文件权限、SAP ALV 导出按钮和 <code>D:\RPA\bin</code> 是否已发布最新版本。当前采购价链路不再生成父任务合并总表，排障时不要再找“合并数据”或“合并异常”工作簿。</td></tr>
+            <tr><td>通知失败</td><td>任务执行完但未收到钉钉消息；run 日志可能出现 <code>sap dingtalk openapi skipped: missing baseUrl/appKey/appSecret/agentId config</code>。</td><td>在运行目录 <code>D:\RPA\config.local.json</code> 或服务器环境变量中配置 DingTalk OpenAPI 的 <code>baseUrl</code>、<code>appKey</code>、<code>appSecret</code>、<code>agentId</code>，然后只重启 <code>D:\RPA\bin\SapWebLauncher.exe --serve</code>；同时确认 run 的 <code>ding_talk_user_id</code> 是目标用户，例如联调默认 <code>11464769</code>。</td></tr>
+            <tr><td>脚本执行策略拦截</td><td>PowerShell 报未签名脚本或 <code>MachinePolicy=AllSigned</code>。</td><td>优先使用保留的 `.bat` 入口配置 SAP 登录；其他部署步骤按 runbook 手工执行，并保留命令输出用于排错。</td></tr>
+            <tr><td>源码已更新但线上仍是旧逻辑</td><td>GitHub 或 <code>D:\RPA\RpaProject</code> 里有修复，但网页执行日志仍显示旧参数、旧事务脚本或旧错误。</td><td>检查 <code>D:\RPA\bin\SapWebLauncher.dll</code> 是否来自最新 publish，<code>D:\RPA\transactions</code> 是否已同步，API health 的 <code>runtimeRoot</code> 是否为 <code>D:\RPA</code>，并确认只重启本项目执行器。</td></tr>
+            <tr><td>A/B 取数失败</td><td>链路父 run 停在前置报表阶段，C 未执行。</td><td>检查 NCo/RFC 登录、目标报表权限、spool/list 输出和 <code>ZFM_NCO_SUBMIT</code> 返回消息。</td></tr>
+            <tr><td>result 缺字段</td><td>A/B 都返回但 C 入参校验失败。</td><td>检查字段映射、空值规则、冲突规则和 result 文件；不得让 C 从日志或页面状态猜值。</td></tr>
+            <tr><td>C 重跑版本不一致</td><td>C 使用了旧版 result 或混用了不同批次 A/B 输出。</td><td>重跑 C 时绑定同一版 <code>resultId/resultFile</code>，或重新执行 A/B 生成新版 result 后再执行 C。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="exception-validation">验收检查</h3>
+      <div class="flow">
+        <div class="flow-step"><div><strong>API 健康</strong>访问 <code>GET /api/health</code>，确认 API、SQLite、队列状态。</div></div>
+        <div class="flow-step"><div><strong>启动脚本</strong>运行 <code>D:\RPA\启动脚本\check_sap_rpa_services.cmd</code>，确认 SAP GUI COM 注册状态、本地 API、HTTPS 页面、HTTPS API 代理和 HTTP 兼容入口均正常。HTTPS 检查使用 <code>curl.exe --ssl-no-revoke</code> 避免内网吊销查询误报，但不跳过证书链和域名校验。</div></div>
+        <div class="flow-step"><div><strong>网关与证书</strong>确认 <code>0.0.0.0:443</code>、<code>0.0.0.0:6174</code>、<code>127.0.0.1:8080</code> 均监听；浏览器无证书告警，证书匹配 <code>fi_automation.srv.lstech.com</code>。</div></div>
+        <div class="flow-step"><div><strong>API base</strong>从正式域名打开页面，确认浏览器请求使用 <code>https://fi_automation.srv.lstech.com/rpa/api/*</code>，不存在旧 <code>127.0.0.1</code>、旧 IP、旧端口或旧 <code>/charge</code>。</div></div>
+        <div class="flow-step"><div><strong>配置读取</strong>访问 <code>GET /api/config</code>，确认事务码、工厂、业务范围和规则返回正常。</div></div>
+        <div class="flow-step"><div><strong>执行链路</strong>用 ZFI072A 和少量工厂提交任务，确认 queued、running、success/failed 状态流转。</div></div>
+        <div class="flow-step"><div><strong>日志与文件</strong>确认 <code>run_logs</code>、黑底日志框、<code>run_files</code> 一致。</div></div>
+        <div class="flow-step"><div><strong>链路 result</strong>如果是 A/B/C 链路，确认 A/B 原始结果、result 文件、C 最终入参、C 输出和重跑版本可以通过 runId 追溯。</div></div>
+        <div class="flow-step"><div><strong>安全检查</strong>API 和页面不得返回 SAP 密码、钉钉 secret、真实 token。</div></div>
+      </div>
+    </section>
+
+    <section id="handoff" class="section">
+      <div class="section-header"><div class="section-num">9</div><h2>交接事项</h2></div>
+      <h3 id="handoff-files">关键文件</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>文件/目录</th><th>用途</th></tr></thead>
+          <tbody>
+            <tr><td><code>D:\RPA\RpaProject</code></td><td>当前服务器 Git 源码目录，代码提交、diff、功能说明书和 publish 构建从这里进行。</td></tr>
+            <tr><td><code>D:\RPA</code></td><td>当前服务器实际运行根目录，包含线上页面、网关、执行器、事务脚本、SQLite、日志和输出。</td></tr>
+            <tr><td><code>D:\RPA\bin\SapWebLauncher.exe</code></td><td>后端实际执行器。线上只应重启这个本项目进程，不影响其他项目服务。</td></tr>
+            <tr><td><code>D:\RPA\gateway\rpa-gateway.js</code></td><td>对外入口网关，当前路径为 <code>/rpa/</code>；443 提供 HTTPS 域名入口，6174 保留 HTTP 兼容入口。</td></tr>
+            <tr><td><code>D:\RPA\gateway\start-rpa-gateway.ps1</code></td><td>只重启本项目网关进程，启动 <code>https://fi_automation.srv.lstech.com/rpa/</code> 和 <code>http://&lt;服务器IP&gt;:6174/rpa/</code>；服务器 IP 用 <code>ipconfig</code> 或 <code>Get-NetIPAddress -AddressFamily IPv4</code> 查看。</td></tr>
+            <tr><td><code>D:\RPA\启动脚本\00_register_sap_gui_components.cmd</code></td><td>生产机首次部署或 SAP GUI 异常时的管理员入口，注册 SAP GUI 脚本组件 <code>saprotwr.dll</code> 和 <code>sapfewse.ocx</code>。</td></tr>
+            <tr><td><code>D:\RPA\启动脚本\00_register_sap_gui_components.ps1</code></td><td>支持 <code>-CheckOnly</code> 只读检查，验证 <code>SapROTWr.SapROTWrapper</code> 与 <code>Sapgui.ScriptingCtrl.1</code> 是否已注册，并输出每个组件的 32/64 位识别结果和实际使用的 <code>regsvr32.exe</code>。</td></tr>
+            <tr><td><code>D:\RPA\启动脚本\start_sap_rpa_services.cmd</code></td><td>服务器重启后的总入口：确认或启动本地 API，再启动 6174 HTTP 网关和 443 HTTPS 网关，并自动访问关键 URL 验证。</td></tr>
+            <tr><td><code>D:\RPA\启动脚本\check_sap_rpa_services.cmd</code></td><td>只读检查入口：列出 SAP GUI COM 注册状态、本项目进程、端口和 URL 检查结果，用于确认服务是否可访问。</td></tr>
+            <tr><td><code>D:\RPA\启动脚本\gitnexus.cmd</code></td><td>GitNexus 兜底入口。旧 PowerShell、Codex 或任务会话没有刷新用户 PATH 时，直接运行 <code>D:\RPA\启动脚本\gitnexus.cmd status</code>、<code>D:\RPA\启动脚本\gitnexus.cmd detect-changes</code>，脚本会切到 <code>D:\RPA\RpaProject</code> 并优先调用 <code>C:\Users\Marcus\AppData\Roaming\npm\gitnexus.cmd</code>。</td></tr>
+            <tr><td><code>D:\RPA\RpaProject\启动脚本</code></td><td>Git 源码副本，用于提交和重新打包。脚本默认仍指向 <code>D:\RPA</code> 运行目录。</td></tr>
+            <tr><td><code>D:\RPA\index.html</code> + <code>D:\RPA\assets\js\*.js</code></td><td>线上前端操作台入口和本地 JS 模块。后续页面改动应按 state、utils、api、render、actions、main 模块定位并同步到运行目录。</td></tr>
+            <tr><td><code>D:\RPA\transactions</code></td><td>线上 VBS 事务脚本目录；源码里的事务脚本更新后必须同步到这里才会被执行器读取。</td></tr>
+            <tr><td><code>D:\RPA\data\sap-rpa-config.db</code></td><td>线上 SQLite 主配置和运行历史数据库，部署/升级默认保留。</td></tr>
+            <tr><td><code>gitnexus</code> / <code>node .gitnexus\run.cjs</code></td><td>GitNexus 影响分析入口。当前服务器已安装 GitNexus CLI <code>1.6.9</code> 到用户 npm 全局目录 <code>C:\Users\Marcus\AppData\Roaming\npm</code>；若旧终端 PATH 未刷新，可优先使用 <code>D:\RPA\启动脚本\gitnexus.cmd status</code>，也可在仓库根目录使用 <code>node .gitnexus\run.cjs status</code> 兜底。</td></tr>
+            <tr><td><code>D:\RPA\RpaProject\SapRpa_V2_功能说明书.html</code></td><td>当前功能说明书，面向业务行为和下一任 AI 的外置记忆；按 <code>fs-skill</code> 规则，跨层功能、部署、配置、启动脚本和安装包变更必须同步这里。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <h3 id="handoff-next">后续优先级</h3>
+      <div class="grid cols-2">
+        <div class="mini-card"><strong>优先级 1</strong>在真实 Windows Server 上按手工安装清单验证：路径、publish/copy、SAP 登录配置、钉钉真实配置、API 启动、网页任务和数据库写回。</div>
+        <div class="mini-card"><strong>优先级 2</strong>把未提交的手工安装指南、最终上线部署步骤、功能说明书和交接文档审查后提交到 GitHub 当前分支。</div>
+        <div class="mini-card"><strong>优先级 3</strong>继续拆分 <code>assets/js/portal-render.js</code>，按工作台、执行页、基础配置、统计报表、定时任务分模块，降低后续小改动互相影响。</div>
+        <div class="mini-card"><strong>优先级 4</strong>继续实测 ZFI072A 分工厂长耗时场景，确认超时、保存按钮、/NEX 清理和钉钉通知。</div>
+        <div class="mini-card"><strong>优先级 5</strong>设计 A/B 报表取数合并 result 后驱动 C 的 API、数据库字段、输出文件和 VBS 入参规范。</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const navItems = Array.from(document.querySelectorAll(".nav-item"));
+    const navButtons = Array.from(document.querySelectorAll(".nav-main"));
+    const sections = Array.from(document.querySelectorAll(".section"));
+
+    navButtons.forEach(button => {
+      button.addEventListener("click", () => {
+        const item = button.closest(".nav-item");
+        const target = document.getElementById(button.dataset.target);
+        navItems.forEach(other => {
+          if (other !== item) other.classList.remove("open");
+        });
+        item.classList.toggle("open");
+        if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+
+    document.querySelectorAll(".nav-sub a").forEach(link => {
+      link.addEventListener("click", () => document.body.classList.remove("nav-open"));
+    });
+
+    document.getElementById("mobileToggle").addEventListener("click", () => {
+      document.body.classList.toggle("nav-open");
+    });
+
+    function updateActiveNav() {
+      let activeId = sections[0]?.id || "";
+      for (const section of sections) {
+        if (section.getBoundingClientRect().top <= 120) activeId = section.id;
+      }
+      navButtons.forEach(button => button.classList.toggle("active", button.dataset.target === activeId));
+    }
+    document.addEventListener("scroll", updateActiveNav, { passive: true });
+    updateActiveNav();
+  </script>
+</body>
+</html>

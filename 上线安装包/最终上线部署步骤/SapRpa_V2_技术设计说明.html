@@ -1,0 +1,965 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SAP RPA V2 技术设计说明</title>
+  <style>
+    :root {
+      --bg: #f4faed;
+      --sidebar: #e8f3e0;
+      --primary: #5b8c5a;
+      --accent: #7cb342;
+      --text: #2e3b2e;
+      --muted: #6b806b;
+      --muted2: #8ba38b;
+      --card: #ffffff;
+      --line: #d8e8cf;
+      --soft: #f8fcf4;
+      --code-bg: #1b2b1b;
+      --code-text: #c8e6c9;
+      --warn: #fff8e1;
+      --warn-line: #f9a825;
+      --info: #e3f2fd;
+      --info-line: #1565c0;
+      --danger: #ffebee;
+      --danger-line: #c62828;
+      --shadow: 0 14px 30px rgba(69, 108, 67, .14);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "Microsoft YaHei", "Segoe UI", Arial, sans-serif;
+      color: var(--text);
+      background: var(--bg);
+      line-height: 1.75;
+    }
+    .menu-toggle {
+      display: none;
+      position: fixed;
+      top: 14px;
+      left: 14px;
+      z-index: 30;
+      width: 42px;
+      height: 42px;
+      border: 0;
+      border-radius: 10px;
+      color: white;
+      background: var(--primary);
+      box-shadow: var(--shadow);
+      font-size: 22px;
+      cursor: pointer;
+    }
+    .overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      z-index: 18;
+      background: rgba(46, 59, 46, .28);
+    }
+    .sidebar {
+      position: fixed;
+      left: 0;
+      top: 0;
+      bottom: 0;
+      width: 280px;
+      background: var(--sidebar);
+      border-right: 1px solid var(--line);
+      overflow-y: auto;
+      z-index: 20;
+    }
+    .brand {
+      padding: 26px 24px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      color: white;
+    }
+    .brand h1 {
+      margin: 0 0 8px;
+      font-size: 22px;
+      letter-spacing: 0;
+    }
+    .brand p {
+      margin: 0 0 10px;
+      font-size: 13px;
+      opacity: .92;
+    }
+    .version {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 9px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, .2);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .nav { padding: 18px 14px 28px; }
+    .nav-group { margin-bottom: 8px; }
+    .nav-main {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border: 0;
+      border-radius: 10px;
+      padding: 10px 12px;
+      color: var(--text);
+      background: transparent;
+      font-family: inherit;
+      font-size: 14px;
+      text-align: left;
+      cursor: pointer;
+      transition: background .2s ease, color .2s ease, transform .2s ease;
+    }
+    .nav-main:hover,
+    .nav-main.active {
+      background: white;
+      color: var(--primary);
+      transform: translateX(2px);
+      box-shadow: 0 8px 20px rgba(69, 108, 67, .08);
+    }
+    .nav-main .num {
+      display: inline-grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      font-size: 12px;
+      flex: 0 0 auto;
+    }
+    .nav-main .title { flex: 1; }
+    .nav-main .chev {
+      color: var(--muted2);
+      transition: transform .2s ease;
+    }
+    .nav-group.open .chev { transform: rotate(90deg); }
+    .nav-sub {
+      display: block;
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height .22s ease;
+      padding-left: 38px;
+    }
+    .nav-group.open .nav-sub { max-height: 240px; }
+    .nav-sub a {
+      display: block;
+      padding: 7px 8px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 13px;
+      border-radius: 8px;
+    }
+    .nav-sub a::before {
+      content: "›";
+      margin-right: 6px;
+      color: var(--accent);
+      font-weight: 800;
+    }
+    .nav-sub a:hover {
+      color: var(--primary);
+      background: rgba(255, 255, 255, .7);
+    }
+    .content {
+      margin-left: 280px;
+      padding: 36px 36px 80px;
+      max-width: 1320px;
+    }
+    .hero {
+      min-height: 200px;
+      display: grid;
+      align-items: center;
+      margin-bottom: 24px;
+      padding: 30px 34px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(91,140,90,.13), rgba(124,179,66,.1));
+      border: 1px solid var(--line);
+    }
+    .hero h2 {
+      margin: 0 0 10px;
+      font-size: 32px;
+      letter-spacing: 0;
+    }
+    .hero p {
+      margin: 0;
+      max-width: 980px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+    .status-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .status-tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .status-tag.success { background: #e8f5e9; color: #2e7d32; }
+    .status-tag.warning { background: #fff8e1; color: #e65100; }
+    .status-tag.info { background: #e3f2fd; color: #1565c0; }
+    .section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: var(--shadow);
+      margin: 22px 0;
+      padding: 26px;
+      transition: box-shadow .2s ease, transform .2s ease;
+    }
+    .section:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 18px 36px rgba(69, 108, 67, .18);
+    }
+    .section-header {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .section-num {
+      display: grid;
+      place-items: center;
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      color: white;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      font-weight: 800;
+      flex: 0 0 auto;
+    }
+    h2 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+    h3 {
+      margin: 24px 0 12px;
+      padding-left: 12px;
+      border-left: 4px solid var(--accent);
+      font-size: 18px;
+    }
+    p { margin: 10px 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .mini-card {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 16px;
+      background: linear-gradient(180deg, #ffffff, #fbfef8);
+      min-height: 128px;
+    }
+    .mini-card strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--primary);
+      font-size: 15px;
+    }
+    .layer-stack {
+      display: grid;
+      gap: 12px;
+      margin: 16px 0;
+    }
+    .layer {
+      display: grid;
+      grid-template-columns: 180px 1fr;
+      gap: 16px;
+      align-items: center;
+      padding: 16px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: linear-gradient(90deg, #ffffff, #f7fbf2);
+    }
+    .layer b {
+      color: var(--primary);
+      font-size: 16px;
+    }
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+      margin: 16px 0;
+    }
+    .flow .step {
+      position: relative;
+      min-height: 112px;
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: white;
+    }
+    .flow .step:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      right: -13px;
+      top: 40%;
+      color: var(--primary);
+      font-weight: 800;
+      z-index: 2;
+    }
+    .step b {
+      display: block;
+      color: var(--primary);
+      margin-bottom: 4px;
+    }
+    .solution-box,
+    .tip-box,
+    .warning-box,
+    .constraint-box {
+      border-radius: 12px;
+      padding: 16px 18px;
+      margin: 14px 0;
+      border-left: 5px solid var(--accent);
+      background: #f8fcf4;
+    }
+    .tip-box {
+      background: var(--info);
+      border-left-color: var(--info-line);
+    }
+    .warning-box {
+      background: var(--warn);
+      border-left-color: var(--warn-line);
+    }
+    .constraint-box {
+      background: var(--danger);
+      border-left-color: var(--danger-line);
+    }
+    table {
+      width: 100%;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow: hidden;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: white;
+      margin: 14px 0;
+    }
+    th {
+      color: white;
+      text-align: left;
+      padding: 12px;
+      background: linear-gradient(135deg, var(--primary), var(--accent));
+      font-weight: 700;
+    }
+    td {
+      padding: 12px;
+      border-top: 1px solid var(--line);
+      vertical-align: top;
+    }
+    tr:hover td { background: #f8fcf4; }
+    code {
+      padding: 2px 6px;
+      border-radius: 6px;
+      color: #244224;
+      background: #e8f3e0;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: .92em;
+    }
+    .code-block {
+      position: relative;
+      margin: 14px 0;
+      padding: 18px;
+      border-radius: 12px;
+      overflow-x: auto;
+      color: var(--code-text);
+      background: var(--code-bg);
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+    .code-block::after {
+      content: attr(data-lang);
+      position: absolute;
+      top: 8px;
+      right: 12px;
+      color: #a5d6a7;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .priority {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin: 16px 0;
+    }
+    .priority .item {
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: linear-gradient(180deg, #ffffff, #f8fcf4);
+    }
+    .priority b {
+      display: block;
+      color: var(--primary);
+      margin-bottom: 5px;
+    }
+    .small { color: var(--muted); font-size: 13px; }
+    .nowrap { white-space: nowrap; }
+    @media (max-width: 980px) {
+      .grid,
+      .grid.two,
+      .flow,
+      .priority { grid-template-columns: 1fr 1fr; }
+      .flow .step:not(:last-child)::after { display: none; }
+      .layer { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 768px) {
+      .menu-toggle { display: block; }
+      .sidebar {
+        transform: translateX(-100%);
+        transition: transform .22s ease;
+      }
+      body.nav-open .sidebar { transform: translateX(0); }
+      body.nav-open .overlay { display: block; }
+      .content {
+        margin-left: 0;
+        padding: 72px 18px 60px;
+      }
+      .hero { padding: 24px 20px; }
+      .hero h2 { font-size: 26px; }
+    }
+    @media (max-width: 480px) {
+      .grid,
+      .grid.two,
+      .flow,
+      .priority { grid-template-columns: 1fr; }
+      .section { padding: 20px; }
+      th, td { padding: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <button class="menu-toggle" type="button" aria-label="打开目录">☰</button>
+  <div class="overlay"></div>
+  <aside class="sidebar">
+    <div class="brand">
+      <h1>SAP RPA V2</h1>
+      <p>技术设计说明</p>
+      <span class="version">Windows Server / SQLite / DingTalk</span>
+    </div>
+    <nav class="nav" aria-label="文档目录">
+      <div class="nav-group">
+        <button class="nav-main" type="button" data-target="overview"><span class="num">1</span><span class="title">总体架构</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#overview-layers">分层职责</a>
+          <a href="#overview-runtime">运行拓扑</a>
+        </div>
+      </div>
+      <div class="nav-group">
+        <button class="nav-main" type="button" data-target="launcher"><span class="num">2</span><span class="title">SapWebLauncher</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#launcher-api">本地 API</a>
+          <a href="#launcher-executor">执行器与队列</a>
+          <a href="#launcher-code-map">核心代码地图</a>
+          <a href="#launcher-progress-log">进度与日志</a>
+        </div>
+      </div>
+      <div class="nav-group">
+        <button class="nav-main" type="button" data-target="frontend"><span class="num">3</span><span class="title">前端页面</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#frontend-communication">页面通信</a>
+          <a href="#frontend-config">配置读取</a>
+          <a href="#frontend-submit">任务提交</a>
+        </div>
+      </div>
+      <div class="nav-group">
+        <button class="nav-main" type="button" data-target="sqlite"><span class="num">4</span><span class="title">SQLite 配置库</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#sqlite-master">主数据表</a>
+          <a href="#sqlite-run">运行记录表</a>
+        </div>
+      </div>
+      <div class="nav-group">
+        <button class="nav-main" type="button" data-target="vbs"><span class="num">5</span><span class="title">VBS 与 SAP GUI</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#vbs-params">参数传入</a>
+          <a href="#vbs-plant-batch">工厂拆批</a>
+          <a href="#vbs-serial">串行执行</a>
+        </div>
+      </div>
+      <div class="nav-group">
+        <button class="nav-main" type="button" data-target="notify"><span class="num">6</span><span class="title">钉钉通知</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#notify-chain">OpenAPI 链路</a>
+          <a href="#notify-policy">通知策略</a>
+          <a href="#notify-secret">本机配置</a>
+        </div>
+      </div>
+      <div class="nav-group">
+        <button class="nav-main" type="button" data-target="deploy"><span class="num">7</span><span class="title">部署与边界</span><span class="chev">›</span></button>
+        <div class="nav-sub">
+          <a href="#deploy-layout">上线目录</a>
+          <a href="#deploy-security">安全边界</a>
+        </div>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="content">
+    <section class="hero">
+      <div>
+        <h2>SAP RPA V2 整体架构技术设计</h2>
+        <p>本文描述 V2 在公司 Windows Server 上的本地 API、前端页面、SQLite 主配置源、SAP GUI 串行执行、VBS 参数传入、DingTalk OpenAPI 通知和上线安全边界。设计原则是：浏览器不接触 SAP 密码，SQLite 管业务配置与审计记录，SapWebLauncher 统一承接本机执行能力。</p>
+        <div class="status-row">
+          <span class="status-tag success">本地 API + 执行器</span>
+          <span class="status-tag info">SQLite 主配置源</span>
+          <span class="status-tag warning">SAP GUI 串行资源</span>
+          <span class="status-tag info">DingTalk OpenAPI 通知</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="overview" class="section">
+      <div class="section-header">
+        <div class="section-num">1</div>
+        <h2>总体架构</h2>
+      </div>
+      <p>SAP RPA V2 采用“页面 + 本机 API + SQLite + SAP GUI 执行器”的单机优先架构。页面负责交互和提交任务，SapWebLauncher 负责本地 HTTP API、运行队列、SQLite 持久化、VBS 调用、SAP GUI 自动化调度和通知发送。</p>
+
+      <h3 id="overview-layers">分层职责</h3>
+      <div class="layer-stack">
+        <div class="layer"><b>前端静态入口</b><span><code>index.html</code> 加载 <code>assets/js/*.js</code>，从本地 API 读取事务码、工厂、业务范围、通知机器人、定时任务和运行历史；用户选择参数后提交执行任务。</span></div>
+        <div class="layer"><b>本地 API</b><span>由 SapWebLauncher 在 Windows 执行账号下启动，提供配置、任务、队列、运行记录、schema 查看和健康检查接口。</span></div>
+        <div class="layer"><b>SQLite</b><span>作为 V2 主配置源和审计记录库，保存业务主数据、事务规则、任务队列、日志、文件和定时任务。</span></div>
+        <div class="layer"><b>SAP 执行器</b><span>串行消费 queued run，替换 VBS 参数，调用 SAP GUI Scripting，读取状态栏和脚本输出并回写 SQLite。</span></div>
+        <div class="layer"><b>通知适配器</b><span>任务开始、成功、失败后由后端读取本机配置，调用 DingTalk OpenAPI 发送企业消息。</span></div>
+      </div>
+
+      <h3 id="overview-runtime">运行拓扑</h3>
+      <div class="flow">
+        <div class="step"><b>1. 打开页面</b>用户访问 <code>D:\RPA\index.html</code> 或公司门户嵌入页。</div>
+        <div class="step"><b>2. 读取配置</b>页面调用 <code>http://127.0.0.1:8080/api/config</code>。</div>
+        <div class="step"><b>3. 创建任务</b>页面提交 <code>POST /api/runs</code>，API 写入 <code>runs</code>。</div>
+        <div class="step"><b>4. 串行执行</b>执行器按队列调用 VBS 和 SAP GUI。</div>
+        <div class="step"><b>5. 回写通知</b>结果、日志、文件写入 SQLite，并触发钉钉通知。</div>
+      </div>
+      <div class="tip-box"><strong>核心边界：</strong>浏览器只处理业务参数和展示，不保存 SAP 密码、不接收 DingTalk appSecret、不直接操作 SAP GUI。所有本机敏感能力都收口到 SapWebLauncher。</div>
+    </section>
+
+    <section id="launcher" class="section">
+      <div class="section-header">
+        <div class="section-num">2</div>
+        <h2>SapWebLauncher 本地应用设计</h2>
+      </div>
+      <p>SapWebLauncher 使用 C# / .NET 8 Windows 应用实现，部署在固定 Windows 执行账号下。HTTP API 由 SapWebLauncher 基于 <code>HttpListener</code> 提供本机服务，默认监听 <code>127.0.0.1:8080</code>，接口统一使用 JSON 请求/响应，并通过 SQLite 持久化配置、队列、运行审计和执行结果。它既保留 <code>sap-rpa://</code> 协议唤醒能力，也承担 V2 的本地 HTTP API、SQLite 仓储、执行队列、VBS 运行器和通知适配职责。</p>
+
+      <h3 id="launcher-api">本地 API 职责</h3>
+      <div class="grid">
+        <div class="mini-card"><strong>配置接口</strong>提供 <code>/api/config</code>、事务码、工厂、业务范围、规则、机器人、定时任务等配置的读取和保存。</div>
+        <div class="mini-card"><strong>任务接口</strong>提供 <code>POST /api/runs</code> 创建 run，<code>GET /api/runs</code> 查询队列和历史，<code>GET /api/runs/{runId}</code> 查看详情。</div>
+        <div class="mini-card"><strong>健康与诊断</strong>提供 <code>/api/health</code>、<code>/api/schema</code> 等接口，便于页面和上线检查确认 API、SQLite、队列状态。</div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>接口</th><th>用途</th><th>返回核心字段</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="nowrap"><code>POST /api/runs</code></td><td>创建一次执行任务。API 校验事务码、参数、工厂范围和通知绑定；ZFI072A 多工厂请求生成一个 parent run，并按工厂准备 child run。<code>ZFIR034</code> 是日期范围事务，API 会清理误传的 <code>plants/businessAreas</code>，并按服务器系统日期补 <code>period/weekEnd</code> 为上一完整自然周。</td><td><code>runId</code>、<code>status</code>、<code>transactionCode</code>、<code>queuePosition</code>、<code>createdAt</code>、<code>childRuns</code>、<code>summaryJson</code></td></tr>
+          <tr><td class="nowrap"><code>GET /api/runs</code></td><td>查询队列和历史记录，支持按事务码、状态、操作人、日期范围过滤，用于页面列表、前方任务数和审计查询。</td><td><code>items</code>、<code>total</code>、<code>runId</code>、<code>parentRunId</code>、<code>status</code>、<code>queuePosition</code>、<code>startedAt</code>、<code>finishedAt</code></td></tr>
+          <tr><td class="nowrap"><code>GET /api/runs/{runId}</code></td><td>查看单个 run 详情。parent run 返回汇总和 child 明细；child run 返回单工厂执行日志、SAP 状态和输出文件。</td><td><code>run</code>、<code>requestJson</code>、<code>summaryJson</code>、<code>logs</code>、<code>files</code>、<code>childRuns</code>、<code>batchItems</code>、<code>notificationStatus</code></td></tr>
+          <tr><td class="nowrap"><code>POST /api/runs/{parentRunId}/rerun-failed</code></td><td>只允许在原 parent run 已进入终态后调用。API 从原 <code>run_batch_items</code> 读取失败工厂，新建一次重跑 parent run 和失败工厂 child runs；原 parent 不改回 <code>running</code>，只作为审计记录保留。该接口用于部分失败后只重跑失败工厂，避免 A/C 等已成功工厂被重复执行。</td><td><code>ok</code>、<code>sourceParentRunId</code>、<code>parentRunId</code>/<code>rerunParentRunId</code>、<code>created</code>、<code>childRunIds</code>、<code>plants</code></td></tr>
+          <tr><td class="nowrap"><code>GET /api/config</code></td><td>读取页面所需配置，包括事务码、参数定义、工厂、工厂组、事务工厂规则、通知机器人别名和定时任务。</td><td><code>transactions</code>、<code>plants</code>、<code>plantGroups</code>、<code>transactionPlantRules</code>、<code>notificationRobots</code>、<code>scheduleTasks</code>、<code>appSettings</code></td></tr>
+          <tr><td class="nowrap"><code>GET /api/health</code></td><td>健康检查和上线巡检接口，用于确认 API 进程、SQLite、队列 worker、SAP GUI 执行账号状态是否可用。</td><td><code>ok</code>、<code>version</code>、<code>dbStatus</code>、<code>queueStatus</code>、<code>runningRunId</code>、<code>serverTime</code></td></tr>
+          <tr><td class="nowrap"><code>GET /api/schema</code></td><td>返回本机 SQLite schema 和迁移版本，便于联调确认表结构，不返回任何密钥、密码或本机私有配置明文。</td><td><code>schemaVersion</code>、<code>tables</code>、<code>columns</code>、<code>indexes</code>、<code>migrations</code></td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="launcher-executor">执行器、SQLite、队列、通知职责</h3>
+      <table>
+        <thead>
+          <tr><th>模块</th><th>职责</th><th>设计约束</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="nowrap">SQLite Repository</td><td>创建/迁移表结构，读写配置、任务、日志、输出文件、定时任务运行记录。</td><td>数据库文件位于 <code>D:\RPA\data\sap-rpa-config.db</code>，运行库不提交 Git。</td></tr>
+          <tr><td class="nowrap">Run Queue</td><td>将 <code>queued</code> 状态 run 串行改为 <code>running</code> 并执行。</td><td>同一交互式桌面会话只允许一个 SAP GUI 脚本执行，避免窗口和登录态互相干扰。</td></tr>
+          <tr><td class="nowrap">VBS Runner</td><td>按事务码找到脚本，替换 <code>{YEAR}</code>、<code>{WEEK}</code>、<code>{PLANTS}</code>、<code>{PERIOD}</code>、<code>{WEEK_END}</code> 等占位符，捕获标准输出。</td><td><code>ZFIR034.vbs</code> 写入 <code>S_BUDAT-LOW/HIGH</code> 和 <code>P_WEEK</code>；未传日期时脚本自身也会按系统日期计算上一完整周，并由最终开始日期推导周次。<code>P_WEEK</code> 优先写 <code>wnd[0]/usr/txtP_WEEK</code>，兜底写 <code>wnd[0]/usr/ctxtP_WEEK</code>。</td></tr>
+          <tr><td class="nowrap">Notification Adapter</td><td>根据 run 状态、操作人和机器人绑定选择通知目标，调用 DingTalk OpenAPI。</td><td>密钥只来自环境变量或 <code>config.local.json</code>，不能下发前端。</td></tr>
+        </tbody>
+      </table>
+      <h3 id="launcher-code-map">核心代码地图</h3>
+      <p><code>SapWebLauncher</code> 指部署在 Windows 执行账号下的 C# / .NET 8 本地应用工程；代码入口由 <code>Program.cs</code> 承担，工程配置由 <code>SapWebLauncher.csproj</code> 承担，发布后形成 <code>SapWebLauncher.exe</code>。它不是前端页面，也不是单个 VBS，而是把本地 API、SQLite 运行库、串行队列、VBS runner 和 DingTalk 通知统一收口的后端执行器。</p>
+      <table>
+        <thead>
+          <tr><th>代码/文件</th><th>语言或类型</th><th>作用</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>Program.cs</code></td><td>C# / .NET 8</td><td>SapWebLauncher 的进程入口，启动 HTTP API，注册 SQLite 仓储、队列 worker、VBS runner、通知适配器，并处理 <code>--serve</code>、<code>--init-db</code> 等运行模式。</td></tr>
+          <tr><td><code>SapWebLauncher.csproj</code></td><td>.NET 工程文件</td><td>定义目标框架、可执行程序输出、SQLite/HTTP/JSON 等依赖和发布参数，是生成 <code>SapWebLauncher.exe</code> 的工程清单。</td></tr>
+          <tr><td><code>D:\RPA\index.html</code></td><td>HTML / CSS</td><td>本地操作台页面外壳、样式、容器和脚本加载顺序。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\portal-state.js</code></td><td>JavaScript</td><td>默认状态、fallback 配置和页面共享状态。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\portal-utils.js</code></td><td>JavaScript</td><td>日期、格式化、数组去重、DOM 等通用工具。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\portal-api.js</code></td><td>JavaScript</td><td>本地 API 请求、配置归一化、运行/队列/报表/配置刷新。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\portal-render.js</code></td><td>JavaScript</td><td>页面渲染、表格、卡片、弹窗和黑底日志面板。该文件仍偏大，下一轮建议继续按页面拆细。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\portal-actions.js</code></td><td>JavaScript</td><td>按钮事件、保存、删除、执行提交、轮询、导出和 toast。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\main.js</code></td><td>JavaScript</td><td>前端启动入口，按顺序初始化 API、状态、渲染和事件绑定。</td></tr>
+          <tr><td><code>D:\RPA\transactions\ZFI072A.vbs</code></td><td>VBScript / SAP GUI Script</td><td>ZFI072A 事务脚本，只接收执行器传入的年度、周、工厂等运行参数，驱动 SAP GUI，并把关键步骤、SAP 状态栏和导出结果写到标准输出。</td></tr>
+          <tr><td><code>D:\RPA\data\sap-rpa-config.db</code></td><td>SQLite 数据库</td><td>V2 主配置和运行审计库，保存事务配置、工厂规则、<code>runs</code>、<code>run_logs</code>、<code>run_files</code>、通知绑定和定时任务记录。</td></tr>
+          <tr><td><code>D:\RPA\config.local.json</code></td><td>本机 JSON 配置</td><td>保存只属于当前服务器的运行参数，例如 DingTalk OpenAPI 根地址、appKey/appSecret/agentId、默认目录和联调开关；不得返回前端或提交真实密钥。</td></tr>
+          <tr><td><code>%LOCALAPPDATA%\SapWebLauncher\config.json</code></td><td>DPAPI 保护配置</td><td>保存 SAP 登录配置，密码字段由当前 Windows 用户的 DPAPI 加密；只能在同一执行账号下解密，供 SapWebLauncher 启动 SAP GUI/VBS 时使用。</td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="launcher-progress-log">执行进度与日志的技术实现</h3>
+      <p>页面截图中的“前方任务数”、步骤状态和黑底日志窗口，底层都来自同一条 run 链路：页面提交 <code>POST /api/runs</code> 后，API 写入 <code>runs</code> 队列表；串行 worker 从 <code>queued</code> 状态领取任务，驱动 VBS，持续把过程日志、文件和通知结果回写 SQLite；页面再通过查询 run 详情和队列状态刷新展示。</p>
+      <div class="flow">
+        <div class="step"><b>1. 创建 run</b>页面把事务码、参数、操作人提交到 <code>POST /api/runs</code>，API 生成 <code>runId</code>，在 <code>runs</code> 写入 <code>queued</code>、排队时间和参数快照。</div>
+        <div class="step"><b>2. 计算前方任务数</b>API 按 <code>runs</code> 中 <code>running</code> 和更早 <code>queued</code> 记录计算 <code>queuePosition</code>、<code>runsAhead</code> 或 <code>workItemsAhead</code>，页面显示为“前方 N 个任务”。</div>
+        <div class="step"><b>3. 串行 worker 执行</b>后台 worker 一次只把一个 run 改为 <code>running</code>，占用当前交互式桌面的 SAP GUI 会话，避免多个 VBS 同时抢窗口。</div>
+        <div class="step"><b>4. VBS 输出日志</b>VBS runner 用 <code>cscript.exe</code> 启动脚本并捕获 stdout，把步骤开始、SAP 状态栏、成功/失败原因解析后写入 <code>run_logs</code>。</div>
+        <div class="step"><b>5. 文件和通知回写</b>导出的报表路径、大小、类型写入 <code>run_files</code>；成功或失败后调用 DingTalk OpenAPI，并把通知发送结果也写入 <code>run_logs</code>。</div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>页面元素</th><th>后端来源</th><th>展示逻辑</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>前方任务数</td><td><code>runs</code> 队列状态和 API 返回的 <code>queuePosition</code>、<code>runsAhead</code>、<code>workItemsAhead</code></td><td>run 仍在 <code>queued</code> 时显示等待数量；变为 <code>running</code> 后显示“正在执行”。</td></tr>
+          <tr><td>步骤状态</td><td><code>runs.status</code>、<code>started_at</code>、<code>finished_at</code>、关键 <code>run_logs</code></td><td>页面按 <code>queued</code>、<code>running</code>、<code>success</code>、<code>failed</code>、<code>canceled</code> 刷新步骤节点和结果提示。</td></tr>
+          <tr><td>黑底日志窗口</td><td>前端即时日志 + API 返回的 <code>run_logs</code> + VBS stdout 解析结果 + DingTalk 通知日志</td><td>页面先显示“已提交/排队中/执行器已领取”等本地日志，再合并后端日志，按 INFO、OK、WARN、ERR 着色。</td></tr>
+          <tr><td>输出文件</td><td><code>run_files</code></td><td>VBS 或执行器发现导出文件后写入数据库，页面在 run 详情中展示文件名、路径、类型和大小。</td></tr>
+        </tbody>
+      </table>
+      <h3 id="launcher-log-box">黑底日志框的数据合并</h3>
+      <p>页面黑底日志框是前端渲染组件，不等同于浏览器本地持久化。它通常维护 <code>state.logs</code> 或 <code>history</code> 这类内存数组，用于立刻显示“已提交”“排队中”“正在查询”等前端即时消息；真正的执行过程、SAP 状态栏、VBS stdout、文件和通知结果由 SapWebLauncher 写入 SQLite，再通过 <code>GET /api/runs/{runId}</code> 返回给页面。</p>
+      <div class="code-block" data-lang="前端轮询伪代码">const state = {
+  currentRunId: null,
+  logs: [],
+  history: []
+};
+
+async function pollRun(runId) {
+  const response = await fetch(`http://127.0.0.1:8080/api/runs/${runId}`);
+  const data = await response.json();
+  const apiLogs = [
+    ...(data.run?.logs || []),
+    ...(data.logs || []),
+    ...(data.resultLogs || [])
+  ];
+  state.logs = mergeLogs(state.history, apiLogs);
+  renderLogPanel(state.logs);
+}</div>
+      <table>
+        <thead>
+          <tr><th>数据层</th><th>保存位置</th><th>刷新后的表现</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>前端即时日志</td><td><code>state.logs</code> / <code>history</code> 内存变量</td><td>只在当前页面生命周期内存在，用于提升提交后的即时反馈；刷新页面后不会单独保留。</td></tr>
+          <tr><td>后端执行日志</td><td>SQLite <code>run_logs</code> 及 run 详情 API</td><td>刷新后页面按 <code>runId</code> 或历史列表重新调用 API 读取，重新渲染到黑底日志框。</td></tr>
+          <tr><td>汇总结果日志</td><td><code>summary_json</code>、<code>resultLogs</code>、<code>run_batch_items</code></td><td>parent run 可合并 child run 结果，展示多工厂成功数、失败工厂、输出文件和通知状态。</td></tr>
+        </tbody>
+      </table>
+      <div class="solution-box"><strong>渲染规则：</strong>页面定时轮询 <code>GET /api/runs/{runId}</code>，把 <code>run.logs</code>、<code>logs</code>、<code>resultLogs</code> 与本轮前端即时日志去重合并，再按时间顺序渲染到黑底日志框。它不是把日志永久保存到浏览器；持久状态以 SQLite 和 API 返回为准。</div>
+      <div class="warning-box"><strong>运行方式：</strong>SAP GUI 自动化不能作为纯 Session 0 Windows Service 运行。生产建议用任务计划程序，在固定 Windows 执行账号登录后启动 <code>SapWebLauncher.exe --serve</code>。</div>
+    </section>
+
+    <section id="frontend" class="section">
+      <div class="section-header">
+        <div class="section-num">3</div>
+        <h2>前端静态入口与 JS 模块设计</h2>
+      </div>
+      <p><code>index.html</code> 是 V2 的本地操作台入口，<code>assets/js/*.js</code> 承担实际页面逻辑。页面本身不直接维护生产主数据，而是优先通过本地 API 读取 SQLite 配置；当 API 不在线时可展示示例或本地 fallback 数据，但上线执行必须以 API 返回为准。</p>
+      <p>当前前端没有引入 Vue、React 或打包器，仍是普通浏览器脚本顺序加载。这样做的好处是服务器只要复制静态文件即可，<code>file:///D:/sap_ai/index.html</code> 仍能直接打开；代价是需要维护好脚本加载顺序和全局对象边界。</p>
+
+      <h3 id="frontend-modules">模块职责和加载顺序</h3>
+      <table>
+        <thead>
+          <tr><th>加载顺序</th><th>文件</th><th>职责</th><th>后续维护建议</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>1</td><td><code>portal-state.js</code></td><td>默认配置、fallback 数据、共享状态对象。</td><td>改默认事务码、fallback 工厂、页面初始状态时优先看这里。</td></tr>
+          <tr><td>2</td><td><code>portal-utils.js</code></td><td>格式化、日期、去重、DOM 等工具。</td><td>不要把业务规则塞进工具函数。</td></tr>
+          <tr><td>3</td><td><code>portal-api.js</code></td><td>API 调用、响应归一化、配置/报表/队列/run 刷新。</td><td>改 API 字段、兼容旧字段、数据归一化时优先看这里。</td></tr>
+          <tr><td>4</td><td><code>portal-render.js</code></td><td>渲染工作台、执行页、基础配置、统计报表、定时任务、弹窗和日志。</td><td>当前仍是大文件；下一步应按页面拆成更小的 render 模块。</td></tr>
+          <tr><td>5</td><td><code>portal-actions.js</code></td><td>事件绑定、保存/删除/执行、轮询、导出、toast。</td><td>改按钮动作、提交 payload、轮询逻辑时优先看这里。</td></tr>
+          <tr><td>6</td><td><code>main.js</code></td><td>启动入口。</td><td>只放初始化顺序，不承载业务逻辑。</td></tr>
+        </tbody>
+      </table>
+      <div class="solution-box"><strong>影响面控制：</strong>后续改页面时先定位模块。改 API 合约不要顺手重写渲染；改按钮动作不要改默认数据；改展示文案不要触碰 VBS 参数或数据库规则。较大 UI 改造前建议先拆 <code>portal-render.js</code>。</div>
+
+      <h3 id="frontend-communication">页面与 SapWebLauncher 通信机制</h3>
+      <p>页面可以直接以 <code>file://</code> 方式打开，但执行能力不在浏览器里。浏览器 JavaScript 通过 <code>http://127.0.0.1:8080</code> 调用本机 API，提交任务、查询 run、读取配置和展示历史；SapWebLauncher 是运行在本机 Windows 执行账号下的 C# / .NET HTTP 服务，负责访问 SQLite、调度 SAP GUI、执行 VBS 和发送 DingTalk 通知。</p>
+      <div class="priority">
+        <div class="item"><b>浏览器页面</b>只负责表单、按钮、日志框和结果展示；页面不直接连接 SQLite，不保存 SAP 密码，也不直接控制 SAP GUI。</div>
+        <div class="item"><b>本机 API</b>由 SapWebLauncher 监听 <code>127.0.0.1:8080</code>，接收 <code>POST /api/runs</code>，并通过 <code>GET /api/runs/{runId}</code> 返回状态、日志、文件和汇总。</div>
+        <div class="item"><b>状态源</b>SQLite 是运行状态和审计数据的来源，包含 <code>runs</code>、<code>run_logs</code>、<code>run_files</code>、<code>run_batch_items</code> 等表；页面刷新后仍从 API 读取这些数据恢复展示。</div>
+      </div>
+      <div class="tip-box"><strong>通信方向：</strong>进度和日志不是 SapWebLauncher 主动 <code>POST</code> 回页面。浏览器页面没有内置 HTTP 回调服务，页面通过定时 <code>GET</code> 轮询 API 获取最新 run 状态。</div>
+
+      <h3 id="frontend-config">通过本地 API 读取配置</h3>
+      <table>
+        <thead>
+          <tr><th>页面数据</th><th>来源</th><th>用途</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>事务码列表</td><td><code>transactions</code> / <code>transaction_params</code></td><td>展示可执行任务、脚本名、参数、超时、重试和是否启用。</td></tr>
+          <tr><td>工厂与业务范围</td><td><code>plants</code>、<code>plant_groups</code>、<code>plant_group_members</code></td><td>构建厂区选择、工厂 chips、ZFI019NL/ZFI080 等业务范围联动。</td></tr>
+          <tr><td>事务工厂规则</td><td><code>transaction_plant_rules</code></td><td>按事务码控制默认工厂、允许工厂、ZFI072A 特殊顺序。</td></tr>
+          <tr><td>通知配置</td><td><code>notification_robots</code>、<code>notification_robot_bindings</code></td><td>展示机器人别名、绑定范围、启用状态，不展示 secret 明文。</td></tr>
+          <tr><td>历史和队列</td><td><code>runs</code>、<code>run_logs</code>、<code>run_files</code></td><td>显示执行进度、SAP 返回消息、结果文件和失败原因。</td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="frontend-submit">提交任务</h3>
+      <div class="flow">
+        <div class="step"><b>选择事务</b>用户选择如 <code>ZFI072A</code>，页面根据规则计算默认工厂；选择 <code>ZFIR034</code> 时显示上一完整周日期范围。</div>
+        <div class="step"><b>确认参数</b>页面组织 <code>year</code>、<code>week</code>、<code>plants</code>、业务范围、日期范围和操作人；<code>ZFIR034</code> 只提交日期范围，不提交工厂或业务范围。</div>
+        <div class="step"><b>调用 API</b>提交 <code>POST /api/runs</code>，由 API 生成 <code>runId</code>。</div>
+        <div class="step"><b>轮询状态</b>页面读取 run 详情、队列位置、SAP 状态栏信息。</div>
+        <div class="step"><b>展示结果</b>成功/失败、日志、输出文件路径和通知结果回显。</div>
+      </div>
+      <div class="constraint-box"><strong>生产身份约束：</strong>前端传入的操作人信息不能作为最终可信身份。当前页面可从公司门户 URL token 的 JWT payload 中解析 <code>Account</code> 作为联调通知员工号；上线后应由公司门户或 SSO 在 API 侧完成验签、有效期和来源校验，再写入 <code>runs.operator_id</code>、<code>operator_name</code>、<code>operator_dept</code>。</div>
+    </section>
+
+    <section id="sqlite" class="section">
+      <div class="section-header">
+        <div class="section-num">4</div>
+        <h2>SQLite 主配置源</h2>
+      </div>
+      <p>SQLite 是 V2 的第一阶段主配置源，承担“业务配置 + 执行审计 + 队列状态”的本地运行库角色。后续可迁移到 SQL Server 或 PostgreSQL，但 API 合同和表语义应保持稳定。</p>
+
+      <h3 id="sqlite-master">配置与主数据表</h3>
+      <table>
+        <thead>
+          <tr><th>表名</th><th>作用</th><th>关键说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>plants</code></td><td>工厂主数据。</td><td>保存工厂代码、名称、短名称、启用状态，是工厂选择和规则校验的基础。</td></tr>
+          <tr><td><code>plant_groups</code></td><td>厂区/业务范围分组。</td><td>按“平湖三厂/十厂”“全部平湖业务范围”等维护页面选项，可包含业务范围编码。</td></tr>
+          <tr><td><code>plant_group_members</code></td><td>分组成员关系。</td><td>维护每个分组包含哪些工厂，以及显示顺序和事务专用顺序。</td></tr>
+          <tr><td><code>transactions</code></td><td>事务码主数据。</td><td>保存事务码、名称、阶段、脚本文件、默认运行模式、启用状态、脚本版本/哈希。</td></tr>
+          <tr><td><code>transaction_params</code></td><td>事务参数定义。</td><td>保存参数 key、标签、类型、默认值、是否必填、排序；用于页面动态表单。</td></tr>
+          <tr><td><code>transaction_plant_rules</code></td><td>事务码与工厂规则。</td><td>保存某事务码允许/默认工厂、固定顺序、分组覆盖规则，例如 ZFI072A 的工厂传入顺序。</td></tr>
+          <tr><td><code>notification_robots</code></td><td>通知机器人配置。</td><td>保存机器人别名、供应商、启用状态和非敏感展示信息；secret 不明文回显给页面。</td></tr>
+          <tr><td><code>notification_robot_bindings</code></td><td>机器人绑定关系。</td><td>按事务码、工厂组、状态或用户范围绑定通知机器人，决定 run 完成后通知谁。</td></tr>
+          <tr><td><code>schedule_tasks</code></td><td>定时任务定义。</td><td>保存任务名称、事务码、参数模板、cron/周计划、启用状态、下次执行时间。</td></tr>
+          <tr><td><code>app_settings</code></td><td>本机运行设置。</td><td>保存脚本目录、输出目录、队列模式等非密钥设置；密钥仍优先环境变量或本机私有配置。</td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="sqlite-run">运行、日志、文件和定时执行表</h3>
+      <table>
+        <thead>
+          <tr><th>表名</th><th>作用</th><th>关键说明</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>runs</code></td><td>执行记录和队列主体。</td><td>每次运行一个 <code>run_id</code>。ZFI072A 多工厂任务使用 parent run 汇总，child run 按单工厂执行；状态流转为 queued、running、success、partial_failed、failed、canceled，并保存 <code>request_json</code>、<code>summary_json</code>、来源 run、SAP 状态和耗时。</td></tr>
+          <tr><td><code>run_batch_items</code></td><td>拆批明细。</td><td>记录 parent run 下每个工厂的批次项，包含 <code>parent_run_id</code>、<code>child_run_id</code>、<code>source_parent_run_id</code>、<code>source_batch_item_id</code>、<code>plant_code</code>、<code>sequence_no</code>、<code>status</code>、<code>attempt_no</code>、<code>last_error</code>、开始和结束时间。</td></tr>
+          <tr><td><code>run_logs</code></td><td>运行日志。</td><td>记录 API、队列、VBS 输出、SAP 状态栏、通知发送结果，按 run 关联。</td></tr>
+          <tr><td><code>run_files</code></td><td>输出文件记录。</td><td>保存导出文件名、路径、大小、类型，供页面展示和后续归档。</td></tr>
+          <tr><td><code>schedule_task_runs</code></td><td>定时任务触发记录。</td><td>保存某个定时任务触发出的 runId、触发时间、触发结果、失败原因。</td></tr>
+        </tbody>
+      </table>
+      <table>
+        <thead>
+          <tr><th>拆批对象</th><th>设计说明</th><th>状态与查询</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="nowrap">parent run</td><td>代表用户提交的一次 ZFI072A 多工厂任务，<code>parent_run_id</code> 为空，<code>request_json</code> 保存原始年度、周和工厂列表，<code>summary_json</code> 保存汇总。</td><td>页面列表优先展示 parent run；全部成功为 <code>success</code>，部分失败为 <code>partial_failed</code>，全部失败为 <code>failed</code>。</td></tr>
+          <tr><td class="nowrap">child run</td><td>代表一个工厂的一次真实 SAP GUI/VBS 执行，<code>parent_run_id</code> 指向 parent，<code>request_json</code> 只包含当前工厂和必要业务参数。</td><td>child run 按普通 run 记录日志、文件和 SAP 状态；失败原因写入自身日志和对应 <code>run_batch_items</code>。</td></tr>
+          <tr><td class="nowrap"><code>run_batch_items</code></td><td>作为 parent 和 child 的稳定映射表，固定工厂顺序、执行次数和失败原因，避免仅靠 JSON 难以查询。</td><td>用于详情页展示每个工厂状态，也用于 <code>rerun-failed</code> 精确筛选失败工厂。</td></tr>
+          <tr><td class="nowrap"><code>summary_json</code></td><td>保存轻量汇总，例如总工厂数、成功数、失败数、失败工厂、耗时、输出文件摘要和最终通知状态，不保存长日志。</td><td>供 <code>GET /api/runs/{runId}</code> 和钉钉最终汇总复用，避免每次都扫描完整日志。</td></tr>
+          <tr><td class="nowrap">来源关系</td><td>重跑任务在新 parent run 上记录 <code>sourceParentRunId</code>，新 child run 或批次项记录 <code>rerunOfRunId</code>、<code>source_batch_item_id</code>，指向被重跑的原始 child run 和批次项。</td><td>原 parent run、原 child run 和原批次项只读保留，不因重跑改回 <code>queued</code> 或 <code>running</code>。</td></tr>
+        </tbody>
+      </table>
+      <div class="solution-box"><strong>迁移策略：</strong>V2 第一阶段使用 SQLite 降低部署复杂度；当公司门户接入、多用户并发查询或审计留存要求提升后，可保留 API 合同，将仓储替换为 SQL Server/PostgreSQL。</div>
+    </section>
+
+    <section id="vbs" class="section">
+      <div class="section-header">
+        <div class="section-num">5</div>
+        <h2>VBS / ZFI072A / SAP GUI 执行设计</h2>
+      </div>
+      <p>VBS 只负责 SAP GUI 自动化动作和标准结果输出，不负责业务配置决策，也不负责通知。所有可变参数来自页面、API、SQLite 规则和执行器替换。</p>
+
+      <h3 id="vbs-params">ZFI072A 参数传入</h3>
+      <table>
+        <thead>
+          <tr><th>参数</th><th>来源</th><th>执行要求</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>year</code></td><td>页面选择或默认当前业务年。</td><td>执行器替换到 VBS 占位符，VBS 填入 SAP 对应字段。</td></tr>
+          <tr><td><code>week</code></td><td>页面选择或周结任务模板。</td><td>必须与业务周口径一致，写入 <code>runs.request_json</code> 留痕。</td></tr>
+          <tr><td><code>plants</code></td><td>页面选择 + SQLite 规则计算。</td><td><code>ZFI072A.vbs</code> 必须从执行器输入获取，不允许回退到硬编码固定工厂。</td></tr>
+          <tr><td><code>businessAreas</code></td><td>工厂组和事务规则。</td><td>ZFI019NL、ZFI080 等需要业务范围的事务使用；ZFI072A 通常以 plants 为主。</td></tr>
+        </tbody>
+      </table>
+      <div class="code-block" data-lang="VBS 输出约定">STATUS_TYPE=S
+STATUS_TEXT=SAP 状态栏文本
+OUTPUT_FILE=D:\RPA\outputs\...
+ERROR=失败原因</div>
+      <div class="warning-box"><strong>ZFI072A 校验：</strong>如果 <code>plants</code> 为空、未替换或缺失，VBS 应输出 <code>ERROR=</code> 并以非零退出，不得自行使用脚本内默认工厂。</div>
+
+      <h3 id="vbs-plant-batch">ZFI072A 按工厂拆批执行</h3>
+      <p>ZFI072A 多工厂任务不把全部工厂塞进一次 VBS 长运行，而是在 API 和执行器层拆成 parent run + child run。这样单个工厂失败不会吞掉其他工厂结果，页面、SQLite 和钉钉都能给出清晰汇总，并支持只重跑失败工厂。</p>
+      <div class="flow">
+        <div class="step"><b>1. 创建 parent</b><code>POST /api/runs</code> 接收年度、周、工厂列表，校验 <code>transaction_plant_rules</code> 后写入 parent run。</div>
+        <div class="step"><b>2. 生成 child</b>按工厂顺序生成 child run 和 <code>run_batch_items</code>，每个 child 只携带一个 <code>plant</code>。</div>
+        <div class="step"><b>3. 串行执行</b>队列 worker 一次领取一个 child run，调用 <code>ZFI072A.vbs</code>，避免多个 SAP GUI 脚本抢同一桌面会话。</div>
+        <div class="step"><b>4. 汇总 parent</b>每个 child 完成后更新批次项、日志、文件和 parent 的 <code>summary_json</code>。</div>
+        <div class="step"><b>5. 重跑失败</b><code>rerun-failed</code> 只允许在 parent 已终态后调用，只读取失败工厂，新建重跑 parent run 和失败工厂 child runs；原 parent 作为审计记录不改回运行态，已成功工厂不重复执行。</div>
+      </div>
+      <table>
+        <thead>
+          <tr><th>场景</th><th>parent run 结果</th><th>处理方式</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>全部 child 成功</td><td><code>success</code></td><td><code>summary_json</code> 记录成功工厂、输出文件和耗时，结束后发送成功汇总。</td></tr>
+          <tr><td>部分 child 失败</td><td><code>partial_failed</code></td><td>成功工厂结果保留；失败工厂写入 <code>run_batch_items.last_error</code>，页面提供“重跑失败工厂”。</td></tr>
+          <tr><td>全部 child 失败</td><td><code>failed</code></td><td>保留每个工厂失败原因，最终汇总标记失败，并允许按失败工厂重新排队。</td></tr>
+          <tr><td>用户取消或执行器中断</td><td><code>canceled</code> 或 <code>partial_failed</code></td><td>已完成 child 不回滚；未执行项保持可识别状态，便于人工判断是否重跑。</td></tr>
+        </tbody>
+      </table>
+      <div class="solution-box"><strong>重跑失败工厂：</strong><code>POST /api/runs/{parentRunId}/rerun-failed</code> 只允许在原 parent run 已终态后调用，不修改原 parent run 的最终状态，也不把原 parent 改回 <code>queued</code> 或 <code>running</code>。接口用于“部分失败后只重跑失败工厂”：只基于失败的 <code>run_batch_items</code> 新建一次重跑 parent run，并为失败工厂生成新的 child runs，避免 A/C 等已成功工厂被重复执行；新记录通过 <code>sourceParentRunId</code> 指向原 parent，通过 <code>rerunOfRunId</code> 或 <code>source_batch_item_id</code> 指向原失败 child 和批次项。</div>
+
+      <h3 id="vbs-serial">SAP GUI 串行执行和 /NEX 清理</h3>
+      <div class="priority">
+        <div class="item"><b>进入事务</b>已有 SAP 会话时使用 <code>/nZFI072A</code> 或对应事务码进入，减少重复登录。</div>
+        <div class="item"><b>单队列执行</b>同一桌面会话一次只运行一个 VBS，避免多个脚本争抢 <code>wnd[0]</code>。</div>
+        <div class="item"><b>读取状态栏</b>关键步骤后读取 <code>wnd[0]/sbar</code> 的 MessageType 和 Text，写入 run。</div>
+        <div class="item"><b>清理会话</b>执行完成或失败后通过 <code>/NEX</code> 退出/清理 SAP 会话，降低残留窗口影响下次任务。</div>
+      </div>
+      <div class="tip-box"><strong>责任分离：</strong>VBS 不读取 SQLite、不访问 DingTalk、不判断通知目标。执行器解析 VBS 输出后更新 <code>runs</code>、<code>run_logs</code>、<code>run_files</code>，再交给通知适配器。</div>
+    </section>
+
+    <section id="notify" class="section">
+      <div class="section-header">
+        <div class="section-num">6</div>
+        <h2>DingTalk OpenAPI 通知链路</h2>
+      </div>
+      <p>V2 推荐由本地 API 后端直连 DingTalk OpenAPI 发送通知，不再让 VBS 打开 SAP 事务码或 SAP Gateway OData 做通知推送。这样通知失败不会占用 SAP GUI 串行资源，也更容易做重试和审计。</p>
+
+      <h3 id="notify-chain">OpenAPI 调用流程</h3>
+      <div class="flow">
+        <div class="step"><b>1. 读取 run</b>获取 runId、事务码、工厂、操作人、SAP 返回消息。</div>
+        <div class="step"><b>2. 选择机器人</b>根据 <code>notification_robot_bindings</code> 找到机器人别名和接收范围。</div>
+        <div class="step"><b>3. 获取 token</b>调用 <code>/token</code> 获取 DingTalk OpenAPI token。</div>
+        <div class="step"><b>4. 发送消息</b>调用 <code>/dingtalk-oa/topapi/message/corpconversation/asyncsend_v2</code>。</div>
+        <div class="step"><b>5. 写入日志</b>把通知成功/失败写入 <code>run_logs</code>，必要时进入重试队列。</div>
+      </div>
+      <div class="code-block" data-lang="本机配置示例">{
+  "dingTalkOpenApi": {
+    "baseUrl": "&lt;接口根地址&gt;",
+    "appKey": "&lt;appKey&gt;",
+    "appSecret": "&lt;appSecret&gt;",
+    "agentId": "&lt;agentId&gt;"
+  }
+}</div>
+
+      <h3 id="notify-policy">通知策略</h3>
+      <div class="priority">
+        <div class="item"><b>开始通知一次</b>parent run 进入队列或被执行器领取时发送一次开始通知，包含事务码、操作人、年度、周、工厂数量和 runId；child run 开始不单独推送。</div>
+        <div class="item"><b>过程只记日志</b>child run 失败、VBS 警告、SAP 状态栏异常写入 <code>run_logs</code> 和 <code>run_batch_items</code>，页面可查看，但不对每个工厂刷屏通知。</div>
+        <div class="item"><b>结束汇总一次</b>所有 child run 结束后，根据 parent 的 <code>summary_json</code> 发送一次最终汇总到钉钉，展示成功数、失败数、失败工厂、状态 <code>success</code>/<code>partial_failed</code>/<code>failed</code>、耗时和输出文件摘要。</div>
+        <div class="item"><b>幂等控制</b>以 <code>run_id</code> + 通知阶段记录发送状态，避免 API 重试、执行器重启或页面重复查询造成重复通知。</div>
+      </div>
+      <div class="tip-box"><strong>降噪原则：</strong>ZFI072A 按工厂拆批后，child 失败可以详细记录日志和失败原因，但钉钉只接收开始通知和结束汇总。最终汇总必须由后端通知适配器推送到钉钉，VBS 不直接调用通知接口。</div>
+
+      <h3 id="notify-secret">config.local.json 本机保存要求</h3>
+      <div class="constraint-box"><strong>禁止明文提交：</strong><code>D:\RPA\config.local.json</code> 只允许保存在目标服务器本机，用于联调或上线本机配置。该文件可能包含接口根地址、appKey、appSecret、agentId 等敏感信息，不能提交 Git，不能复制到文档附件，不能由 API 明文返回给前端。</div>
+      <table>
+        <thead>
+          <tr><th>配置项</th><th>推荐来源</th><th>安全要求</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>baseUrl</code></td><td>环境变量或 <code>config.local.json</code></td><td>不要硬编码在前端或公开代码中。</td></tr>
+          <tr><td><code>appKey</code></td><td>环境变量或本机私有配置</td><td>仅后端读取，不返回前端。</td></tr>
+          <tr><td><code>appSecret</code></td><td>环境变量或本机私有配置</td><td>按密钥处理，不写入 SQLite 普通字段，不提交 Git。</td></tr>
+          <tr><td><code>agentId</code></td><td>环境变量或本机私有配置</td><td>可记录别名，真实值仍由后端私有配置管理。</td></tr>
+          <tr><td><code>dingTalkUserId</code></td><td>登录态、SSO、用户映射</td><td>临时联调值不能作为正式上线身份来源。</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section id="deploy" class="section">
+      <div class="section-header">
+        <div class="section-num">7</div>
+        <h2>部署目录与安全边界</h2>
+      </div>
+      <p>V2 推荐把源码仓库和运行目录分开。源码用于版本管理、打包和同步；运行目录用于服务器本机运行，不把数据库、日志、输出、密钥和 DPAPI 配置带入 Git。</p>
+
+      <h3 id="deploy-layout">部署/上线目录</h3>
+      <table>
+        <thead>
+          <tr><th>路径</th><th>内容</th><th>管理方式</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>D:\RPA\index.html</code></td><td>V2 前端操作台外壳。</td><td>可从源码同步，页面通过本地 API 获取配置。</td></tr>
+          <tr><td><code>D:\RPA\assets\js\*.js</code></td><td>V2 前端 JS 模块。</td><td>必须与 <code>index.html</code> 同步复制；漏复制会导致白屏或按钮无响应。</td></tr>
+          <tr><td><code>D:\RPA\bin\SapWebLauncher.exe</code></td><td>C#/.NET 8 本地 API 和执行器。</td><td>由发布包或源码构建产物复制。</td></tr>
+          <tr><td><code>D:\RPA\data\sap-rpa-config.db</code></td><td>SQLite 运行库。</td><td>目标服务器本机初始化，不提交 Git。</td></tr>
+          <tr><td><code>D:\RPA\transactions\*.vbs</code></td><td>事务脚本，如 <code>ZFI072A.vbs</code>、<code>ZFI019NL.vbs</code>。</td><td>从源码同步到运行目录，脚本本身不得含真实密码。</td></tr>
+          <tr><td><code>D:\RPA\outputs\</code></td><td>SAP 导出或结果文件。</td><td>运行产物，不提交 Git，按审计策略归档。</td></tr>
+          <tr><td><code>D:\RPA\logs\</code></td><td>执行器日志。</td><td>运行产物，不提交 Git，保留脱敏日志。</td></tr>
+          <tr><td><code>%LOCALAPPDATA%\SapWebLauncher\config.json</code></td><td>SAP 登录配置，密码由 DPAPI 保护。</td><td>目标 Windows 执行账号本机生成，不跨账号复制。</td></tr>
+          <tr><td><code>D:\RPA\config.local.json</code></td><td>DingTalk OpenAPI 本机配置。</td><td>仅目标服务器保存，不明文提交。</td></tr>
+        </tbody>
+      </table>
+
+      <h3 id="deploy-security">安全边界</h3>
+      <div class="grid two">
+        <div class="mini-card"><strong>Windows 执行账号</strong>固定账号登录交互式桌面，运行 SapWebLauncher 和 SAP GUI；不要让多人共用桌面手工操作。</div>
+        <div class="mini-card"><strong>SAP 技术账号</strong>SAP 审计显示技术账号，应用侧必须记录真实发起人、部门、事务码、参数和 runId。</div>
+        <div class="mini-card"><strong>API 暴露范围</strong>默认绑定本机访问；若开放局域网访问，必须增加认证、端口、防火墙和反向代理策略。</div>
+        <div class="mini-card"><strong>敏感数据</strong>SAP 密码、DingTalk secret、导出财务数据、日志中的敏感字段不得提交 Git 或放入公开文档。</div>
+      </div>
+      <div class="solution-box"><strong>上线最小闭环：</strong>启动 <code>SapWebLauncher.exe --serve</code>，页面读取 <code>/api/config</code>，提交 <code>POST /api/runs</code>，队列串行执行 <code>ZFI072A.vbs</code>，执行器回写 SQLite 并由后端发送 DingTalk OpenAPI 通知。</div>
+    </section>
+  </main>
+
+  <script>
+    const body = document.body;
+    const toggle = document.querySelector(".menu-toggle");
+    const overlay = document.querySelector(".overlay");
+    const navGroups = Array.from(document.querySelectorAll(".nav-group"));
+    const navButtons = Array.from(document.querySelectorAll(".nav-main"));
+    const sections = Array.from(document.querySelectorAll(".section"));
+
+    function closeMobileNav() {
+      body.classList.remove("nav-open");
+    }
+
+    toggle.addEventListener("click", () => body.classList.toggle("nav-open"));
+    overlay.addEventListener("click", closeMobileNav);
+
+    navButtons.forEach(button => {
+      button.addEventListener("click", () => {
+        const group = button.closest(".nav-group");
+        const isOpen = group.classList.contains("open");
+        navGroups.forEach(item => item.classList.remove("open"));
+        if (!isOpen) group.classList.add("open");
+        const target = document.getElementById(button.dataset.target);
+        if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    });
+
+    document.querySelectorAll(".nav-sub a").forEach(link => {
+      link.addEventListener("click", closeMobileNav);
+    });
+
+    function updateActive() {
+      let current = sections[0]?.id;
+      const offset = 120;
+      sections.forEach(section => {
+        if (section.getBoundingClientRect().top <= offset) current = section.id;
+      });
+      navButtons.forEach(button => {
+        button.classList.toggle("active", button.dataset.target === current);
+      });
+    }
+
+    updateActive();
+    window.addEventListener("scroll", updateActive, { passive: true });
+  </script>
+</body>
+</html>

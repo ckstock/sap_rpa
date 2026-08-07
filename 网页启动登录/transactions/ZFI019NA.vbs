@@ -1,24 +1,23 @@
-' @tcode=ZFI019NL
-' @name=ZFI019NL business area receipt export
-' @params=businessAreas
+' @tcode=ZFI019NA
+' @name=ZFI019NA receipt export
+' @params=plants
 ' @dateRule=LAST_FULL_WEEK_BY_SYSTEM_DATE
-' @factoryRule=single business area supplied by launcher/API
+' @factoryRule=single plant supplied by launcher/API
 '
 ' Standardized for SapWebLauncher. Source is ASCII/WSH safe.
 
 On Error Resume Next
 
-Dim tcode, businessAreasCsv, factoryGroup
+Dim tcode, plantsCsv, factoryGroup
 Dim yearValue, weekValue, periodValue, weekEndValue, dateLowValue, dateHighValue
-Dim businessAreaValue
+Dim plantValue
 Dim SapGuiAuto, application, connection, session
 Dim retries, sleepMs, statusType, statusText
-Dim unresolvedOkCodeToken, unresolvedAreasToken, unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
-Dim materialCsv, materialCount
+Dim unresolvedOkCodeToken, unresolvedPlantsToken, unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
 Dim alvExportDir, alvExportFilename, scriptDir, exportTimeoutMs, alvHelperLoaded
 
 tcode = "{OK_CODE}"
-businessAreasCsv = "{BUSINESS_AREAS}"
+plantsCsv = "{PLANTS}"
 factoryGroup = "{FACTORY_GROUP}"
 yearValue = "{YEAR}"
 weekValue = "{WEEK}"
@@ -30,13 +29,13 @@ scriptDir = "{SCRIPT_DIR}"
 exportTimeoutMs = 180000
 alvHelperLoaded = False
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
-unresolvedAreasToken = "{" & "BUSINESS_AREAS" & "}"
+unresolvedPlantsToken = "{" & "PLANTS" & "}"
 unresolvedAlvExportDirToken = "{" & "ALV_EXPORT_DIR" & "}"
 unresolvedAlvExportFilenameToken = "{" & "ALV_EXPORT_FILENAME" & "}"
 
-If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFI019NL"
-If UCase(Trim(CStr(tcode))) <> "ZFI019NL" Then Fail "ZFI019NL script refuses tcode=" & CStr(tcode), 10
-If Trim(CStr(businessAreasCsv)) = unresolvedAreasToken Then businessAreasCsv = ""
+If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFI019NA"
+If UCase(Trim(CStr(tcode))) <> "ZFI019NA" Then Fail "ZFI019NA script refuses tcode=" & CStr(tcode), 10
+If Trim(CStr(plantsCsv)) = unresolvedPlantsToken Then plantsCsv = ""
 If IsPlaceholder(yearValue, "YEAR") Then yearValue = ""
 If IsPlaceholder(weekValue, "WEEK") Then weekValue = ""
 If IsPlaceholder(periodValue, "PERIOD") Then periodValue = ""
@@ -45,8 +44,8 @@ If Trim(CStr(alvExportDir)) = unresolvedAlvExportDirToken Then alvExportDir = ""
 If Trim(CStr(alvExportFilename)) = unresolvedAlvExportFilenameToken Then alvExportFilename = ""
 If IsPlaceholder(scriptDir, "SCRIPT_DIR") Then scriptDir = ""
 
-businessAreaValue = FirstCsvValue(businessAreasCsv)
-If businessAreaValue = "" Then Fail "ZFI019NL requires one business area from {BUSINESS_AREAS}", 5
+plantValue = FirstCsvValue(plantsCsv)
+If plantValue = "" Then Fail "ZFI019NA requires one plant from {PLANTS}", 5
 
 ResolveDates
 
@@ -161,30 +160,6 @@ Sub Fail(message, code)
    WScript.Quit code
 End Sub
 
-Function IsNoDataStatusText(value)
-   Dim text
-   text = LCase(Replace(Replace(Trim(CStr(value)), " ", ""), "　", ""))
-   IsNoDataStatusText = (InStr(text, "没有符合条件数据") > 0) _
-      Or (InStr(text, "没有符合条件的数据") > 0) _
-      Or (InStr(text, "没有找到符合条件的数据") > 0) _
-      Or (InStr(text, "nodatafound") > 0) _
-      Or (InStr(text, "norecordsfound") > 0)
-End Function
-
-Function IsNoDataAllowedStage(stage)
-   IsNoDataAllowedStage = (InStr(LCase(CStr(stage)), "execute") > 0)
-End Function
-
-Sub ExitNoData(stage, message)
-   Dim text
-   text = "ZFI019NL no data after " & stage & " - " & CStr(message)
-   WScript.Echo "STATUS_TYPE=W"
-   WScript.Echo "STATUS_TEXT=" & text
-   WScript.Echo "WARN: " & text
-   WScript.Echo "INFO: transaction script executed"
-   WScript.Quit 0
-End Sub
-
 Function ObjectExists(id)
    Dim obj
    Err.Clear
@@ -198,6 +173,7 @@ Function SessionIsUsable(candidate)
    If Not IsObject(candidate) Then Exit Function
    Err.Clear
    If candidate.Info.User = "" Then Err.Clear: Exit Function
+   If candidate.Info.Transaction = "S000" Then Err.Clear: Exit Function
    If Err.Number <> 0 Then Err.Clear: Exit Function
    Set session = candidate
    If ObjectExists("wnd[0]/tbar[0]/okcd") Then SessionIsUsable = True
@@ -222,7 +198,6 @@ Sub CheckSapStatus(stage)
    statusType = session.findById("wnd[0]/sbar").MessageType
    statusText = session.findById("wnd[0]/sbar").Text
    If Err.Number = 0 And Trim(CStr(statusText)) <> "" Then WScript.Echo "INFO: sap status after " & stage & " type=" & statusType & ", text=" & statusText
-   If Err.Number = 0 And IsNoDataAllowedStage(stage) And IsNoDataStatusText(statusText) Then ExitNoData stage, statusText
    If Err.Number = 0 And (statusType = "E" Or statusType = "A") Then Fail "SAP status error after " & stage & " - " & statusText, 6
    Err.Clear
 End Sub
@@ -264,111 +239,6 @@ Sub SelectGridColumn(columnName)
    If Err.Number <> 0 Then Fail "select grid column " & columnName & " failed - " & Err.Description, 8
    WScript.Echo "INFO: selected grid column " & columnName
    Err.Clear
-End Sub
-
-Function IsSpecialBusinessArea(value)
-   Dim normalized
-   normalized = UCase(Trim(CStr(value)))
-   IsSpecialBusinessArea = (normalized = "0162" Or normalized = "7700" Or normalized = "7800" Or normalized = "7600" Or normalized = "1070" Or normalized = "0500" Or normalized = "7900")
-End Function
-
-Function StartsWith800(value)
-   StartsWith800 = (Left(Trim(CStr(value)), 3) = "800")
-End Function
-
-Function GridColumnExists(grid, columnName)
-   Dim probe
-   Err.Clear
-   probe = grid.GetCellValue(0, CStr(columnName))
-   GridColumnExists = (Err.Number = 0)
-   Err.Clear
-End Function
-
-Function ResolveGridColumn(grid, rowCount, candidatesCsv)
-   Dim parts, item
-   ResolveGridColumn = ""
-   parts = Split(CStr(candidatesCsv), ",")
-   If CLng(rowCount) <= 0 Then
-      ResolveGridColumn = Trim(CStr(parts(0)))
-      Exit Function
-   End If
-   For Each item In parts
-      item = Trim(CStr(item))
-      If item <> "" And GridColumnExists(grid, item) Then
-         ResolveGridColumn = item
-         Exit Function
-      End If
-   Next
-End Function
-
-Function TryGridCell(grid, rowIndex, columnName)
-   Err.Clear
-   TryGridCell = Trim(CStr(grid.GetCellValue(CInt(rowIndex), CStr(columnName))))
-   If Err.Number <> 0 Then
-      Err.Clear
-      TryGridCell = ""
-   End If
-End Function
-
-Sub EmitMaterialListFromGrid()
-   Dim grid, rowCount, materialColumn, productColumn
-   Dim dict, rowIndex, materialValue, productValue, keepRow, key
-   materialCsv = ""
-   materialCount = 0
-
-   Err.Clear
-   Set grid = session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell")
-   If Err.Number <> 0 Or Not IsObject(grid) Then
-      WScript.Echo "WARN: material extraction grid not found - " & Err.Description
-      Err.Clear
-      Exit Sub
-   End If
-
-   Err.Clear
-   rowCount = CLng(grid.RowCount)
-   If Err.Number <> 0 Then
-      WScript.Echo "WARN: material extraction rowCount unavailable - " & Err.Description
-      Err.Clear
-      Exit Sub
-   End If
-
-   materialColumn = ResolveGridColumn(grid, rowCount, "MATNR,MATNR1,RMATNR,IMATNR")
-   productColumn = ResolveGridColumn(grid, rowCount, "SMATNR,PMATNR")
-   WScript.Echo "INFO: zfi019nl material extraction rowCount=" & rowCount & ", materialColumn=" & materialColumn & ", productColumn=" & productColumn
-
-   If materialColumn = "" Then
-      WScript.Echo "WARN: material extraction skipped because MATNR column was not found"
-      Exit Sub
-   End If
-   If IsSpecialBusinessArea(businessAreaValue) And productColumn = "" Then
-      WScript.Echo "WARN: special business area requires SMATNR/product column for 800* filtering, but column was not found"
-      Exit Sub
-   End If
-
-   Set dict = CreateObject("Scripting.Dictionary")
-   For rowIndex = 0 To CLng(rowCount) - 1
-      materialValue = TryGridCell(grid, rowIndex, materialColumn)
-      If materialValue <> "" Then
-         keepRow = True
-         If IsSpecialBusinessArea(businessAreaValue) Then
-            productValue = TryGridCell(grid, rowIndex, productColumn)
-            keepRow = StartsWith800(productValue)
-         End If
-         If keepRow And Not dict.Exists(materialValue) Then dict.Add materialValue, materialValue
-      End If
-   Next
-
-   materialCount = dict.Count
-   If materialCount > 0 Then materialCsv = Join(dict.Keys, ",")
-   WScript.Echo "MATERIAL_COUNT=" & materialCount
-   If materialCsv <> "" Then WScript.Echo "MATERIALS_CSV=" & materialCsv
-   For Each key In dict.Keys
-      WScript.Echo "MATERIAL=" & CStr(key)
-   Next
-
-   If IsSpecialBusinessArea(businessAreaValue) Then
-      WScript.Echo "INFO: zfi_split fields=BUKRS,WERKS,MATNR,BEGDA,ENDDA,MTART require backend RFC/NCo; GUI step emitted ZFI019NL grid materials"
-   End If
 End Sub
 
 Sub SetRadioIfExists(id)
@@ -424,7 +294,7 @@ WScript.Echo "INFO: year=" & yearValue
 WScript.Echo "INFO: week=" & weekValue
 WScript.Echo "INFO: period=" & dateLowValue
 WScript.Echo "INFO: weekEnd=" & dateHighValue
-If businessAreaValue <> "" Then WScript.Echo "INFO: businessArea=" & businessAreaValue
+If plantValue <> "" Then WScript.Echo "INFO: plant=" & plantValue
 If factoryGroup <> "" And Not IsPlaceholder(factoryGroup, "FACTORY_GROUP") Then WScript.Echo "INFO: factoryGroup=" & factoryGroup
 
 Err.Clear
@@ -439,10 +309,9 @@ CheckSapStatus "open transaction"
 ' === SAP operation block ===
 SetField "budat-low", "wnd[0]/usr/ctxtS_BUDAT-LOW", dateLowValue
 SetField "budat-high", "wnd[0]/usr/ctxtS_BUDAT-HIGH", dateHighValue
-SetField "gsber-low", "wnd[0]/usr/ctxtS_GSBER-LOW", businessAreaValue
+SetField "werks-low", "wnd[0]/usr/ctxtS_WERKS-LOW", plantValue
 PressExecute
 WaitReady 600000
-EmitMaterialListFromGrid
 SelectAllGrid
 ExportAlvBeforeSave "save result", ""
 PressToolbarButton "wnd[0]/tbar[1]/btn[16]", "save/export result"

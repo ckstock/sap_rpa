@@ -2,6 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
+  <meta name="referrer" content="no-referrer">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>SAP 自动化执行门户</title>
   <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.min.js"></script>
@@ -78,7 +79,7 @@
     }
     .divider::before, .divider::after { content: ""; height: 1px; background: var(--line); }
 
-    .app-shell { min-height: 100vh; display: grid; grid-template-columns: 238px minmax(0, 1fr); }
+    .app-shell { min-height: 100vh; display: grid; grid-template-columns: 176px minmax(0, 1fr); }
     .sidebar {
       position: sticky; top: 0; height: 100vh;
       background: var(--nav);
@@ -87,32 +88,28 @@
       flex-direction: column;
     }
     .logo {
-      height: 72px;
-      padding: 0 18px;
+      height: 60px;
+      padding: 0 14px;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       border-bottom: 1px solid rgba(255,255,255,.1);
       font-weight: 700;
-      font-size: 18px;
+      font-size: 16px;
     }
-    .logo .brand-mark { width: 36px; height: 36px; }
+    .logo .brand-mark { width: 32px; height: 32px; }
     .nav { padding: 0; display: grid; gap: 0; }
     .nav button {
-      height: 56px; width: 100%;
+      height: 48px; width: 100%;
       border: 0; border-radius: 0;
       background: transparent; color: #cbd5e1;
-      display: flex; align-items: center; gap: 10px;
-      padding: 0 18px; text-align: left;
-      font-size: 16px;
+      display: flex; align-items: center; gap: 8px;
+      padding: 0 14px; text-align: left;
+      font-size: 15px;
+      white-space: nowrap;
     }
     .nav button:hover { background: var(--nav-soft); color: #fff; }
     .nav button.active { background: var(--blue); color: #fff; box-shadow: none; }
-    .sidebar-footer {
-      margin-top: auto; padding: 16px;
-      border-top: 1px solid rgba(255,255,255,.1);
-      color: #94a3b8; font-size: 12px; line-height: 1.7;
-    }
     .main { min-width: 0; padding: 18px 22px 32px; }
     .topbar {
       min-height: 58px;
@@ -135,6 +132,29 @@
       background: #e6f7ff; color: #0958d9;
       display: grid; place-items: center;
       font-weight: 700; font-size: 13px;
+    }
+    .identity-pill {
+      display: inline-flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 2px;
+      min-width: 108px;
+      max-width: 180px;
+      line-height: 1.15;
+    }
+    .identity-name {
+      font-weight: 700;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .identity-ddid {
+      font-size: 12px;
+      color: var(--muted);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     .btn {
@@ -221,6 +241,7 @@
     .checkbox-card input { width: auto; min-height: 0; margin-top: 3px; }
     .checkbox-card strong { display: block; color: #102a43; }
     .checkbox-card span { display: block; color: var(--muted); font-size: 12px; line-height: 1.45; margin-top: 3px; }
+    .checkbox-card.compact { min-height: 0; padding: 9px 10px; }
     .area-chips { display: flex; gap: 8px; flex-wrap: wrap; }
     .area-chip {
       min-height: 28px;
@@ -283,54 +304,217 @@
     .metric .label { color: var(--muted); font-size: 12px; }
     .metric .value { font-size: 23px; font-weight: 800; }
     .metric .hint { color: var(--muted); font-size: 12px; line-height: 1.45; }
-    .quick-actions { display: grid; grid-template-columns: repeat(4, minmax(170px, 1fr)); gap: 18px; }
-    .action-card {
-      border: 1px solid var(--line);
+    .agent-v2-entry {
+      border: 1px solid #d9e5f2;
       border-radius: var(--radius);
-      background: #fff;
-      padding: 28px 16px 18px;
-      display: grid;
+      background: #f8fbff;
+      padding: 10px 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
       gap: 12px;
-      justify-items: center;
-      min-height: 190px;
-      transition: border-color .16s, box-shadow .16s, transform .16s;
     }
-    .action-card:hover { border-color: #91d5ff; box-shadow: var(--shadow); transform: translateY(-1px); }
-    .action-top { display: grid; justify-items: center; gap: 8px; text-align: center; }
-    .action-icon {
-      width: 48px;
-      height: 48px;
+    .agent-v2-main { display: flex; align-items: flex-start; gap: 10px; min-width: 0; }
+    .agent-v2-icon {
+      width: 32px;
+      height: 32px;
       border-radius: 8px;
       background: #e6f7ff;
       color: var(--blue);
       display: grid;
       place-items: center;
+      flex: 0 0 auto;
     }
-    .action-icon .icon { width: 26px; height: 26px; }
-    .action-name { font-weight: 800; font-size: 18px; color: #102a43; }
-    .action-desc { color: var(--muted); font-size: 14px; line-height: 1.5; }
-    .action-card .btn { width: min(190px, 100%); }
-    .transaction-groups { display: grid; gap: 16px; }
-    .transaction-group { display: grid; gap: 10px; }
-    .transaction-group-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #102a43; font-weight: 800; }
-    .transaction-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
-    .transaction-card {
+    .agent-v2-copy { display: grid; gap: 2px; min-width: 0; }
+    .agent-v2-title { color: #102a43; font-size: 14px; font-weight: 700; }
+    .agent-v2-desc { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .quick-actions { display: grid; grid-template-columns: repeat(4, minmax(170px, 1fr)); gap: 12px; }
+    .action-card {
       border: 1px solid var(--line);
       border-radius: var(--radius);
       background: #fff;
-      padding: 14px;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 86px;
+      transition: border-color .16s, box-shadow .16s, transform .16s;
+    }
+    .action-card:hover { border-color: #91d5ff; box-shadow: 0 4px 14px rgba(15, 23, 42, .07); transform: translateY(-1px); }
+    .action-top { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .action-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: #f5f8fc;
+      color: var(--blue);
+      display: grid;
+      place-items: center;
+      border: 1px solid #e3edf8;
+      flex: 0 0 auto;
+    }
+    .action-icon .icon { width: 18px; height: 18px; }
+    .action-copy { display: grid; gap: 3px; min-width: 0; }
+    .action-name { font-weight: 800; font-size: 15px; color: #102a43; line-height: 1.25; }
+    .action-desc { color: var(--muted); font-size: 12px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .action-card .btn { flex: 0 0 auto; }
+    .execute-shell { display: grid; gap: 16px; }
+    .execute-form-grid { display: grid; grid-template-columns: minmax(220px, 360px); gap: 16px; max-width: 360px; }
+    .execute-range {
+      border: 1px solid #91d5ff;
+      background: #eef8ff;
+      border-radius: var(--radius);
+      padding: 14px 16px;
       display: grid;
       gap: 10px;
-      min-height: 154px;
     }
-    .transaction-card:hover { border-color: #91d5ff; box-shadow: var(--shadow); }
-    .transaction-card-head { display: flex; align-items: flex-start; gap: 10px; }
-    .transaction-card .action-icon { width: 38px; height: 38px; }
-    .transaction-card .action-icon .icon { width: 21px; height: 21px; }
-    .transaction-meta { display: grid; gap: 4px; min-width: 0; }
-    .transaction-code { font-size: 16px; font-weight: 800; color: #102a43; }
-    .transaction-name { color: var(--muted); font-size: 13px; line-height: 1.45; }
-    .transaction-card .btn { width: 100%; }
+    .execute-range-row {
+      display: grid;
+      grid-template-columns: 88px minmax(0, 1fr);
+      gap: 16px;
+      align-items: start;
+    }
+    .execute-range-label { color: #475467; line-height: 28px; }
+    .execute-range-value { color: #102a43; font-weight: 800; line-height: 28px; }
+    .zfi057-week-override { display: grid; gap: 10px; }
+    .week-range-inputs {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 10px;
+      align-items: end;
+    }
+    .week-range-inputs label {
+      display: grid;
+      gap: 6px;
+      color: #475467;
+      font-size: 12px;
+    }
+    .week-range-inputs input { min-height: 34px; background: #fff; }
+    .week-range-inputs .table-hint { align-self: center; }
+    .execute-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .transaction-groups { display: grid; gap: 18px; }
+    .transaction-group {
+      display: grid;
+      gap: 14px;
+      padding: 2px 0 8px;
+    }
+    .transaction-group + .transaction-group { border-top: 1px solid #eef2f7; padding-top: 18px; }
+    .transaction-group-head {
+      color: #102a43;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      line-height: 1.3;
+    }
+    .transaction-group-title { display: flex; align-items: center; gap: 12px; min-width: 0; }
+    .workflow-index {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: #e8f3ff;
+      color: var(--blue);
+      font-weight: 900;
+      flex: 0 0 auto;
+    }
+    .transaction-group-name { font-size: 18px; font-weight: 900; }
+    .transaction-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 230px));
+      gap: 18px;
+      justify-content: start;
+      overflow: visible;
+    }
+    .transaction-card {
+      border: 1px solid var(--line);
+      border-radius: 4px;
+      background: #fff;
+      padding: 14px 16px 16px;
+      display: grid;
+      grid-template-rows: auto auto 1fr auto;
+      justify-items: center;
+      text-align: center;
+      gap: 9px;
+      min-height: 190px;
+      position: relative;
+      transition: border-color .18s, box-shadow .18s, transform .18s;
+    }
+    .transaction-card:not(:last-child)::after {
+      content: "→";
+      position: absolute;
+      right: -15px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: #91a4b7;
+      font-weight: 900;
+      font-size: 18px;
+      z-index: 1;
+    }
+    .transaction-card:hover {
+      border-color: #b7d9ff;
+      box-shadow: 0 12px 28px rgba(15, 23, 42, .12);
+      transform: translateY(-4px);
+    }
+    .transaction-step {
+      color: #667085;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0;
+      text-transform: uppercase;
+      justify-self: start;
+    }
+    .transaction-card-head { display: contents; }
+    .transaction-card .action-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 8px;
+      margin-bottom: 2px;
+    }
+    .transaction-card .action-icon .icon { width: 20px; height: 20px; }
+    .transaction-meta { display: contents; }
+    .transaction-code { font-size: 17px; font-weight: 800; color: #102a43; line-height: 1.25; overflow-wrap: anywhere; }
+    .transaction-name {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.45;
+      min-height: 38px;
+      max-width: 100%;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .transaction-save-word {
+      color: #000;
+      font-weight: 900;
+    }
+    .transaction-note {
+      color: #175cd3;
+      font-size: 12px;
+      line-height: 1.35;
+      min-height: 16px;
+      overflow-wrap: anywhere;
+    }
+    .transaction-tags { display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; min-height: 28px; }
+    .transaction-card .btn { justify-self: center; margin-top: 4px; }
+    .report-toolbar { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; }
+    .report-toolbar .field { min-width: 170px; }
+    .report-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .report-metric {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 16px;
+      display: grid;
+      gap: 6px;
+      min-height: 92px;
+    }
+    .report-metric-value { font-size: 26px; font-weight: 800; color: #1677ff; }
+    .report-metric-label { color: var(--muted); font-size: 13px; }
     .param-preview { display: grid; gap: 10px; }
     .param-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
     .param-item {
@@ -450,7 +634,48 @@
       gap: 6px;
     }
     .tab.active { color: var(--blue); border-color: #91d5ff; background: #e6f7ff; }
+    .config-status {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fff;
+      padding: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .config-status-main { display: grid; gap: 4px; min-width: 0; }
+    .config-status-title { display: flex; align-items: center; gap: 8px; font-weight: 700; color: #102a43; }
+    .config-status-sub { color: var(--muted); font-size: 12px; line-height: 1.45; }
+    .config-section { display: grid; gap: 10px; }
+    .config-section + .config-section { margin-top: 16px; }
+    .config-section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 36px;
+    }
+    .config-section-title { display: flex; align-items: center; gap: 8px; font-weight: 800; color: #102a43; }
+    .inline-actions { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+    .empty-cell { color: var(--muted); text-align: center; padding: 18px 12px; }
+    .secret-state { color: #102a43; font-weight: 700; }
+    .table-hint { color: var(--muted); font-size: 12px; line-height: 1.5; }
     .steps { display: grid; gap: 10px; }
+    .queue-strip {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #f8fbff;
+      padding: 10px 12px;
+      display: grid;
+      gap: 6px;
+      font-size: 13px;
+    }
+    .queue-line { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .queue-main { color: #102a43; font-weight: 700; }
+    .queue-meta { display: flex; flex-wrap: wrap; gap: 8px; color: var(--muted); font-size: 12px; }
+    .queue-meta span { white-space: nowrap; }
     .step {
       display: grid;
       grid-template-columns: 28px minmax(0, 1fr) auto;
@@ -512,6 +737,74 @@
     }
     .modal-footer { border-top: 1px solid var(--line); border-bottom: 0; justify-content: flex-end; gap: 10px; }
     .modal-body { padding: 16px; }
+    .rule-plant-editor {
+      grid-column: 1 / -1;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fafcff;
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+    .rule-plant-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .rule-plant-title { color: #102a43; font-weight: 800; }
+    .rule-plant-add { display: flex; gap: 8px; align-items: center; max-width: 360px; }
+    .rule-plant-add input { min-width: 150px; }
+    .schedule-plant-preview {
+      grid-column: 1 / -1;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fafcff;
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+    .schedule-plant-title { color: #102a43; font-weight: 800; }
+    .area-chip.editable { gap: 6px; padding-right: 4px; }
+    .chip-x {
+      width: 18px;
+      height: 18px;
+      min-width: 18px;
+      border: 1px solid rgba(9, 88, 217, .28);
+      border-radius: 4px;
+      background: #fff;
+      color: #063f9e;
+      padding: 0;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 13px;
+      font-weight: 900;
+      line-height: 1;
+      cursor: pointer;
+    }
+    .chip-x:hover,
+    .chip-x:focus-visible {
+      background: #d6eaff;
+      border-color: #1677ff;
+      outline: none;
+    }
+    .advanced-settings {
+      grid-column: 1 / -1;
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: #fafbfc;
+    }
+    .advanced-settings summary {
+      min-height: 38px;
+      padding: 0 12px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: #475467;
+      font-weight: 700;
+      font-size: 13px;
+    }
+    .advanced-settings .advanced-body {
+      border-top: 1px solid var(--line);
+      padding: 14px;
+    }
     .toast-wrap {
       position: fixed;
       right: 18px;
@@ -536,8 +829,13 @@
     .toast.ok { border-left-color: var(--green); }
     .toast.warn { border-left-color: var(--amber); }
     .toast.err { border-left-color: var(--red); }
+    @media (max-width: 1400px) {
+      .transaction-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    }
     @media (max-width: 1120px) {
       .quick-actions, .workflow-map, .grid.cols-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .transaction-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .transaction-card::after { display: none; }
       .param-grid { grid-template-columns: 1fr; }
       .grid.cols-3, .grid.cols-2 { grid-template-columns: 1fr; }
       .form-grid { grid-template-columns: 1fr; }
@@ -549,14 +847,20 @@
       .login-page { grid-template-columns: 1fr; }
       .login-side { display: none; }
       .login-panel { min-height: 100vh; padding: 28px 20px; }
-      .app-shell { grid-template-columns: 1fr; }
-      .sidebar { position: static; height: auto; }
-      .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .sidebar-footer { display: none; }
+      .app-shell { grid-template-columns: 168px minmax(0, 1fr); }
       .main { padding: 12px; }
       .topbar { align-items: flex-start; flex-direction: column; padding: 12px; }
-      .quick-actions, .workflow-map, .grid.cols-4 { grid-template-columns: 1fr; }
+      .quick-actions, .workflow-map, .grid.cols-4, .transaction-grid { grid-template-columns: 1fr; }
+      .transaction-group-head { align-items: flex-start; flex-direction: column; }
+      .agent-v2-entry { align-items: flex-start; flex-direction: column; }
       .plant-picker { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      .app-shell { grid-template-columns: 1fr; }
+      .sidebar { position: static; height: auto; }
+      .logo { height: 54px; }
+      .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .nav button { justify-content: center; padding: 0 10px; }
     }
   </style>
 </head>
@@ -564,891 +868,11 @@
   <div id="app"></div>
   <div id="toastWrap" class="toast-wrap"></div>
 
-  <script>
-    const state = {
-      loggedIn: localStorage.getItem("portalLoggedIn") === "1",
-      page: "dashboard",
-      role: localStorage.getItem("portalRole") || "executor",
-      user: { name: localStorage.getItem("portalUser") || "张三", dept: "财务共享中心" },
-      activeConfigTab: "plant",
-      selectedTCode: "ZFI019NL",
-      executing: false,
-      currentRun: null,
-      modal: null,
-      form: {
-        account: "",
-        password: "",
-        tCode: "ZFI019NL",
-        factoryGroup: "PINGHU_30",
-        plants: ["1022", "1024", "1032", "6041"],
-        notify: true,
-        remark: ""
-      },
-      steps: [
-        { text: "创建执行任务", status: "pending", time: "" },
-        { text: "唤醒本机执行器", status: "pending", time: "" },
-        { text: "SAP 登录与事务码跳转", status: "pending", time: "" },
-        { text: "执行脚本并保存/导出", status: "pending", time: "" },
-        { text: "记录日志并推送通知", status: "pending", time: "" }
-      ],
-      logs: [],
-      scheduleForm: {
-        name: "周一 ZFI019NL 周损益链路",
-        tCode: "ZFI019NL",
-        factoryGroup: "PINGHU_ALL",
-        plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"],
-        execTime: "08:00",
-        frequency: "weekly",
-        notifyStart: true,
-        notifySuccess: true,
-        notifyFail: true
-      }
-    };
-
-    const tCodes = [
-      { code: "ZFI072A", name: "采购价月表", module: "FI", stage: "并行启动", script: "ZFI072A.vbs", icon: "circle-dollar-sign", params: ["year", "week", "plants"], factoryRule: "先四个集采工厂，再其他工厂", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 300, retry: 2, enabled: true },
-      { code: "ZFI085", name: "维护特殊价格", module: "FI", stage: "并行启动", script: "ZFI085.vbs", icon: "badge-dollar-sign", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
-      { code: "ZFI014D", name: "维护仓领退料", module: "FI", stage: "并行启动", script: "ZFI014D.vbs", icon: "package-check", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
-      { code: "ZFI072N", name: "维护采购价", module: "FI", stage: "顺序执行", script: "ZFI072N.vbs", icon: "receipt-text", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
-      { code: "ZFI057", name: "产值拆分", module: "CO", stage: "顺序执行", script: "ZFI057.vbs", icon: "trending-up", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 600, retry: 3, enabled: true },
-      { code: "ZCO020", name: "拆分验证", module: "CO", stage: "顺序执行", script: "ZCO020.vbs", icon: "list-checks", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
-      { code: "ZPP063", name: "验证备注", module: "PP", stage: "顺序执行", script: "ZPP063.vbs", icon: "clipboard-check", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
-      { code: "ZPP063X", name: "回检验证", module: "PP", stage: "顺序执行", script: "ZPP063X.vbs", icon: "rotate-ccw", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
-      { code: "ZFI019NC", name: "验证修正", module: "FI", stage: "顺序执行", script: "ZFI019NC.vbs", icon: "file-pen-line", params: ["year", "week", "plants"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
-      { code: "ZFI080", name: "实际材料保存", module: "FI", stage: "核心并行", script: "ZFI080.vbs", icon: "boxes", params: ["year", "week", "plants", "businessAreas", "weekEnd"], factoryRule: "按业务范围和周结日期保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
-      { code: "ZFI019NI", name: "实际材料结果保存", module: "FI", stage: "核心并行", script: "ZFI019NI.vbs", icon: "save", params: ["year", "week", "plants", "businessAreas"], factoryRule: "按选中厂区工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
-      { code: "ZCO019", name: "标准材料成本", module: "CO", stage: "核心并行", script: "ZCO019.vbs", icon: "tag", params: ["year", "week", "plants"], factoryRule: "明细保存与汇总保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
-      { code: "ZFI019NA", name: "周损益生成", module: "FI", stage: "最终生成", script: "ZFI019NA.vbs", icon: "file-spreadsheet", params: ["year", "week", "plants", "businessAreas"], factoryRule: "东台、黄江等范围保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 300, retry: 2, enabled: true },
-      { code: "ZFI019NL", name: "周损益保存导出", module: "FI", stage: "最终生成", script: "ZFI019NL.vbs", icon: "bar-chart-3", params: ["year", "week", "plants", "businessAreas"], factoryRule: "按选中厂区工厂和业务范围导出", defaultPlantGroup: "PINGHU_30", automation: "script", timeout: 300, retry: 3, enabled: true },
-      { code: "ZFI080B", name: "工费率保存", module: "FI", stage: "周结推送", script: "ZFI080B.vbs", icon: "calculator", params: ["year", "week", "plants"], factoryRule: "东台、黄江保存", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
-      { code: "ZFI148", name: "推送大数据平台", module: "FI", stage: "周结推送", script: "ZFI148.vbs", icon: "send", params: ["year", "week", "plants"], factoryRule: "保存后推送", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true }
-    ];
-    const stageOrder = ["并行启动", "顺序执行", "核心并行", "最终生成", "周结推送"];
-    const zfi072PlantRule = ["5021", "9301", "1101", "207M", "1024", "1032", "6041", "1022", "103C", "103D", "1031", "1033", "103C", "103D", "1035", "1036"];
-    const workflow = [
-      {
-        title: "并行启动阶段",
-        items: [
-          { name: "ZFI085", desc: "维护特殊价格后保存", kind: "primary" },
-          { name: "ZFI014D", desc: "维护仓领退料后保存", kind: "primary" },
-          { name: "ZFI072A", desc: "先跑 4 个集采工厂，再跑其他工厂并保存" }
-        ],
-        note: "启动阶段可并行准备，减少主链路等待。"
-      },
-      {
-        title: "顺序执行阶段",
-        items: [
-          { name: "ZFI072N", desc: "维护采购价后保存" },
-          { name: "ZFI057", desc: "产值拆分后进入 ZCO020 结果验证" },
-          { name: "ZCO020", desc: "验证通过进入下一环节；不通过回检修正", kind: "check" }
-        ],
-        note: "验证点必须保留，避免遗漏带入后续保存。"
-      },
-      {
-        title: "核心并行阶段",
-        items: [
-          { name: "ZCO019", desc: "明细保存与汇总保存，失败后重跑", kind: "primary" },
-          { name: "ZFI080", desc: "实际领料保存，按业务范围和日期保存", kind: "primary" }
-        ],
-        note: "两个保存点都完成后，才能生成最终周损益。"
-      },
-      {
-        title: "最终生成阶段",
-        items: [
-          { name: "ZFI019NL", desc: "生成目标表格并保存导出", kind: "check" },
-          { name: "底稿同步", desc: "保存后同步到大数据平台，抽取最新结果" },
-          { name: "日志通知", desc: "记录状态、截图、失败原因并推送" }
-        ],
-        note: "当前页面优先跑通事务码登录和脚本执行。"
-      }
-    ];
-    const plantCatalog = {
-      "5021": { code: "5021", name: "集采工厂", area: "", groups: ["PROCUREMENT"], enabled: true },
-      "9301": { code: "9301", name: "集采工厂", area: "", groups: ["PROCUREMENT"], enabled: true },
-      "1101": { code: "1101", name: "集采工厂", area: "", groups: ["PROCUREMENT"], enabled: true },
-      "207M": { code: "207M", name: "集采工厂", area: "", groups: ["PROCUREMENT"], enabled: true },
-      "1022": { code: "1022", name: "平湖三十厂", area: "2800", groups: ["PINGHU_30"], enabled: true },
-      "1024": { code: "1024", name: "平湖三十厂", area: "2900", groups: ["PINGHU_30"], enabled: true },
-      "1032": { code: "1032", name: "平湖三十厂", area: "9200", groups: ["PINGHU_30"], enabled: true },
-      "6041": { code: "6041", name: "平湖三十厂", area: "2800", groups: ["PINGHU_30"], enabled: true },
-      "103C": { code: "103C", name: "平湖七厂", area: "2910", groups: ["PINGHU_7", "PINGHU_19"], enabled: true },
-      "1031": { code: "1031", name: "平湖一九厂", area: "3400", groups: ["PINGHU_19"], enabled: true },
-      "1033": { code: "1033", name: "平湖一九厂", area: "2920", groups: ["PINGHU_19"], enabled: true },
-      "103D": { code: "103D", name: "平湖一九厂", area: "2920", groups: ["PINGHU_19"], enabled: true },
-      "1035": { code: "1035", name: "平湖二五厂", area: "5100", groups: ["PINGHU_25"], enabled: true },
-      "1036": { code: "1036", name: "平湖二五厂", area: "2790", groups: ["PINGHU_25"], enabled: true }
-    };
-    const plants = Object.values(plantCatalog);
-    const procurementPlants = ["5021", "9301", "1101", "207M"];
-    const factoryGroups = [
-      { id: "PINGHU_30", name: "平湖三十厂", shortName: "三十厂", plants: ["1022", "1024", "1032", "6041"], zfi019nlAreas: ["2900", "9200", "2800", "3960"], zfi080Areas: ["2900", "9200", "2800", "3960"], zfi072Plants: ["1024", "1032", "6041", "1022"], zco019Plants: ["1022", "1024", "1032", "6041"] },
-      { id: "PINGHU_7", name: "平湖七厂", shortName: "七厂", plants: ["103C"], zfi019nlAreas: ["2910"], zfi080Areas: ["2910"], zfi072Plants: ["103C"], zco019Plants: ["103C"] },
-      { id: "PINGHU_19", name: "平湖一九厂", shortName: "一九厂", plants: ["1031", "1033", "103C", "103D"], zfi019nlAreas: ["3400", "2920"], zfi080Areas: ["3400", "2920"], zfi072Plants: ["1031", "1033", "103C", "103D"], zco019Plants: ["1031", "1033", "103C", "103D"] },
-      { id: "PINGHU_25", name: "平湖二五厂", shortName: "二五厂", plants: ["1035", "1036"], zfi019nlAreas: ["5100", "2790"], zfi080Areas: ["5100", "2790"], zfi072Plants: ["1035", "1036"], zco019Plants: ["1035", "1036"] },
-      { id: "PINGHU_ALL", name: "全部平湖厂区", shortName: "全部", plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"], zfi019nlAreas: ["2900", "9200", "2800", "3960", "2910", "3400", "2920", "5100", "2790"], zfi080Areas: ["2900", "9200", "2800", "3960", "2910", "3400", "2920", "5100", "2790"], zfi072Plants: ["5021", "9301", "1101", "207M", "1024", "1032", "6041", "1022", "103C", "1031", "1033", "103D", "1035", "1036"], zco019Plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"] }
-    ];
-    const businessAreaCatalog = [
-      { code: "2900", name: "平湖三厂" },
-      { code: "9200", name: "平湖三厂" },
-      { code: "2800", name: "平湖三厂" },
-      { code: "3960", name: "平湖十厂" },
-      { code: "2910", name: "平湖七厂" },
-      { code: "3400", name: "平湖一厂" },
-      { code: "2920", name: "平湖九厂" },
-      { code: "5100", name: "平湖二厂" },
-      { code: "2790", name: "平湖五厂" }
-    ];
-    const robots = [
-      { id: "rbt-001", name: "财务通知群", group: "SAP 自动化执行通知", events: "执行完成、执行失败", enabled: true, lastPush: "2026/06/07 08:05" },
-      { id: "rbt-002", name: "IT 运维告警群", group: "SAP 运维告警", events: "系统异常、脚本失败", enabled: true, lastPush: "2026/06/07 14:30" }
-    ];
-    const scheduleTasks = [
-      { id: "SCH-001", name: "周一 ZFI019NL 周损益链路", tCode: "ZFI019NL", factoryGroup: "PINGHU_ALL", plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"], time: "08:00", frequency: "每周一", status: "启用", next: "2026/06/15 08:00" }
-    ];
-    const history = [
-      { id: "RUN-20260608-001", time: "2026/06/08 08:00", task: "周一 ZFI019NL 周损益链路", tCode: "ZFI019NL", plant: "1022,1024,1032,6041", duration: "45 秒", status: "成功", notify: "已推送", result: "保存并导出周损益结果 18 行" },
-      { id: "RUN-20260607-002", time: "2026/06/07 08:00", task: "ZFI057 产值拆分", tCode: "ZFI057", plant: "1032", duration: "1 分 23 秒", status: "失败", notify: "告警已推送", result: "SAP 连接超时" }
-    ];
-    const pages = {
-      dashboard: "工作台",
-      execute: "执行任务",
-      schedule: "定时任务",
-      config: "基础配置",
-      schedule: "定时任务"
-    };
-
-    const icon = (name, cls = "icon") => `<i class="${cls}" data-lucide="${name}"></i>`;
-    const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-    const app = document.getElementById("app");
-
-    function render() {
-      app.innerHTML = state.loggedIn ? renderShell() : renderLogin();
-      bindEvents();
-      lucide.createIcons();
-    }
-
-    function renderLogin() {
-      return `
-        <section class="login-page">
-          <div class="login-panel">
-            <div class="login-brand">
-              <div class="brand-mark">${icon("workflow")}</div>
-              <div>
-                <h1>SAP 自动化执行门户</h1>
-                <p>SAP Automation Portal</p>
-              </div>
-            </div>
-            <div class="login-form">
-              <button class="btn primary" data-action="dingtalk-login">${icon("scan-line")}钉钉扫码登录</button>
-              <div class="divider">或使用账号登录</div>
-              <div class="field">
-                <label for="loginAccount">钉钉账号/手机号</label>
-                <input id="loginAccount" value="${esc(state.form.account)}" placeholder="请输入账号">
-              </div>
-              <div class="field">
-                <label for="loginPassword">密码</label>
-                <input id="loginPassword" type="password" value="${esc(state.form.password)}" placeholder="请输入密码">
-              </div>
-              <button class="btn primary" data-action="login">${icon("log-in")}登录</button>
-            </div>
-          </div>
-          <div class="login-side">
-            <h2>本机执行 SAP，页面负责调度和看结果</h2>
-            <p>前端可以部署到 Netlify 或企业门户；每台执行电脑安装 SapWebLauncher，并在本机维护 SAP 登录信息。当前版本优先打通事务码登录和脚本执行。</p>
-          </div>
-        </section>
-      `;
-    }
-
-    function renderShell() {
-      return `
-        <div class="app-shell">
-          <aside class="sidebar">
-            <div class="logo"><span class="brand-mark">${icon("workflow")}</span><span>SAP 门户</span></div>
-            <nav class="nav">
-              ${navButton("dashboard", "layout-dashboard", "工作台")}
-              ${navButton("execute", "play-circle", "执行任务")}
-              ${navButton("schedule", "calendar-clock", "定时任务")}
-              ${navButton("config", "sliders-horizontal", "基础配置")}
-            </nav>
-            <div class="sidebar-footer">
-              <div>当前重点：事务码登录 + SAP GUI Script 执行</div>
-              <div>SAP 连接信息只保存在本机执行器</div>
-            </div>
-          </aside>
-          <main class="main">
-            <header class="topbar">
-              <div>
-                <div class="breadcrumb">首页 / <span class="page-title">${pages[state.page]}</span></div>
-                <div class="panel-sub">${renderPageSubTitle()}</div>
-              </div>
-              <div class="top-actions">
-                <span class="badge ${state.role === "viewer" ? "viewer" : "executor"}">${icon(state.role === "viewer" ? "search" : "shield-check")} ${state.role === "viewer" ? "查询员" : "执行员"}</span>
-                <button class="btn small" data-action="toggle-role">${icon("refresh-cw")}切换角色</button>
-                <span class="avatar">${esc(state.user.name.slice(0,1))}</span>
-                <span>${esc(state.user.name)}</span>
-                <button class="btn small" data-action="logout">${icon("log-out")}退出</button>
-              </div>
-            </header>
-            ${renderCurrentPage()}
-          </main>
-        </div>
-        ${state.modal ? renderModal() : ""}
-      `;
-    }
-
-    function navButton(page, iconName, text) {
-      return `<button class="${state.page === page ? "active" : ""}" data-page="${page}">${icon(iconName)}${text}</button>`;
-    }
-
-    function renderPageSubTitle() {
-      const subtitles = {
-        dashboard: "快速发起 ZFI019NL 周损益链路，并检查本机执行器状态。",
-        execute: "选择事务码和工厂参数，提交给本机 SapWebLauncher。",
-        schedule: "只保留核心周损益任务，后续由常驻服务或后台调度承接。",
-        config: "维护工厂、事务码和通知参数，后续接入后台保存。"
-      };
-      return subtitles[state.page] || "";
-    }
-
-    function renderCurrentPage() {
-      const map = {
-        dashboard: renderDashboard,
-        execute: renderExecute,
-        schedule: renderSchedule,
-        config: renderConfig
-      };
-      return (map[state.page] || renderDashboard)();
-    }
-
-    function renderDashboard() {
-      return `
-        <section class="panel">
-          <div class="panel-header">
-            <div><div class="panel-title">${icon("zap")}快速操作</div><div class="panel-sub">先按需求链路跑通事务码登录、默认工厂参数和脚本保存导出。</div></div>
-            <button class="btn small" data-action="go-execute" data-tcode="ZFI019NL">${icon("play")}进入执行</button>
-          </div>
-          <div class="panel-body">
-            ${renderTransactionGroups()}
-            <div style="height:16px"></div>
-            <div class="grid cols-3">
-              ${metric("本机执行器", "sap-rpa://", "点击执行时由浏览器唤醒 SapWebLauncher")}
-              ${metric("SAP 登录配置", "本机保存", "系统、客户端、账号和密码不放在网页里")}
-              ${metric("当前重点", "ZFI019NL", "先跑通事务码跳转和脚本执行")}
-            </div>
-          </div>
-        </section>
-        <section class="panel">
-          <div class="panel-header"><div><div class="panel-title">${icon("route")}周损益自动化逻辑</div><div class="panel-sub">按需求文档的执行先后顺序展示，重点放在事务码、保存点和验证点。</div></div></div>
-          <div class="panel-body"><div class="workflow-map">${workflow.map(renderWorkflowStage).join("")}</div></div>
-        </section>
-      `;
-    }
-
-    function metric(label, value, hint) {
-      return `<div class="metric"><div class="label">${esc(label)}</div><div class="value">${esc(value)}</div><div class="hint">${esc(hint)}</div></div>`;
-    }
-
-    function renderTransactionGroups() {
-      return `<div class="transaction-groups">${stageOrder.map(stage => {
-        const items = tCodes.filter(t => t.stage === stage);
-        if (!items.length) return "";
-        return `
-          <div class="transaction-group">
-            <div class="transaction-group-head"><span>${esc(stage)}</span><span class="tag info">${items.length} 个事务码</span></div>
-            <div class="transaction-grid">${items.map(renderTransactionCard).join("")}</div>
-          </div>
-        `;
-      }).join("")}</div>`;
-    }
-
-    function renderTransactionCard(item) {
-      return `
-        <div class="transaction-card">
-          <div class="transaction-card-head">
-            <div class="action-icon">${icon(item.icon || "terminal")}</div>
-            <div class="transaction-meta">
-              <div class="transaction-code">${esc(item.code)}</div>
-              <div class="transaction-name">${esc(item.name)}</div>
-            </div>
-          </div>
-          <button class="btn primary" data-action="go-execute" data-tcode="${esc(item.code)}">${icon("play")}执行</button>
-        </div>
-      `;
-    }
-
-    function quickAction(code, desc, moduleName, iconName) {
-      return `
-        <div class="action-card">
-          <div class="action-top">
-            <div class="action-icon">${icon(iconName)}</div>
-            <div class="action-name">${esc(code)}</div>
-            <div class="action-desc">${esc(desc)}</div>
-          </div>
-          <button class="btn primary" data-action="go-execute" data-tcode="${esc(code)}">${icon("play")}执行</button>
-        </div>
-      `;
-    }
-
-    function renderWorkflowStage(stage, index) {
-      return `
-        <div class="workflow-stage">
-          <div class="stage-head"><span class="stage-num">${index + 1}</span><span>${esc(stage.title)}</span></div>
-          <div class="logic-list">
-            ${stage.items.map(item => `
-              <div class="logic-node ${item.kind || ""}">
-                <strong>${esc(item.name)}</strong>
-                <span>${esc(item.desc)}</span>
-              </div>
-            `).join("")}
-          </div>
-          ${stage.note ? `<div class="logic-note">${esc(stage.note)}</div>` : ""}
-        </div>
-      `;
-    }
-
-    function renderExecute() {
-      syncExecutionDefaults();
-      return `
-        <section class="grid cols-2">
-          <div class="panel">
-            <div class="panel-header">
-              <div><div class="panel-title">${icon("play-circle")}${esc(state.form.tCode)} 执行任务</div><div class="panel-sub">网页只传事务码和业务参数，本机程序负责 SAP 登录和脚本执行。</div></div>
-              <span class="tag ${state.role === "executor" ? "ok" : "warn"}">${state.role === "executor" ? "可执行" : "只读"}</span>
-            </div>
-            <div class="panel-body">
-              ${state.role === "viewer" ? `<div class="notice warn">当前是查询员角色，不能发起 SAP 执行。切换为执行员后再提交任务。</div><div style="height:14px"></div>` : ""}
-              <div class="form-grid">
-                <div class="field">
-                  <label for="tCode">事务码</label>
-                  <select id="tCode" data-bind="tCode">${tCodes.map(x => `<option value="${x.code}" ${state.form.tCode === x.code ? "selected" : ""}>${x.code} - ${x.name}</option>`).join("")}</select>
-                </div>
-                <div class="field">
-                  <label for="factoryGroup">厂区组</label>
-                  <select id="factoryGroup" data-bind="factoryGroup">${factoryGroups.map(x => `<option value="${x.id}" ${state.form.factoryGroup === x.id ? "selected" : ""}>${x.name}</option>`).join("")}</select>
-                </div>
-                <div class="field span-3">
-                  <label>工厂参数</label>
-                  ${renderPlantSelector()}
-                </div>
-                <div class="field span-2">
-                  <label for="remark">备注</label>
-                  <input id="remark" data-bind="remark" value="${esc(state.form.remark)}" placeholder="可填写本次执行说明">
-                </div>
-                <div class="field">
-                  <label>通知</label>
-                  <label class="radio-chip"><input type="checkbox" id="notify" ${state.form.notify ? "checked" : ""}>完成后推送钉钉</label>
-                </div>
-              </div>
-              <div style="height:14px"></div>
-              ${renderScriptPreview()}
-              <div style="height:14px"></div>
-              ${renderRunSummary()}
-              <div style="height:16px"></div>
-              <div class="top-actions" style="justify-content:flex-start">
-                <button class="btn primary" data-action="start-run" ${state.role !== "executor" || state.executing ? "disabled" : ""}>${icon("play")}开始执行</button>
-                <button class="btn" data-action="wake-protocol">${icon("radio")}只唤醒本机执行器</button>
-              </div>
-            </div>
-          </div>
-          <div class="panel">
-            <div class="panel-header"><div><div class="panel-title">${icon("list-checks")}执行进度与日志</div><div class="panel-sub">${state.currentRun ? esc(state.currentRun.id) : "尚未提交任务"}</div></div></div>
-            <div class="panel-body">
-              <div class="steps">${state.steps.map((step, i) => renderStep(step, i)).join("")}</div>
-              <div style="height:14px"></div>
-              <div class="log" id="logBox">${state.logs.length ? state.logs.map(renderLog).join("") : `<div class="log-line"><span class="log-time">[--:--:--]</span><span class="INFO">等待执行。</span></div>`}</div>
-            </div>
-          </div>
-        </section>
-      `;
-    }
-
-    function renderPlantSelector() {
-      const group = getFactoryGroup(state.form.factoryGroup);
-      const visiblePlants = group.plants.map(code => plantCatalog[code]).filter(Boolean);
-      const extraPlants = state.form.plants.filter(code => !group.plants.includes(code));
-      const extraPlantObjects = extraPlants.map(code => plantCatalog[code] || { code, name: "自动追加工厂", area: "", enabled: true });
-      const plantCards = [...visiblePlants, ...extraPlantObjects];
-      return `
-        <div class="select-grid">
-          <div class="factory-list">
-            ${factoryGroups.map(item => `
-              <button class="factory-button ${state.form.factoryGroup === item.id ? "active" : ""}" data-action="select-factory-group" data-group="${esc(item.id)}">
-                <span>${esc(item.name)}</span><span class="tag info">${item.plants.length}</span>
-              </button>
-            `).join("")}
-          </div>
-          <div>
-            <div class="notice ok">当前事务码会默认带入下方工厂参数。后续接入数据库后，这里改成可维护配置；SAP Script 只读取参数，不写死工厂。</div>
-            <div style="height:10px"></div>
-            <div class="plant-picker">
-              ${plantCards.map(plant => `
-                <label class="checkbox-card">
-                  <input type="checkbox" data-plant-code="${esc(plant.code)}" ${state.form.plants.includes(plant.code) ? "checked" : ""}>
-                  <span><strong>${esc(plant.code)} - ${esc(plant.name)}</strong><span>${plant.area ? "业务范围 " + esc(plant.area) : "无业务范围"}，用于 ${esc(state.form.tCode)} 参数</span></span>
-                </label>
-              `).join("")}
-            </div>
-            <div style="height:10px"></div>
-            <div class="top-actions" style="justify-content:flex-start">
-              <button class="btn small" data-action="select-all-plants">${icon("check-square")}全选当前组</button>
-              <button class="btn small" data-action="clear-plants">${icon("square")}清空</button>
-            </div>
-          </div>
-        </div>
-      `;
-    }
-
-    function renderRunSummary() {
-      const payload = buildRunPayload();
-      return `
-        <div class="run-summary">
-          <div class="summary-row"><span>厂区组</span><strong>${esc(payload.factoryGroupName)}</strong></div>
-          <div class="summary-row"><span>工厂</span><div class="area-chips">${payload.plants.map(x => `<span class="area-chip">${esc(x)}</span>`).join("") || `<span class="area-chip">未选择</span>`}</div></div>
-        </div>
-      `;
-    }
-
-    function renderScriptPreview() {
-      const payload = buildRunPayload();
-      const t = getTCode(payload.tcode);
-      const paramLabels = {
-        year: "脚本内年度",
-        week: "脚本内周别",
-        plants: "工厂",
-        businessAreas: "脚本内业务范围",
-        weekEnd: "脚本内日期"
-      };
-      const previewItems = [
-        ["事务码", payload.tcode + " - " + t.name],
-        ["脚本文件", t.script],
-        ["脚本状态", t.automation === "script" ? "已接独立 VBS" : "未录制完整脚本，先打开事务码"],
-        ["页面传参", "只传事务码、脚本文件、厂区组和工厂"],
-        ["其他条件", "年度、周别、日期等查询条件由对应 VBS 内部处理"],
-        ["工厂规则", t.factoryRule],
-        ["脚本说明", (t.params || []).map(p => paramLabels[p] || p).join("、") || "无"]
-      ];
-      return `
-        <div class="param-preview">
-          <div class="notice ok">公共页面只维护工厂参数；各事务码不同的查询条件放在 VBS 顶部参数区或录制脚本内部。</div>
-          <div class="param-grid">
-            ${previewItems.map(([label, value]) => `<div class="param-item"><div class="param-label">${esc(label)}</div><div class="param-value">${esc(value)}</div></div>`).join("")}
-          </div>
-        </div>
-      `;
-    }
-
-    function unique(list) {
-      return [...new Set((list || []).filter(Boolean))];
-    }
-
-    function getTCode(code) {
-      return tCodes.find(x => x.code === code) || tCodes.find(x => x.code === "ZFI019NL") || tCodes[0];
-    }
-
-    function getFactoryGroup(id) {
-      return factoryGroups.find(group => group.id === id) || factoryGroups[0];
-    }
-
-    function getBusinessAreaName(code) {
-      return (businessAreaCatalog.find(item => item.code === code) || {}).name || "";
-    }
-
-    function getDefaultPlantsForTCode(tCode, groupId = state.form.factoryGroup) {
-      const group = getFactoryGroup(groupId);
-      if (tCode === "ZFI072A") return unique(zfi072PlantRule);
-      if (tCode === "ZFI072" || tCode === "ZFI072N") return unique([...procurementPlants, ...group.zfi072Plants]);
-      if (tCode === "ZCO019") return unique(group.zco019Plants);
-      return unique(group.plants);
-    }
-
-    function getRunPlantsForTCode(tCode, selectedPlants) {
-      if (tCode === "ZFI072A") return [...zfi072PlantRule];
-      return unique(selectedPlants);
-    }
-
-    function getBusinessAreasForSelection(tCode, selectedPlants = state.form.plants, groupId = state.form.factoryGroup) {
-      const group = getFactoryGroup(groupId);
-      if (!selectedPlants.length) return [];
-      if (tCode === "ZFI019NL") return unique(group.zfi019nlAreas);
-      if (tCode === "ZFI080") return unique(group.zfi080Areas);
-      if (tCode === "ZCO019" || tCode === "ZFI057") {
-        return unique(selectedPlants.map(code => plantCatalog[code]?.area));
-      }
-      return unique(selectedPlants.map(code => plantCatalog[code]?.area));
-    }
-
-    function syncExecutionDefaults(forcePlants = false) {
-      const t = getTCode(state.form.tCode);
-      if (forcePlants && t.defaultPlantGroup) {
-        state.form.factoryGroup = t.defaultPlantGroup;
-      }
-      if (!Array.isArray(state.form.plants)) state.form.plants = getDefaultPlantsForTCode(state.form.tCode);
-      if (!state.form.factoryGroup) state.form.factoryGroup = "PINGHU_30";
-      if (forcePlants) {
-        state.form.plants = getDefaultPlantsForTCode(state.form.tCode);
-      }
-      state.form.plants = unique(state.form.plants);
-    }
-
-    function renderStep(step, i) {
-      const cls = step.status === "done" ? "done" : step.status === "run" ? "run" : step.status === "fail" ? "fail" : "";
-      const mark = step.status === "done" ? "✓" : step.status === "fail" ? "!" : (i + 1);
-      return `<div class="step ${cls}"><span class="step-icon">${mark}</span><span class="step-text">${esc(step.text)}</span><span class="step-time">${esc(step.time)}</span></div>`;
-    }
-
-    function renderLog(line) {
-      return `<div class="log-line"><span class="log-time">[${esc(line.time)}]</span><span class="${esc(line.type)}">${esc(line.message)}</span></div>`;
-    }
-
-    function renderSchedule() {
-      return `
-        <section class="panel">
-          <div class="panel-header">
-            <div><div class="panel-title">${icon("calendar-clock")}定时自动执行配置</div><div class="panel-sub">当前只保留核心周损益任务，避免页面功能先于执行能力膨胀。</div></div>
-            <button class="btn primary" data-action="open-schedule-modal">${icon("plus")}新建定时任务</button>
-          </div>
-          <div class="panel-body">
-            <div class="notice">定时任务真正落地时，需要本机常驻服务或服务器后台调度。静态网页本身不能在无人值守时自动执行 SAP。</div>
-            <div style="height:14px"></div>
-            <div class="table-wrap">
-              <table>
-                <thead><tr><th>任务 ID</th><th>任务名称</th><th>事务码</th><th>工厂</th><th>时间</th><th>频率</th><th>状态</th><th>下次执行</th><th>操作</th></tr></thead>
-                <tbody>${scheduleTasks.map(task => `
-                  <tr>
-                    <td>${task.id}</td><td>${task.name}</td><td>${task.tCode}</td><td>${task.plants.join(",")}</td>
-                    <td>${task.time}</td><td>${task.frequency}</td><td><span class="tag ok">${task.status}</span></td><td>${task.next}</td>
-                    <td><button class="btn small" data-action="open-schedule-modal">${icon("pencil")}编辑</button></td>
-                  </tr>`).join("")}</tbody>
-              </table>
-            </div>
-          </div>
-        </section>
-      `;
-    }
-
-    function renderConfig() {
-      return `
-        <section class="panel">
-          <div class="panel-header">
-            <div><div class="panel-title">${icon("sliders-horizontal")}基础配置</div><div class="panel-sub">维护执行参数来源，后续接入后台保存。</div></div>
-          </div>
-          <div class="panel-body">
-            <div class="tabs">
-              ${tabButton("plant", "factory", "工厂配置")}
-              ${tabButton("tcode", "terminal", "事务码配置")}
-              ${tabButton("robot", "message-circle", "通知机器人")}
-            </div>
-            ${renderConfigTab()}
-          </div>
-        </section>
-      `;
-    }
-
-    function tabButton(tab, iconName, text) {
-      return `<button class="tab ${state.activeConfigTab === tab ? "active" : ""}" data-config-tab="${tab}">${icon(iconName)}${text}</button>`;
-    }
-
-    function renderConfigTab() {
-      if (state.activeConfigTab === "plant") {
-        return `
-          <div class="table-wrap"><table><thead><tr><th>厂区组</th><th>工厂范围</th><th>ZFI019NL 业务范围</th><th>ZFI080 业务范围</th><th>ZFI072 工厂</th><th>ZCO019 工厂</th></tr></thead><tbody>${factoryGroups.map(group => `<tr><td><strong>${group.name}</strong></td><td>${group.plants.join(",")}</td><td>${group.zfi019nlAreas.join(",")}</td><td>${group.zfi080Areas.join(",")}</td><td>${group.zfi072Plants.join(",")}</td><td>${group.zco019Plants.join(",")}</td></tr>`).join("")}</tbody></table></div>
-          <div style="height:14px"></div>
-          <div class="table-wrap"><table><thead><tr><th>工厂代码</th><th>工厂名称</th><th>业务范围</th><th>所属组</th><th>状态</th><th>操作</th></tr></thead><tbody>${plants.map(p => `<tr><td><strong>${p.code}</strong></td><td>${p.name}</td><td>${p.area || "-"}</td><td>${p.groups.map(id => getFactoryGroup(id).shortName || id).join(",")}</td><td><span class="tag ${p.enabled ? "ok" : "warn"}">${p.enabled ? "启用" : "停用"}</span></td><td><button class="btn small" data-action="toast-edit">${icon("pencil")}编辑</button></td></tr>`).join("")}</tbody></table></div>
-        `;
-      }
-      if (state.activeConfigTab === "tcode") {
-        return `<div class="table-wrap"><table><thead><tr><th>阶段</th><th>事务码</th><th>名称</th><th>脚本文件</th><th>参数</th><th>工厂规则</th><th>状态</th></tr></thead><tbody>${tCodes.map(t => `<tr><td>${t.stage}</td><td><strong>${t.code}</strong></td><td>${t.name}</td><td>${t.script}</td><td>${(t.params || []).join(",")}</td><td>${t.factoryRule}</td><td><span class="tag ${t.automation === "script" ? "ok" : "warn"}">${t.automation === "script" ? "已接脚本" : "待录制"}</span></td></tr>`).join("")}</tbody></table></div>`;
-      }
-      if (state.activeConfigTab === "robot") {
-        return `<div class="table-wrap"><table><thead><tr><th>机器人</th><th>钉钉群</th><th>事件</th><th>状态</th><th>操作</th></tr></thead><tbody>${robots.map(r => `<tr><td>${r.name}</td><td>${r.group}</td><td>${r.events}</td><td><span class="tag ok">启用</span></td><td><button class="btn small" data-action="test-robot">${icon("send")}测试推送</button></td></tr>`).join("")}</tbody></table></div>`;
-      }
-      return `<div class="notice">请选择上方配置页签。</div>`;
-    }
-
-    function renderModal() {
-      if (state.modal === "register") {
-        return `
-          <div class="modal-backdrop">
-            <div class="modal">
-              <div class="modal-header"><strong>本机协议注册</strong><button class="btn small" data-action="close-modal">${icon("x")}关闭</button></div>
-              <div class="modal-body">
-                <div class="notice">当前正式注册 <strong>sap-rpa://</strong>。旧的临时测试协议不再安装；如电脑上曾导入过旧协议，可用上线安装包的卸载脚本清理。</div>
-                <div style="height:12px"></div>
-                <div class="launch-link">D:\\工作\\SapRpa上线安装包\\01_安装到本机.bat<br>D:\\工作\\SapRpa上线安装包\\04_配置SAP登录信息.bat</div>
-              </div>
-              <div class="modal-footer"><button class="btn primary" data-action="close-modal">关闭</button></div>
-            </div>
-          </div>
-        `;
-      }
-      if (state.modal === "schedule") {
-        return `
-          <div class="modal-backdrop">
-            <div class="modal">
-              <div class="modal-header"><strong>新建定时任务</strong><button class="btn small" data-action="close-modal">${icon("x")}关闭</button></div>
-              <div class="modal-body">
-                <div class="form-grid">
-                  <div class="field span-2"><label>任务名称</label><input id="scheduleName" value="${esc(state.scheduleForm.name)}"></div>
-                  <div class="field"><label>事务码</label><select id="scheduleTCode">${tCodes.map(t => `<option value="${t.code}" ${state.scheduleForm.tCode === t.code ? "selected" : ""}>${t.code} - ${t.name}</option>`).join("")}</select></div>
-                  <div class="field"><label>厂区组</label><select id="scheduleFactoryGroup">${factoryGroups.map(group => `<option value="${group.id}" ${state.scheduleForm.factoryGroup === group.id ? "selected" : ""}>${group.name}</option>`).join("")}</select></div>
-                  <div class="field"><label>执行时间</label><input id="scheduleTime" type="time" value="${esc(state.scheduleForm.execTime)}"></div>
-                  <div class="field"><label>执行频率</label><select id="scheduleFrequency"><option value="daily">每天</option><option value="weekly" selected>每周</option><option value="monthly">每月</option></select></div>
-                  <div class="field span-2"><label>通知规则</label><div class="check-row"><label class="radio-chip"><input type="checkbox" checked>执行前提醒</label><label class="radio-chip"><input type="checkbox" checked>成功通知</label><label class="radio-chip"><input type="checkbox" checked>失败告警</label></div></div>
-                </div>
-              </div>
-              <div class="modal-footer"><button class="btn" data-action="close-modal">取消</button><button class="btn primary" data-action="save-schedule">${icon("save")}保存任务</button></div>
-            </div>
-          </div>
-        `;
-      }
-      if (state.modal && state.modal.startsWith("log:")) {
-        const id = state.modal.slice(4);
-        const row = history.find(x => x.id === id) || history[0];
-        return `
-          <div class="modal-backdrop">
-            <div class="modal">
-              <div class="modal-header"><strong>${row.id} 日志详情</strong><button class="btn small" data-action="close-modal">${icon("x")}关闭</button></div>
-              <div class="modal-body">
-                <div class="grid cols-2">
-                  ${metric("事务码", row.tCode, row.task)}
-                  ${metric("执行结果", row.status, row.result)}
-                </div>
-                <div style="height:14px"></div>
-                <div class="log">
-                  <div class="log-line"><span class="log-time">[08:00:00]</span><span class="INFO">任务触发：${esc(row.task)}</span></div>
-                  <div class="log-line"><span class="log-time">[08:00:03]</span><span class="INFO">提交本机 SapWebLauncher</span></div>
-                  <div class="log-line"><span class="log-time">[08:00:45]</span><span class="${row.status === "成功" ? "OK" : "ERR"}">${esc(row.result)}</span></div>
-                </div>
-              </div>
-              <div class="modal-footer"><button class="btn primary" data-action="close-modal">关闭</button></div>
-            </div>
-          </div>
-        `;
-      }
-      return "";
-    }
-
-    function bindEvents() {
-      document.querySelectorAll("[data-page]").forEach(btn => btn.addEventListener("click", () => { state.page = btn.dataset.page; render(); }));
-      document.querySelectorAll("[data-config-tab]").forEach(btn => btn.addEventListener("click", () => { state.activeConfigTab = btn.dataset.configTab; render(); }));
-      document.querySelectorAll("[data-bind]").forEach(input => {
-        const update = () => {
-          state.form[input.dataset.bind] = input.value;
-          if (input.dataset.bind === "tCode" || input.dataset.bind === "factoryGroup") {
-            syncExecutionDefaults(true);
-            render();
-          }
-        };
-        input.addEventListener("input", update);
-        input.addEventListener("change", update);
-      });
-      document.querySelectorAll("[data-plant-code]").forEach(input => input.addEventListener("change", () => {
-        const code = input.dataset.plantCode;
-        state.form.plants = input.checked ? unique([...state.form.plants, code]) : state.form.plants.filter(item => item !== code);
-        syncExecutionDefaults(false);
-        render();
-      }));
-      const notify = document.getElementById("notify");
-      if (notify) notify.addEventListener("change", () => { state.form.notify = notify.checked; });
-      document.querySelectorAll("[data-action]").forEach(el => el.addEventListener("click", () => handleAction(el)));
-    }
-
-    function handleAction(el) {
-      const action = el.dataset.action;
-      if (action === "login" || action === "dingtalk-login") return login();
-      if (action === "logout") return logout();
-      if (action === "toggle-role") return toggleRole();
-      if (action === "go-execute") return goExecute(el.dataset.tcode);
-      if (action === "wake-protocol") return wakeProtocol();
-      if (action === "start-run") return startRun();
-      if (action === "select-factory-group") {
-        state.form.factoryGroup = el.dataset.group;
-        syncExecutionDefaults(true);
-        return render();
-      }
-      if (action === "select-all-plants") {
-        state.form.plants = getDefaultPlantsForTCode(state.form.tCode);
-        syncExecutionDefaults(false);
-        return render();
-      }
-      if (action === "clear-plants") {
-        state.form.plants = [];
-        syncExecutionDefaults(false);
-        return render();
-      }
-      if (action === "open-register-help") { state.modal = "register"; return render(); }
-      if (action === "open-schedule-modal") { state.modal = "schedule"; return render(); }
-      if (action === "close-modal") { state.modal = null; return render(); }
-      if (action === "save-schedule") { state.modal = null; toast("定时任务已保存到本地示例配置", "ok"); return render(); }
-      if (action === "test-robot") return toast("已模拟发送钉钉测试消息", "ok");
-      if (action === "toast-edit") return toast("编辑弹窗后续接入后台保存", "info");
-      if (action === "export-history") return exportHistory();
-      if (action === "view-log") { state.modal = "log:" + el.dataset.run; return render(); }
-    }
-
-    function login() {
-      const account = document.getElementById("loginAccount")?.value || "张三";
-      state.user.name = account.trim() || "张三";
-      localStorage.setItem("portalUser", state.user.name);
-      localStorage.setItem("portalLoggedIn", "1");
-      state.loggedIn = true;
-      toast("登录成功", "ok");
-      render();
-    }
-
-    function logout() {
-      localStorage.removeItem("portalLoggedIn");
-      state.loggedIn = false;
-      state.page = "dashboard";
-      render();
-    }
-
-    function toggleRole() {
-      state.role = state.role === "viewer" ? "executor" : "viewer";
-      localStorage.setItem("portalRole", state.role);
-      toast("已切换为" + (state.role === "viewer" ? "查询员" : "执行员"), "ok");
-      render();
-    }
-
-    function goExecute(tCode) {
-      state.form.tCode = tCode;
-      state.selectedTCode = tCode;
-      syncExecutionDefaults(true);
-      state.page = "execute";
-      render();
-    }
-
-    function wakeProtocol() {
-      const url = buildProtocolUrl();
-      const payload = buildRunPayload();
-      addLog("INFO", "协议唤醒 SapWebLauncher：" + payload.tcode + "，工厂 " + payload.plantsCsv);
-      addLog("WARN", "协议唤醒模式没有浏览器回传，结果需要查看本地日志。");
-      location.href = url;
-      toast("已发起协议唤醒", "info");
-    }
-
-    async function startRun() {
-      if (state.role !== "executor" || state.executing) return;
-      state.executing = true;
-      resetRun();
-      const payload = buildRunPayload();
-      state.currentRun = { id: "RUN-" + new Date().toISOString().replace(/\D/g, "").slice(0, 14), payload };
-      setStep(0, "done");
-      addLog("INFO", "创建任务：" + state.currentRun.id);
-      addLog("INFO", "执行范围：" + payload.factoryGroupName + " / 工厂 " + payload.plantsCsv);
-      render();
-
-      setStep(1, "run");
-      render();
-      wakeProtocol();
-      setTimeout(() => {
-        setStep(1, "done");
-        setStep(2, "done");
-        setStep(3, "run");
-        addLog("INFO", "已提交给本机执行器，SAP 登录与 /n 事务码跳转由本机脚本处理。");
-        addLog("WARN", "网页不会接收 SAP 账号密码，也不会保存连接参数；真实执行结果以本机日志为准。");
-        finishLocalSimulation("协议唤醒已完成，结果请查看本地日志", "WARN");
-      }, 850);
-    }
-
-    function simulateRun() {
-      const payload = buildRunPayload();
-      const flow = [
-        () => { setStep(1, "done"); setStep(2, "run"); addLog("INFO", "启动 SAP GUI 并注入登录/事务码参数"); },
-        () => { setStep(2, "done"); setStep(3, "run"); addLog("INFO", "执行 " + payload.tcode + "，工厂参数：" + payload.plantsCsv); },
-        () => { setStep(3, "done"); setStep(4, "run"); addLog("OK", "工厂参数：" + payload.plantsCsv); },
-        () => finishLocalSimulation("执行完成，已模拟推送钉钉通知", "OK")
-      ];
-      flow.forEach((fn, i) => setTimeout(() => { fn(); render(); }, 650 * (i + 1)));
-    }
-
-    function finishLocalSimulation(message, type) {
-      if (state.steps[2].status !== "done") setStep(2, "done");
-      if (state.steps[3].status !== "done") setStep(3, "done");
-      setStep(4, type === "OK" ? "done" : "run");
-      addLog(type, message);
-      state.executing = false;
-      toast(message, type === "OK" ? "ok" : "warn");
-      render();
-    }
-
-    function buildRunPayload() {
-      syncExecutionDefaults(false);
-      const t = getTCode(state.form.tCode);
-      const group = getFactoryGroup(state.form.factoryGroup);
-      const selectedPlants = getRunPlantsForTCode(state.form.tCode, state.form.plants);
-      return {
-        source: "netlify-static-portal",
-        action: "run",
-        tcode: state.form.tCode,
-        script: t.script,
-        factoryGroup: state.form.factoryGroup,
-        factoryGroupName: group.name,
-        plants: selectedPlants,
-        plant: selectedPlants[0] || "",
-        plantsCsv: selectedPlants.join(","),
-        notify: state.form.notify,
-        remark: state.form.remark,
-        createdBy: state.user.name,
-        createdAt: new Date().toISOString()
-      };
-    }
-
-    function buildProtocolUrl() {
-      const p = buildRunPayload();
-      const params = new URLSearchParams({
-        action: "run",
-        tcode: p.tcode,
-        script: p.script,
-        plant: p.plant,
-        plants: p.plantsCsv,
-        factoryGroup: p.factoryGroup
-      });
-      return `sap-rpa://run?${params.toString()}`;
-    }
-
-    function resetRun() {
-      state.steps = state.steps.map(step => ({ ...step, status: "pending", time: "" }));
-      state.logs = [];
-    }
-
-    function setStep(index, status) {
-      state.steps[index].status = status;
-      state.steps[index].time = nowTime();
-    }
-
-    function addLog(type, message) {
-      state.logs.push({ type, message, time: nowTime() });
-      if (state.logs.length > 80) state.logs.shift();
-    }
-
-    function exportHistory() {
-      const rows = [["执行时间","任务名称","事务码","工厂","时长","状态","通知","结果摘要"], ...history.map(x => [x.time, x.task, x.tCode, x.plant, x.duration, x.status, x.notify, x.result])];
-      const csv = rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
-      const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = "sap-rpa-history.csv";
-      link.click();
-      URL.revokeObjectURL(link.href);
-      toast("执行历史已导出", "ok");
-    }
-
-    function nowTime() {
-      return new Date().toLocaleTimeString("zh-CN", { hour12: false });
-    }
-
-    function toast(message, type = "info") {
-      const wrap = document.getElementById("toastWrap");
-      const node = document.createElement("div");
-      node.className = "toast " + type;
-      node.textContent = message;
-      wrap.appendChild(node);
-      setTimeout(() => node.remove(), 3600);
-    }
-
-    render();
-  </script>
+  <script src="assets/js/portal-state.js"></script>
+  <script src="assets/js/portal-utils.js"></script>
+  <script src="assets/js/portal-api.js"></script>
+  <script src="assets/js/portal-render.js"></script>
+  <script src="assets/js/portal-actions.js"></script>
+  <script src="assets/js/main.js"></script>
 </body>
 </html>

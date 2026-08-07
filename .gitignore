@@ -1,5 +1,10 @@
 **/bin/
 **/obj/
+dist/
+publish/
+安装包/
+临时文件/
+vp/
 *.user
 *.suo
 *.log
@@ -16,3 +21,7 @@ SapWebLauncher/config.json
 launcher.log
 github-ai-handoff/private-notes/
 github-ai-handoff/*.secret.md
+certs/
+**/*.key
+**/*.pfx
+**/passwd.txt

@@ -16,6 +16,25 @@
     <EmbeddedResource Include="transaction_template.vbs" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Reference Include="sapnco">
+      <HintPath>D:\RPA\依赖\SapNco\sapnco.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <Reference Include="sapnco_utils">
+      <HintPath>D:\RPA\依赖\SapNco\sapnco_utils.dll</HintPath>
+      <Private>True</Private>
+    </Reference>
+    <None Include="D:\RPA\依赖\SapNco\ijwhost.dll" Link="ijwhost.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+    <None Include="D:\RPA\依赖\SapNco\cpc4n.dll" Link="cpc4n.dll">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
   <Target Name="CopyTransactionScripts" AfterTargets="Build">
     <ItemGroup>
       <TransactionFiles Include="$(MSBuildProjectDirectory)\..\transactions\**\*" />
@@ -37,7 +56,9 @@
   </Target>
 
   <ItemGroup>
+    <PackageReference Include="ClosedXML" Version="0.104.2" />
     <PackageReference Include="Microsoft.Data.Sqlite" Version="8.0.11" />
+    <PackageReference Include="System.Configuration.ConfigurationManager" Version="5.0.0" />
     <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="8.0.0" />
   </ItemGroup>
 
