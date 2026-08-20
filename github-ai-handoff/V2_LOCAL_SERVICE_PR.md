@@ -1,12 +1,12 @@
-# PR: V2 local API, SQLite runtime, and multi-agent workflow
+# PR: SAP RPA V2 local service and multi-agent workflow
 
-Branch: `codex/v2-local-api-sqlite`
+Branch: `sap-rpa-v2-local-service`
 
 Target branch: `main`
 
 ## Summary
 
-This PR moves SAP RPA V2 toward a local API plus SQLite runtime model, while keeping the browser free of SAP credentials.
+This PR moves SAP RPA V2 toward a local service runtime model, while keeping the browser free of SAP credentials.
 
 Included work:
 
@@ -15,14 +15,14 @@ Included work:
 3. Move local runtime files under `D:\sap_ai` by default or `SAP_RPA_HOME` when provided.
 4. Add a dry-run switch for queue execution.
 5. Show disabled queue state on the portal.
-6. Add SQLite schema/table inspection API for local troubleshooting.
+6. Add local runtime schema/table inspection API for troubleshooting.
 7. Add the multi-agent collaboration workflow used for future V2 development.
 
 ## Important Runtime Paths
 
 ```text
 Runtime root: D:\sap_ai
-SQLite DB:    D:\sap_ai\data\sap-rpa-config.db
+Local DB:     D:\sap_ai\data\sap-rpa-config.db
 Logs:         D:\sap_ai\logs\launcher.log
 VBS scripts:  D:\sap_ai\transactions
 ```
@@ -88,7 +88,7 @@ Use `github-ai-handoff/MULTI_AGENT_WORKFLOW_V2.md` as the working rule.
 
 Suggested split:
 
-1. Worker A: backend/API/SQLite configuration tables.
+1. Worker A: backend/API configuration tables.
 2. Worker B: Basic Config UI tabs and CRUD interaction.
 3. Worker C: `ZFI072A` VBS parameter consumption and standard outputs.
 4. QA: regression, schema migration, and sensitive-data checks.

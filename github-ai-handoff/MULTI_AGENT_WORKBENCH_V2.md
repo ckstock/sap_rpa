@@ -84,7 +84,7 @@ codex/v2-<feature-name>
 Examples:
 
 ```text
-codex/v2-local-api-sqlite
+sap-rpa-v2-local-service
 codex/v2-basic-config
 codex/v2-zfi072a-db-config
 ```

@@ -12,7 +12,7 @@ Dim tcode, plantsCsv, businessAreasCsv, factoryGroup
 Dim yearValue, weekValue, periodValue, weekEndValue, dateLowValue, dateHighValue
 Dim businessAreaValue
 Dim SapGuiAuto, application, connection, session
-Dim retries, sleepMs, statusType, statusText
+Dim retries, sleepMs, statusType, statusText, filteredRowCount
 
 tcode = "{OK_CODE}"
 plantsCsv = "{PLANTS}"
@@ -167,12 +167,31 @@ Sub SelectGridColumn(columnName)
    Err.Clear
 End Sub
 
-Sub SelectAllGrid()
+Function GetFilteredGridRowCount()
+   Dim grid, rowCount
    Err.Clear
-   session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell").setCurrentCell -1, ""
-   session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell").selectAll
+   Set grid = session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell")
+   If Err.Number <> 0 Then Fail "find filtered grid failed - " & Err.Description, 8
+   Err.Clear
+   rowCount = CLng(grid.RowCount)
+   If Err.Number <> 0 Then Fail "read filtered grid row count failed - " & Err.Description, 8
+   GetFilteredGridRowCount = rowCount
+   WScript.Echo "INFO: ZCO020 filtered ALV rowCount=" & CStr(rowCount)
+   Err.Clear
+End Function
+
+Sub SelectAllGrid(rowCount)
+   Dim grid
+   If CLng(rowCount) <= 0 Then Fail "select all requires filtered ZCO020 rows", 8
+   Err.Clear
+   Set grid = session.findById("wnd[0]/usr/cntlGRID1/shellcont/shell")
+   If Err.Number <> 0 Then Fail "find filtered grid before select all failed - " & Err.Description, 8
+   Err.Clear
+   grid.setCurrentCell -1, ""
+   grid.selectAll
    If Err.Number <> 0 Then Fail "select all grid failed - " & Err.Description, 8
-   WScript.Echo "INFO: selected all grid rows"
+   WScript.Sleep 500
+   WScript.Echo "INFO: selected all filtered grid rows; rowCount=" & CStr(rowCount)
    Err.Clear
 End Sub
 
@@ -240,7 +259,17 @@ SelectGridColumn "ZBZ1"
 PressButton "wnd[0]/tbar[1]/btn[29]", "filter ZBZ1", 8000
 SetField "zbz1-filter-low", "wnd[1]/usr/ssub%_SUBSCREEN_FREESEL:SAPLSSEL:1105/ctxt%%DYN001-LOW", "zpp063"
 PressButton "wnd[1]/tbar[0]/btn[0]", "confirm ZBZ1 filter", 600000
-SelectAllGrid
+WScript.Sleep 1000
+filteredRowCount = GetFilteredGridRowCount()
+If filteredRowCount <= 0 Then
+   WScript.Echo "ZCO020_FILTERED_NO_DATA=1"
+   WScript.Echo "STATUS_TYPE=W"
+   WScript.Echo "STATUS_TEXT=ZCO020 filtered result has no data; save/background job skipped"
+   WScript.Echo "INFO: ZCO020 filtered ALV has no rows; skip select/save and background job"
+   WScript.Echo "INFO: transaction script executed"
+   WScript.Quit 0
+End If
+SelectAllGrid filteredRowCount
 PressButton "wnd[0]/tbar[1]/btn[16]", "save/export selected rows", 600000
 
 CheckSapStatus "finish"

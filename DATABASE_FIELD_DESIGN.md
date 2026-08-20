@@ -305,6 +305,7 @@
 | `cron` | TEXT | Cron 表达式。 |
 | `frequency` | TEXT | 频率，例如 daily/weekly/monthly。 |
 | `run_time` | TEXT | 执行时间。 |
+| `weekday` | TEXT | 执行星期。weekly 必填并默认周一；monthly 有值时按每月首个指定星期几触发，空值保留旧的每月固定日期规则。 |
 | `enabled` | INTEGER | 是否启用。 |
 | `notify_enabled` | INTEGER | 是否通知。 |
 | `notify_on_success` | INTEGER | 成功是否通知。 |

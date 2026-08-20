@@ -1,13 +1,58 @@
 # SAP RPA V2 下一任 AI 交接文档
 
-更新时间：2026-08-07
+更新时间：2026-08-14
+
+## 2026-08-14 定时任务月度星期
+
+- 定时任务仍用 `schedule_tasks.weekday` 保存执行星期。新建定时任务页面默认执行时间为 `20:00`，历史任务已保存时间不迁移。`weekly` 必须有 weekday，前端默认周一并在列表显示“每周一/每周二”等；`monthly` 现在也可保存 weekday，新建月任务默认周一，列表显示“每月首个周一/周二”等。
+- 后端调度规则：`monthly + weekday` 按当月首个指定星期几和 `run_time` 触发；如果当天已过，下次执行显示为下个月首个该星期几。历史月任务没有 `weekday` 时不补默认值，继续按原来的创建日对应每月日期触发，避免编辑前的旧任务被静默迁移。
+- 前端编辑旧月任务且 `weekday` 为空时，下拉会保留“按原每月日期”选项；用户选择具体周几并保存后才切换到新月度星期规则。相关覆盖：`tests/frontend-zfi057-fixed-scope.test.js`、后端内置自测 `monthly schedule explicit weekday keeps legacy day-of-month fallback` 与 `schedule weekday sqlite fallback`。
+
+## 2026-08-11 ZFI057 可编辑业务范围
+
+- ZFI057 以业务范围为唯一页面和任务范围，不再展示或保存“对应工厂 / 新增工厂代码”筛选。`transaction_plant_rules.business_areas_json` 提供工作台执行的默认值和新建定时任务的初始值；定时任务弹窗可增加或删除业务范围标签。
+- 定时任务保存时将业务范围写入 `businessAreas` / `params.businessAreas`。后端在 `/api/runs`、`sap-rpa://run`、定时触发和失败批次重跑中保留该任务范围，不再用基础配置覆盖；旧 `zfi057PlantFilter` 工厂筛选字段会被清除且不参与执行。
+- 保存空业务范围会被前端阻止。运行时每个已选 `GSBER` 仍只读查询 SAP `ZFIT_RPA_BUKRS-GSBER/WERKS` 的全部映射工厂，并逐工厂执行步骤二；无映射或读取失败时该业务范围在步骤一前返回中文可操作错误。
+- 2026-08-11 已发布到 `D:\RPA`：`SapWebLauncher.dll` SHA-256 为 `608A135FC121C0DEF3FBC0712A283D6FF1077E08744824B055DF33FC3675A818`，以及 `portal-state.js`、`portal-api.js`、`portal-actions.js`、`portal-render.js`。升级前备份为 `D:\RPA\deployment-backups\20260811-zfi057-business-area-scope`；`SAP_RPA_StartupMonitor` 已恢复为启用且运行中。项目检查脚本确认本机 API、HTTP 兼容入口、HTTPS 页面和 HTTPS API 均为 200。
+
+## 2026-08-11 ZFI057 工厂映射与后台作业收敛
+
+- ZFI057 的步骤二工厂唯一来源为 SAP 表 `ZFIT_RPA_BUKRS`：以 `GSBER=本次业务范围` 读取全部非空 `WERKS`，按返回顺序去重后由后端逐工厂调用 `ZFI057.vbs`。VBS 强制只接收一个工厂，任何页面、历史任务、SQLite 工厂、SAP 集、GS03 或本地硬编码均不能回退为工厂来源。
+- 表查询失败或业务范围没有可执行 `WERKS` 时，必须在步骤一 `ZFI019NL` memory 取物料前直接将该业务范围记为失败，提示维护 `ZFIT_RPA_BUKRS-GSBER/WERKS`；不得因为步骤一无物料而误记为无数据。
+- 每个业务范围的步骤三先执行一次 `ZCO020`。脚本在 `ZBZ1=zpp063` 过滤后仅当 ALV 行数大于 0 时才全选并点击保存；0 行时输出 `ZCO020_FILTERED_NO_DATA=1`，不保存、不创建 job、不轮询且不执行第二次 `ZCO020`，范围记为 `no_data`。有数据时，第一次保存后通过 NCo `RFC_READ_TABLE(TBTCO)` 每 10 秒查询本范围步骤二开始前 1 分钟至当前时间的 `JOBNAME=ZFI057`、本次 SAP GUI 用户作业；每个成功工厂至少应有一个 job。全部预期 job 成功完成才执行第二次 `ZCO020`。第二次保存可能产生的 job 按已确认业务规则不需要再次轮询；第二次 VBS 成功即结束范围。第一次 job 任何失败/取消或 10 分钟未收敛时，范围失败且不重复 `ZCO020`。
+- `ZFI057.vbs` 不再声称自行读取 `ZFI_SPLIT`；物料集合由后端 NCo 的 `ZFI019NL/ZFI_SPLIT` 上游查询准备后传入 VBS 的 `S_MATNR`。
+- 2026-08-11 已在隔离发布目录完成后端自检（84 PASS，2 条既有钉钉文案断言失败），并通过 `tests\zco020-filtered-no-data-contract.test.js`；未启动 SAP GUI 或打开任何 Excel。两条钉钉断言与本次 ZCO020/TBTCO 改动无关。
+- 2026-08-11 已上线本次 ZFI057/ZCO020 修复：发布包 `D:\RPA\deployment-staging\20260811-zfi057-zco020` 的 `SapWebLauncher.dll` SHA-256 为 `CF5C65429862F81267081112980BDCD0794E79A050076830314BB0A83888CB59`，已复制到 `D:\RPA\bin`；新 `ZCO020.vbs` 已同步到 `D:\RPA\bin\transactions` 与 `D:\RPA\transactions`。升级前备份在 `D:\RPA\deployment-backups\20260811-zfi057-zco020-deploy`。`SAP_RPA_StartupMonitor` 已恢复，以 `marcus` 会话拉起新 `SapWebLauncher.exe --serve`；项目检查脚本确认本机 API、HTTP 兼容入口、HTTPS 页面和 HTTPS API 均为 200。旧 run 的英文历史错误不会被改写，后续新 run 才会使用新中文错误提示。
+
+## 2026-08-10 ZFI057 保存/导出
+
+- ZFI057 已纳入保存类 ALV 白名单。工作台名称会自动显示为“产值拆分（保存）”，并只加粗加黑“保存”。
+- ZFI057 三步流程不变：步骤一通过 NCo 取 ZFI019NL/ZFI_SPLIT 上游物料，步骤二执行 ZFI057.vbs，步骤三执行 ZCO020。步骤二每个成功的日期窗口都会调用 sap_alv_export_helper.vbs 写入本机 ALV 暂存并输出 OUTPUT_FILE；跨月时按发布成本月规则拆成 1 到 3 个窗口，后端按分片顺序合并后再归档。
+- ZFI057 不属于 GSBER 路由类报表。它按导出 Excel 的实际 WERKS 逐工厂读取 ZTFI48B-WERKS，按组织、周和事务码合并归档；归档失败保留本机暂存并作为任务失败通知钉钉。不得让 SAP GUI 直接写 UNC 目录，也不得由 Codex 打开导出的 Excel。
+- 本轮仅完成代码和静态/自测验证；尚未在 test888 发起真实 ZFI057 作业。发布时必须同步后端 publish 输出、assets/js/portal-render.js、transactions/ZFI057.vbs 与 transactions/sap_alv_export_helper.vbs 到 D:\RPA，并使用本项目启动脚本重启。
+
+## 2026-08-10 ZFI057 业务范围默认配置
+
+- `transaction_plant_rules.business_areas_json` 是 ZFI057 的默认业务范围来源，不是对用户任务的强制覆盖。用户保存的 `businessAreas` 是该次执行和该定时任务的实际范围。
+- 归一化后只保留 `businessAreas` 与首项 `businessArea`，并清除 `plants/plant` 与遗留 `zfi057PlantFilter`，避免 ZFI057 混入工厂筛选或将工厂误拆成 workflow scope。没有业务范围的旧请求才回退到规则默认值。
+- 业务范围不等于固定工厂。ZFI057 在每个业务范围实际执行时只读查询 SAP 表 `ZFIT_RPA_BUKRS`：`GSBER=业务范围`，取全部 `WERKS` 工厂；多个工厂必须逐个执行步骤二。页面和定时任务允许在默认业务范围基础上增删范围。
+- ZFI057 步骤一的东台判定不再读取 JSON 或硬编码范围。后端对每个 `S_GSBER` 只读查询 `ZTFI48A`，任一匹配记录的 `ZSBU` 含“东台”才按东台口径：ALV 行以 `SMATNR=800*` 筛选后取 `MATNR`，并由 NCo `RFC_READ_TABLE` 读取 `ZFI_SPLIT` 的 `BUKRS=2030` 且 `BEGDA/ENDDA` 与本次日期范围重叠的 `MATNR`，两路去重后写入 `ZFI057` 的 `S_MATNR`。`ZFI_SPLIT` 补充物料不做 `800*` 筛选；当前工作流传入的 `SplitWerks` 为空，因此表读取不附加 `WERKS` 条件。查表失败必须使该范围失败，查无 `GSBER` 或 `ZSBU` 不含“东台”则按非东台口径处理。
+
+## 2026-08-07 配置删除与 ZCO019 定时任务模式
+
+- 基础配置页面的红色按钮统一显示“删除”。前端先确认，调用正确的资源删除 API，成功后立即从页面内存移除并重新拉取配置；不能再只将行标记为停用或等待刷新后消失。
+- 后端删除工厂、业务范围、事务码规则、事务码和通知机器人时，会从 SQLite 删除记录并写入 `config_delete_markers`，默认播种在服务重启后会跳过该标记，避免已删除的默认项重新出现。显式新增/编辑会清除对应标记，允许维护人员重新添加。
+- 历史已完成 `runs` 保留。事务码被定时任务或排队/运行 run 引用、工厂/业务范围仍被规则或任务引用时，后端返回 HTTP `409` 和引用说明，前端不得假装删除成功。
+- 定时任务的 `ZCO019` 下拉拆为“标准材料成本（明细保存）”和“标准材料成本（汇总保存）”。前端持久化 `params.runStrategy=detail|summary`；调度器保留该参数，`ZCO019.vbs` 只执行对应的 `P_RADIO1` 或 `P_RADIO2` 分支。历史没有该参数的任务仍按原“明细 + 汇总”全流程执行，编辑时显示兼容选项，不会静默改写。
+- 导出文件不得由 Codex/ChatGPT 打开。脚本只按 Windows 默认 `.xlsx` 关联由 Excel 处理，并按本次导出完整路径关闭相应工作簿/进程；禁止按进程名关闭所有 Excel。
+- 已在隔离运行目录执行自测：`ZCO019` 的 detail、summary 与非法模式拒绝通过；事务码删除跨 reseed 保持删除。全套自测另外有两条既有 ZFI057 钉钉文案断言失败，均不在本轮变更范围。
 
 ## 2026-08-07 ZFI057 卡片实际链路与中文映射失败提示
 
 - 工作台“产值拆分”卡片的唯一生产入口是 `ZFI057`。后端按业务范围依次执行：步骤一通过 SAP NCo 的 `REPORT_SUBMIT/MEMORY_EXPORT` 从 `ZFI019NL` memory 取物料，步骤二执行 `ZFI057.vbs` 并直接在 SAP GUI 输入 `/nZFI057`，步骤三执行 `ZCO020.vbs` 后按 `TBTCO` 状态完成范围闭环。RPA 源码、VBS 和运行日志均没有直接调用 `ZFI085_MAINTAIN`；若需核实 SAP 事务 `ZFI057` 在系统内部绑定的程序，必须由 SAP 管理员在 `SE93` 只读确认。
-- `Z31` 是 SAP 集名称，不是业务范围“组”。后端以 `GET_GS03` 的 `IV_SET_NAME=Z31` 查询，在返回行中以 `TITLE=业务范围` 匹配并取全部 `FROM` 工厂。业务范围有上游物料但没有任何可执行工厂时，不得回退本地旧映射、SQLite 或 VBS 硬编码。
-- 基础配置的“事务码与工厂/业务范围规则”中，`ZFI057.factoryRule` 只说明可维护的默认业务范围：`本规则仅维护默认业务范围；执行工厂运行时由 SAP 集 Z31 的 GET_GS03 按业务范围解析，不能在此配置或用本地工厂覆盖。` 不能把三步工作流、物料取数或 SAP 内部程序名误写进这条范围配置备注。
-- 该失败会回写并通知中文可操作提示：`业务范围 <范围> 的上游物料已获取，但 SAP 集 Z31 未维护该业务范围对应的可执行工厂，无法执行 ZFI057 与 ZCO020 后续步骤。请维护“业务范围-工厂”映射，或从任务范围中移除该业务范围。` 这属于 SAP 映射配置失败，不是 SAP GUI、导出或“无数据”失败。日志可以保留技术细节，但钉钉和页面必须展示中文处理建议。
+- ZFI057 的工厂权威来源是 SAP 表 `ZFIT_RPA_BUKRS`，不是 SAP 集或本地配置。后端只读查询 `GSBER=业务范围` 并取全部 `WERKS`；业务范围有上游物料但没有任何可执行工厂时，不得回退本地旧映射、SQLite 或 VBS 硬编码。
+- 基础配置的“事务码与工厂/业务范围规则”中，`ZFI057.factoryRule` 只说明可维护的默认业务范围：`本规则仅维护默认业务范围；执行工厂运行时由 SAP 表 ZFIT_RPA_BUKRS 按 GSBER 查询 WERKS，多个工厂逐个执行，不能在此配置或用本地工厂覆盖。` 不能把三步工作流、物料取数或 SAP 内部程序名误写进这条范围配置备注。
+- 该失败会回写并通知中文可操作提示：`业务范围 <范围> 未在 SAP 表 ZFIT_RPA_BUKRS 中维护可执行工厂，已在步骤一前停止执行 ZFI057 与 ZCO020 后续步骤。请维护 ZFIT_RPA_BUKRS-GSBER/WERKS 映射，或从任务范围中移除该业务范围。` 这属于 SAP 映射配置失败，不是 SAP GUI、导出或“无数据”失败。日志可以保留技术细节，但钉钉和页面必须展示中文处理建议。
 - `FormatZfi057ScopeResultForMessage` 的业务范围失败详情上限为 160 个字符，以保留完整的维护建议；对应自测为 `ZFI057 missing plant mapping is explained in Chinese`。
 
 ## 2026-08-07 无数据不是失败
@@ -29,7 +74,7 @@
 ## 2026-08-06 ALV 组织归档规则（覆盖本文此前周/工厂目录说明）
 
 - 保存类 ALV 的最终归档是公共后端能力，当前覆盖 `ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`、`ZFI148`；不能为 `103C` 或任一具体工厂硬编码。
-- SAP GUI 始终先写本机暂存，后端只读 SAP `RFC_READ_TABLE`：`ZFI080`、`ZFI080B`、`ZFI019NL`、`ZFI019NA`、`ZFI148` 从导出 Excel 的 `GSBER`/业务范围列查询 `ZTFI48A-GSBER -> ZBU/ZSBU`；其余保存类从 Excel 的 `WERKS`/工厂列查询 `ZTFI48B-WERKS -> ZBU/ZSBU`。一个 Excel 含多个工厂或业务范围时必须逐值拆分。
+- 2026-08-19 归档规则已更新：`ZFI019NL` 和 `ZFI019NA` 都是业务范围 child run，VBS 均填写 `S_GSBER-LOW`；归档必须用请求 `businessArea` 查询 `ZTFI48A-GSBER -> ZBU/ZSBU`，不得强制要求 Excel 含 `GSBER` 列。Excel 若有 `WERKS`，仅用于来源键、重跑替换和行追溯。两者均不得回退按工厂入参或 `ZTFI48B` 路由；其余卡片保持各自既有映射入口。
 - 命中组织时的最终文件为 `<alvExportDataDirectory>\<ZBU>\<ZSBU>\yyyy_WKnn\<事务码>_<卡片名称>_WKnn.xlsx`。`ZBU` 和 `ZSBU` 是两层组织，周目录固定在其下；同一 `ZBU+ZSBU+周+事务码` 的所有工厂数据合并到同一工作簿；一厂映射多个组织时向每个组织各写一份。重跑同一工厂或业务范围要替换该来源旧行，不能重复追加。
 - 查询成功但未命中组织时回退到 `<alvExportDataDirectory>\集采工厂\yyyy_WKnn\<事务码>_<卡片名称>_WKnn_工厂<WERKS>.xlsx`。业务范围型 Excel 只要实际包含 `WERKS`，也必须按该工厂名回退；仅没有任何工厂列时才可用 `_业务范围<GSBER>.xlsx`。`集采工厂` 与 `BU1`、`BU2` 等一级组织同级，但它没有 `ZSBU` 层；查询失败、Excel 缺必需列或必需值时任务失败，保留本机暂存供排障，不得伪造成功。
 - 网络盘根目录只由运行目录 `D:\RPA\config.local.json` 的 `fileStorage.alvExportDataDirectory` 控制；证书、真实配置、网络盘 Excel 都不得提交 Git。发布后必须用真实 SAP 导出验证最终网络目录和 Excel 行数。
@@ -99,10 +144,10 @@
 ## Git 状态
 
 - GitHub 仓库：`https://github.com/ckstock/sap_rpa`
-- 当前分支：`codex/v2-local-api-sqlite`
+- 当前分支：`sap-rpa-v2-local-service`
 - 注意：`D:\RPA` 是当前运行根目录，`D:\RPA\RpaProject` 是 GitHub 源码仓库。`git pull` 后必须 publish/copy 到运行目录才会线上生效。
 - 历史提交点（不是当前最新提交；以 `git log -1` 和远端分支为准）：
-  - `1a4728e fix: enforce token notify account mode`：当前 GitHub 远端 `origin/codex/v2-local-api-sqlite` 已到此提交，包含 `AI_HANDOFF_NEXT.md`、token 通知模式和前端身份入口调整。
+  - `1a4728e fix: enforce token notify account mode`：当前 GitHub 远端旧分支已到此提交，包含 `AI_HANDOFF_NEXT.md`、token 通知模式和前端身份入口调整。
   - `3bead51 fix: auto-login external token jumps`：外部门户 token 直跳后自动进入执行页。
   - `cc437a2 feat: prepare server installer for port 8080`：历史提交，曾加入服务器一键安装包和 `SapWebLauncher` 本地 API/SQLite/部署脚本；当前安装包方向已改为手工清单。
   - `acfa314 chore: checkpoint v2 before frontend modularization`：前端模块化前回退点。
@@ -111,7 +156,7 @@
 
 ### 2026-07-08 运行副本漂移排查结论
 
-- 历史排查时曾确认旧目录 `D:\工作\sap_rpa` 的 `HEAD`、`origin/codex/v2-local-api-sqlite` 和 GitHub 远端同名分支一致：`1a4728edd925d9a984f9d245739d7f7ada84cf59`。
+- 历史排查时曾确认旧目录 `D:\工作\sap_rpa` 的 `HEAD` 和 GitHub 远端旧分支一致：`1a4728edd925d9a984f9d245739d7f7ada84cf59`。
 - 已确认最新提交 `1a4728e` 包含本交接文档 `AI_HANDOFF_NEXT.md`。
 - 之前的问题根因是本机运行副本没有同步到最新源码；当前服务器应优先检查 `D:\RPA\bin\SapWebLauncher.exe` 是否来自最新 publish，以及是否已重启。
 - 如果还保留 `sap-rpa://` 协议注册表入口，需确认它没有指向旧的 `%LOCALAPPDATA%\SapRpaLauncher\SapWebLauncher.exe`。
@@ -149,7 +194,7 @@
 - SAP GUI 执行保持串行，不并发操作同一个桌面会话。
 - ZFI072A 是当前优先打通事务码。
 - 多工厂执行应记录父 run 和每个工厂子 run；开始通知一次，结束汇总通知一次，失败工厂支持重跑。
-- ZFIR034 已接入为日期范围事务：页面/API/协议入口/定时触发器都不传 `plants` 或 `businessAreas`，默认按运行时系统日期取上一完整自然周并写入 `period/weekEnd`；VBS 写 `S_BUDAT-LOW/HIGH`，并按最终开始日期推导周次后写入 `P_WEEK`（优先 `wnd[0]/usr/txtP_WEEK`，兜底 `wnd[0]/usr/ctxtP_WEEK`）。系统日期 `2026-07-02` 时应得到 `2026.06.22` 到 `2026.06.28`，`P_WEEK=26`。钉钉通知只显示日期范围，不显示工厂或业务范围。
+- ZFIR034 已接入为日期范围事务：页面/API/协议入口/定时触发器都不传 `plants` 或 `businessAreas`，默认按运行时系统日期取上一完整自然周并写入 `period/weekEnd/year/week`；VBS 写 `S_BUDAT-LOW/HIGH`，并按最终开始日期推导年度和周次后写入 `P_GJAHR/P_WEEK`（优先 `wnd[0]/usr/txtP_GJAHR`、`wnd[0]/usr/txtP_WEEK`，兜底 `ctxt` 字段）。系统日期 `2026-07-02` 时应得到 `2026.06.22` 到 `2026.06.28`，`P_GJAHR=2026`、`P_WEEK=26`。钉钉通知只显示日期范围，不显示工厂或业务范围。
 - 钉钉通知由后端发送，不由 VBS 进入 SAP 再调用函数。
 - 外部门户 `https://lydctest.lstech.com/dataAnalysis.financial.sapschedule` 会调用本页面，可通过页面 URL 传入 `?token=<jwt>`、`?authorization=Bearer ...` 或 `?access_token=<jwt>`；前端兼容解析 JWT payload 的 `Account/Ddid/ddid/DingTalkUserId/UserId` 作为钉钉 ID，兼容解析 `UserName/Name/RealName/DisplayName` 作为姓名，不验签、不保存 token 原文，并在加载后清理 URL。页面不再显示账号/密码、“钉钉扫码登录”界面或“清除身份”按钮；执行页保留“勾选固定通知 11464769”复选框，勾选时提交 `11464769`，不勾选时必须使用本次 URL token 解析出的钉钉 ID。识别到合法钉钉 ID 后页面进入执行页、顶部身份位置同时显示姓名和钉钉 ID 并自动取消固定通知勾选，提交 `/api/runs` 时把钉钉 ID 写入 `operator.dingTalkUserId` 和 `operator.ddid`；不勾选且未解析到钉钉 ID 时禁止触发执行。生产可信身份仍必须由后端/SSO 验签确认。
 - VBS 保持 ASCII/WSH 安全格式；VBS 只接收执行器传入的最终参数。

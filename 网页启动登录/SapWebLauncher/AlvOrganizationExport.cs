@@ -25,6 +25,7 @@ internal sealed class AlvOrganizationMappingResult
     public bool Success { get; init; }
     public string Message { get; init; } = "";
     public IReadOnlyList<AlvOrganizationTarget> Targets { get; init; } = Array.Empty<AlvOrganizationTarget>();
+    public IReadOnlyList<string> ZsbuValues { get; init; } = Array.Empty<string>();
 }
 
 // All SAP reads here are read-only RFC_READ_TABLE calls. No mapping data is written back to SAP.
@@ -78,6 +79,8 @@ internal sealed class AlvOrganizationMappingFetcher
 
             var targets = new List<AlvOrganizationTarget>();
             var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var zsbuValues = new List<string>();
+            var seenZsbu = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             var data = function.GetTable("DATA");
             for (int row = 0; row < data.RowCount; row++)
             {
@@ -85,6 +88,8 @@ internal sealed class AlvOrganizationMappingFetcher
                 string[] values = data.GetString("WA").Split('|');
                 string zbu = values.Length > 1 ? values[1].Trim() : "";
                 string zsbu = values.Length > 2 ? values[2].Trim() : "";
+                if (zsbu.Length > 0 && seenZsbu.Add(zsbu))
+                    zsbuValues.Add(zsbu);
                 if (zbu.Length == 0 || zsbu.Length == 0)
                     continue;
 
@@ -99,7 +104,8 @@ internal sealed class AlvOrganizationMappingFetcher
                 Message = targets.Count == 0
                     ? $"{tableName} has no ZBU/ZSBU mapping for {sourceField}={code}."
                     : $"{tableName} mapped {sourceField}={code} to {targets.Count} destination(s).",
-                Targets = targets
+                Targets = targets,
+                ZsbuValues = zsbuValues
             };
         }
         catch (Exception ex)
@@ -127,6 +133,7 @@ internal static class AlvOrganizationExport
 {
     private const string SourceKeyColumnName = "__SAP_RPA_SOURCE_KEY";
     private const string UnmappedOrganizationDirectoryName = "\u96C6\u91C7\u5DE5\u5382";
+    private const string DongtaiDirectoryName = "\u4E1C\u53F0";
 
     public static IReadOnlyList<RunFile> RoutePlantWorkbook(
         string sourcePath,
@@ -330,6 +337,103 @@ internal static class AlvOrganizationExport
         return results.Values.OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase).ToList();
     }
 
+    public static IReadOnlyList<RunFile> RouteBusinessAreaRequestWorkbook(
+        string sourcePath,
+        string outputRoot,
+        string transactionCode,
+        string transactionName,
+        DateTime archiveDate,
+        string sourceBusinessArea,
+        Func<string, AlvOrganizationMappingResult> lookup)
+    {
+        if (lookup == null) throw new ArgumentNullException(nameof(lookup));
+        using var source = new XLWorkbook(sourcePath);
+        var sheet = source.Worksheets.FirstOrDefault();
+        var range = sheet?.RangeUsed();
+        if (sheet == null || range == null)
+            throw new InvalidOperationException($"ALV workbook is empty: {sourcePath}");
+
+        var rows = range.RowsUsed().ToList();
+        if (rows.Count <= 1)
+        {
+            DeleteSourceAfterSuccessfulRoute(sourcePath, outputRoot);
+            return Array.Empty<RunFile>();
+        }
+
+        int columnCount = range.ColumnCount();
+        string requestBusinessArea = NormalizeSourceCode(sourceBusinessArea);
+        if (requestBusinessArea.Length == 0)
+            throw new InvalidOperationException($"ALV business-area request parameter is empty: {sourcePath}");
+
+        var businessAreaColumn = FindBusinessAreaColumn(rows, columnCount);
+        // ZFI019NL and ZFI019NA are entered by business area and their ALV does not
+        // consistently expose GSBER. The child request is the authoritative scope for mapping.
+        int headerRowIndex = businessAreaColumn.RowIndex >= 0 && businessAreaColumn.ColumnIndex > 0
+            ? businessAreaColumn.RowIndex
+            : 0;
+        var plantColumn = FindPlantColumn(rows, columnCount);
+        var mapping = lookup(requestBusinessArea);
+        if (!mapping.Success)
+            throw new InvalidOperationException(mapping.Message);
+
+        var sourceGroups = new Dictionary<string, List<IXLRangeRow>>(StringComparer.OrdinalIgnoreCase);
+        bool hasPlantColumn = plantColumn.RowIndex >= 0 && plantColumn.ColumnIndex > 0;
+        foreach (var row in rows.Skip(headerRowIndex + 1))
+        {
+            string sourceIdentity = hasPlantColumn
+                ? NormalizeSourceCode(row.Cell(plantColumn.ColumnIndex).GetString())
+                : requestBusinessArea;
+            if (sourceIdentity.Length == 0)
+                throw new InvalidOperationException($"ALV row has no plant value for businessArea={requestBusinessArea}: {sourcePath}");
+
+            if (!sourceGroups.TryGetValue(sourceIdentity, out var sourceRows))
+            {
+                sourceRows = new List<IXLRangeRow>();
+                sourceGroups[sourceIdentity] = sourceRows;
+            }
+            sourceRows.Add(row);
+        }
+
+        if (sourceGroups.Count == 0)
+            throw new InvalidOperationException($"ALV workbook has data rows but no rows for businessArea={requestBusinessArea}: {sourcePath}");
+
+        var results = new Dictionary<string, RunFile>(StringComparer.OrdinalIgnoreCase);
+        foreach (var sourceGroup in sourceGroups.OrderBy(item => item.Key, StringComparer.OrdinalIgnoreCase))
+        {
+            bool sourceIsPlant = hasPlantColumn;
+            string sourceLabel = sourceIsPlant ? "\u5DE5\u5382" : "\u4E1A\u52A1\u8303\u56F4";
+            string sourceKey = sourceIsPlant
+                ? $"{NormalizeTransactionCode(transactionCode)}|businessArea|{requestBusinessArea}|plant|{sourceGroup.Key}"
+                : $"{NormalizeTransactionCode(transactionCode)}|businessArea|{requestBusinessArea}";
+            string legacySourceKey = $"{NormalizeTransactionCode(transactionCode)}|businessArea|{requestBusinessArea}";
+            string[] targetPaths = BuildTargetPaths(
+                outputRoot,
+                transactionCode,
+                transactionName,
+                archiveDate,
+                sourceLabel,
+                sourceGroup.Key,
+                mapping.Targets).ToArray();
+            RemoveSourceRowsFromPriorTargets(outputRoot, transactionCode, transactionName, archiveDate, sourceKey, targetPaths);
+            RemoveLegacyBusinessAreaRowsFromCurrentWeek(
+                outputRoot,
+                transactionCode,
+                transactionName,
+                archiveDate,
+                legacySourceKey,
+                sourceGroup.Key);
+
+            foreach (string targetPath in targetPaths)
+            {
+                UpsertRows(targetPath, rows[headerRowIndex], sourceGroup.Value, columnCount, sourceKey);
+                results[targetPath] = BuildRunFile(targetPath);
+            }
+        }
+
+        DeleteSourceAfterSuccessfulRoute(sourcePath, outputRoot);
+        return results.Values.OrderBy(file => file.Path, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
     public static string GetWeekFolderName(DateTime date)
     {
         int week = ISOWeek.GetWeekOfYear(date);
@@ -404,11 +508,24 @@ internal static class AlvOrganizationExport
             yield break;
         }
 
-        foreach (var target in targets.OrderBy(item => item.Zbu, StringComparer.OrdinalIgnoreCase).ThenBy(item => item.Zsbu, StringComparer.OrdinalIgnoreCase))
+        var normalizedTargets = targets
+            .Select(target => new AlvOrganizationTarget(target.Zbu, NormalizeSubOrganizationDirectoryName(target.Zsbu)))
+            .GroupBy(target => target.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .OrderBy(target => target.Zbu, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(target => target.Zsbu, StringComparer.OrdinalIgnoreCase);
+
+        foreach (AlvOrganizationTarget target in normalizedTargets)
         {
             string directory = Path.Combine(root, SafePathPart(target.Zbu), SafePathPart(target.Zsbu), GetWeekFolderName(archiveDate));
             yield return Path.Combine(directory, aggregateFileName);
         }
+    }
+
+    internal static string NormalizeSubOrganizationDirectoryName(string value)
+    {
+        string name = (value ?? "").Trim();
+        return name.StartsWith(DongtaiDirectoryName, StringComparison.Ordinal) ? DongtaiDirectoryName : name;
     }
 
     private static void RemoveSourceRowsFromPriorTargets(
@@ -654,6 +771,100 @@ internal static class AlvOrganizationExport
             retainedRows.Add((ReadRow(row, sourceColumnCount), sourceKey));
 
         WriteAggregateWorkbook(targetPath, header, retainedRows);
+    }
+
+    public static bool TryMergeAggregateWorkbookForArchive(
+        string existingArchivePath,
+        string incomingPath,
+        string mergedOutputPath,
+        out long mergedSize,
+        out string message)
+    {
+        mergedSize = 0;
+        message = "";
+        if (!File.Exists(existingArchivePath))
+            return false;
+
+        if (!TryReadAggregateWorkbook(existingArchivePath, out var existingHeader, out var existingRows, out string existingMessage))
+        {
+            message = existingMessage;
+            return false;
+        }
+
+        if (!TryReadAggregateWorkbook(incomingPath, out var incomingHeader, out var incomingRows, out string incomingMessage))
+        {
+            message = incomingMessage;
+            return false;
+        }
+
+        if (!HeadersMatch(existingHeader, incomingHeader))
+            throw new InvalidOperationException($"ALV archive aggregate headers differ from incoming workbook: {existingArchivePath}");
+
+        var incomingSourceKeys = incomingRows
+            .Select(row => row.SourceKey)
+            .Where(key => !string.IsNullOrWhiteSpace(key))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (incomingSourceKeys.Count == 0)
+        {
+            message = "incoming aggregate workbook has no source keys";
+            return false;
+        }
+
+        var mergedRows = existingRows
+            .Where(row => !incomingSourceKeys.Contains(row.SourceKey))
+            .Concat(incomingRows)
+            .ToList();
+
+        WriteAggregateWorkbook(mergedOutputPath, incomingHeader, mergedRows);
+        mergedSize = new FileInfo(mergedOutputPath).Length;
+        message = $"merged sourceKeys={incomingSourceKeys.Count}; rows={mergedRows.Count}";
+        return true;
+    }
+
+    private static bool TryReadAggregateWorkbook(
+        string path,
+        out List<XLCellValue> header,
+        out List<(List<XLCellValue> Values, string SourceKey)> rows,
+        out string message)
+    {
+        header = new List<XLCellValue>();
+        rows = new List<(List<XLCellValue> Values, string SourceKey)>();
+        message = "";
+
+        using var workbook = new XLWorkbook(path);
+        var sheet = workbook.Worksheets.FirstOrDefault();
+        var range = sheet?.RangeUsed();
+        if (sheet == null || range == null)
+        {
+            message = $"aggregate workbook is empty: {path}";
+            return false;
+        }
+
+        var usedRows = range.RowsUsed().ToList();
+        if (usedRows.Count == 0)
+        {
+            message = $"aggregate workbook has no rows: {path}";
+            return false;
+        }
+
+        int columnCount = range.ColumnCount();
+        int sourceKeyColumn = FindSourceKeyColumn(usedRows[0], columnCount);
+        if (sourceKeyColumn <= 0)
+        {
+            message = $"aggregate workbook has no source-key column: {path}";
+            return false;
+        }
+
+        int dataColumnCount = sourceKeyColumn - 1;
+        header = ReadRow(usedRows[0], dataColumnCount);
+        foreach (var row in usedRows.Skip(1))
+        {
+            string sourceKey = row.Cell(sourceKeyColumn).GetString().Trim();
+            if (!string.IsNullOrWhiteSpace(sourceKey))
+                rows.Add((ReadRow(row, dataColumnCount), sourceKey));
+        }
+
+        return true;
     }
 
     private static void WriteAggregateWorkbook(

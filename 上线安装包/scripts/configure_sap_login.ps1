@@ -184,9 +184,6 @@ Set-JsonProperty $runtimeExisting.fileStorage "alvExportDataDirectory" $alvExpor
 if (-not $runtimeExisting.PSObject.Properties["zfi057Workflow"]) {
     Set-JsonProperty $runtimeExisting "zfi057Workflow" ([pscustomobject]@{})
 }
-if (-not $runtimeExisting.zfi057Workflow.PSObject.Properties["gs03SetName"]) {
-    Set-JsonProperty $runtimeExisting.zfi057Workflow "gs03SetName" "Z31"
-}
 if (-not $runtimeExisting.zfi057Workflow.PSObject.Properties["zfi019nlMemory"]) {
     Set-JsonProperty $runtimeExisting.zfi057Workflow "zfi019nlMemory" ([pscustomobject]@{
         report = "ZFI019NL"

@@ -99,6 +99,23 @@
       };
     }
 
+    function mergeTransactionRuleIntoExecutionDefinition(transaction, rule) {
+      if (!rule) return transaction;
+      // Card metadata is stored with the transaction, while the separately persisted
+      // rule owns the executable range.
+      return {
+        ...transaction,
+        defaultPlantGroup: rule.defaultPlantGroup || transaction.defaultPlantGroup,
+        factoryRule: rule.factoryRule || transaction.factoryRule,
+        fixedPlants: toArray(rule.fixedPlants),
+        selectableGroupIds: toArray(rule.selectableGroupIds),
+        businessAreaMode: rule.businessAreaMode || transaction.businessAreaMode,
+        businessAreas: toArray(rule.businessAreas),
+        enabled: transaction.enabled !== false && rule.enabled !== false,
+        configSource: rule.configSource || transaction.configSource || "api-config"
+      };
+    }
+
     function normalizeRobotFromApi(item) {
       const id = String(item.id || item.robotId || item.code || "").trim();
       const bindings = Array.isArray(item.bindings) ? item.bindings : [];
@@ -151,12 +168,22 @@
         params.plants ?? params.plantCodes ?? params.factoryCodes ??
         params.plantsCsv ?? params.plantCodesCsv ?? params.factoryCodesCsv);
       const businessAreasValue = toArray(item.businessAreas || item.businessAreaCodes || params.businessAreas);
+      const fixedBusinessAreas = tCode !== "ZFI057" && isBusinessAreaRange && hasFixedConfiguredBusinessAreas(getTCode(tCode))
+        ? getDefaultRunRangeForTCode(tCode, factoryGroup)
+        : [];
       const plantsForTask = isDateRange
         ? []
         : isBusinessAreaRange
-          ? (businessAreasValue.length ? businessAreasValue : (hasExplicitPlants ? plantsValue : getDefaultRunRangeForTCode(tCode, factoryGroup)))
+          ? (fixedBusinessAreas.length ? fixedBusinessAreas : (businessAreasValue.length ? businessAreasValue : (hasExplicitPlants ? plantsValue : getDefaultRunRangeForTCode(tCode, factoryGroup))))
           : (hasExplicitPlants ? plantsValue : getDefaultPlantsForTCode(tCode, factoryGroup));
       const enabled = boolValue(item.enabled ?? item.isActive, true);
+      const frequencyCode = scheduleFrequencyCode(item.frequency || item.frequencyText || item.scheduleType || item.cronLabel || "weekly");
+      const weekday = frequencyCode === "weekly" || frequencyCode === "monthly"
+        ? normalizeScheduleWeekday(
+          item.weekday || item.weekDay || item.dayOfWeek || item.scheduleWeekday || params.weekday || item.frequency || item.frequencyText || item.scheduleType,
+          frequencyCode === "weekly" ? "monday" : ""
+        )
+        : "";
       return {
         id: String(item.id || item.taskId || item.scheduleId || "").trim(),
         name: item.name || item.taskName || item.title || defaultScheduleName(tCode),
@@ -168,9 +195,12 @@
         params,
         rangeKind: isDateRange ? "dateRange" : (isBusinessAreaRange ? "businessArea" : ""),
         dateRange: isDateRange ? { period: params.period || "", weekEnd: params.weekEnd || "" } : null,
-        time: item.time || item.execTime || item.runAt || item.startTime || "08:00",
-        frequency: formatScheduleFrequency(item.frequency || item.frequencyText || item.scheduleType || item.cronLabel || "weekly"),
-        frequencyCode: scheduleFrequencyCode(item.frequency || item.scheduleType || "weekly"),
+        time: item.time || item.execTime || item.runAt || item.startTime || "20:00",
+        frequency: formatScheduleFrequency(item.frequency || item.frequencyText || item.scheduleType || item.cronLabel || "weekly", weekday),
+        frequencyCode,
+        weekday,
+        dayOfWeek: weekday,
+        weekdayLabel: formatScheduleWeekday(weekday),
         status: formatScheduleStatus(item.status, enabled),
         next: item.next || item.nextRunAt || item.nextFireTime || item.nextExecutionTime || "-",
         enabled,
@@ -185,13 +215,41 @@
       };
     }
 
+    function getCurrentScheduleOwnerName() {
+      return String(state.user?.name || state.externalAuth?.claimedUserName || "").trim();
+    }
+
+    function isCurrentUserScheduleTask(task) {
+      const owner = getCurrentScheduleOwnerName().toLowerCase();
+      if (!owner) return true;
+      const createdBy = String(task.createdBy || "").trim().toLowerCase();
+      const updatedBy = String(task.updatedBy || "").trim().toLowerCase();
+      if (!createdBy && !updatedBy) return true;
+      return [createdBy, updatedBy].includes(owner);
+    }
+
+    function filterCurrentUserScheduleTasks(items) {
+      return items.filter(isCurrentUserScheduleTask);
+    }
+
+    function appendScheduleOwnerQuery(path) {
+      const owner = getCurrentScheduleOwnerName();
+      if (!owner) return path;
+      const separator = String(path).includes("?") ? "&" : "?";
+      return path + separator + "scheduleOwner=" + encodeURIComponent(owner);
+    }
+
     function applyConfigData(data) {
+      const hasTransactions = Array.isArray(data.transactions);
       const hasPlants = Array.isArray(data.plants);
       const hasGroups = Array.isArray(data.plantGroups);
       const hasRules = Array.isArray(data.transactionRules);
       const hasRobots = Array.isArray(data.notificationRobots);
       const scheduleSource = data.scheduleTasks || data.schedules || data.scheduledTasks;
       const hasSchedules = Array.isArray(scheduleSource);
+      const nextTransactions = hasTransactions
+        ? data.transactions.map(normalizeTransactionFromApi).filter(item => item.code)
+        : [];
       const nextPlants = hasPlants ? data.plants.map(normalizePlantFromApi).filter(item => item.code && item.enabled !== false) : [];
       const nextGroups = hasGroups ? data.plantGroups.map(normalizePlantGroupFromApi).filter(item => item.id).map(preserveConfiguredPlantRefs) : [];
       const nextRules = hasRules ? data.transactionRules.map(normalizeTransactionRuleFromApi).filter(item => item.code).map(preserveConfiguredPlantRefs) : [];
@@ -204,13 +262,17 @@
       }
       if (hasGroups) factoryGroups = nextGroups;
       if (hasRules) {
-        const byCode = new Map(tCodes.map(item => [item.code, item]));
-        nextRules.forEach(rule => byCode.set(rule.code, rule));
-        tCodes = nextRules.length ? Array.from(byCode.values()) : tCodes;
+        transactionRules = nextRules;
+      } else if (hasTransactions) {
+        transactionRules = nextTransactions.map(item => ({ ...item }));
+      }
+      if (hasTransactions) {
+        const rulesByCode = new Map(transactionRules.map(rule => [rule.code, rule]));
+        tCodes = nextTransactions.map(transaction => mergeTransactionRuleIntoExecutionDefinition(transaction, rulesByCode.get(transaction.code)));
       }
       if (hasRobots) robots = nextRobots;
       if (hasSchedules) {
-        scheduleTasks = scheduleSource.map(normalizeScheduleTaskFromApi).filter(item => item.id && item.tCode);
+        scheduleTasks = filterCurrentUserScheduleTasks(scheduleSource.map(normalizeScheduleTaskFromApi).filter(item => item.id && item.tCode));
       }
 
       state.config = {
@@ -224,7 +286,7 @@
 
     async function refreshConfigData({ silent = true } = {}) {
       try {
-        const data = await bridgeFetch(CONFIG_API_PATHS.root);
+        const data = await bridgeFetch(appendScheduleOwnerQuery(CONFIG_API_PATHS.root));
         applyConfigData(data || {});
         if (!silent) toast("基础配置已从 API 刷新", "ok");
       } catch (err) {
@@ -241,13 +303,20 @@
 
     function normalizeRunFromApi(run) {
       const params = readRunParams(run.requestJson);
+      const plantsCsv = readRunParamCsv(params, ["plants", "plant", "plantsCsv", "plantCodes", "factoryCodes"]);
+      const businessAreasCsv = readRunParamCsv(params, ["businessAreas", "businessArea", "businessAreasCsv", "businessAreaList", "gsberlist", "gsber"]);
+      const factoryGroup = readRunParamText(params, ["factoryGroup", "defaultBusinessScope", "defaultGroup", "plantGroup", "plantGroupId", "businessScope"]);
       const statusText = run.status === "success" ? "成功" : run.status === "no_data" ? "无数据" : run.status === "failed" ? "失败" : run.status === "running" ? "执行中" : run.status === "canceled" ? "已取消" : "排队中";
       return {
         id: run.runId,
         time: run.finishedAt || run.startedAt || run.queuedAt || "",
         task: (getTCode(run.transactionCode)?.name || run.transactionCode) + " / " + (run.operatorName || "本机用户"),
         tCode: run.transactionCode,
-        plant: params.plants || params.plant || "",
+        plant: plantsCsv || params.plant || "",
+        plantsCsv,
+        businessAreasCsv,
+        factoryGroup,
+        runParams: params,
         duration: formatDuration(run.durationMs || 0),
         status: statusText,
         notify: "本地记录",
@@ -259,11 +328,34 @@
 
     function readRunParams(requestJson) {
       try {
+        if (requestJson && typeof requestJson === "object") {
+          if (requestJson.params && typeof requestJson.params === "object") return requestJson.params;
+          return requestJson;
+        }
         const data = JSON.parse(requestJson || "{}");
-        return data.params || {};
+        return data.params && typeof data.params === "object" ? data.params : {};
       } catch {
         return {};
       }
+    }
+
+    function readRunParamCsv(params, keys) {
+      const values = [];
+      for (const key of keys) {
+        if (!params || params[key] === undefined || params[key] === null || params[key] === "") continue;
+        values.push(...toArray(params[key]));
+      }
+      return Array.from(new Set(values)).join(",");
+    }
+
+    function readRunParamText(params, keys) {
+      for (const key of keys) {
+        const value = params?.[key];
+        if (value === undefined || value === null || value === "") continue;
+        const text = String(value).trim();
+        if (text) return text;
+      }
+      return "";
     }
 
     function formatDuration(ms) {

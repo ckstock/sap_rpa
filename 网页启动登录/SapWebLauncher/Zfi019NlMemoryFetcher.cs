@@ -59,7 +59,6 @@ internal sealed class Zfi019NlFetchRequest
     public string SplitBukrs { get; init; } = "2030";
     public List<Zfi019NlSelection> Conditions { get; init; } = new();
     public List<string> BusinessAreas { get; init; } = new();
-    public List<string> DongtaiBusinessAreas { get; init; } = new();
     public List<string> SplitWerks { get; init; } = new();
 }
 
@@ -102,6 +101,7 @@ internal sealed class SapJobStatusResult
     public string Message { get; init; } = "";
     public string SqlSummary { get; init; } = "";
     public List<string> Options { get; init; } = new();
+    public int RawRowCount { get; init; }
     public List<SapJobStatusRow> Rows { get; init; } = new();
     public SapJobStatusRow? Latest { get; init; }
 }
@@ -129,7 +129,7 @@ internal sealed class SapJobStatusFetcher
         "JOBNAME", "JOBCOUNT", "SDLUNAME", "STATUS", "SDLSTRTDT", "SDLSTRTTM", "STRTDATE", "STRTTIME", "ENDDATE", "ENDTIME"
     };
 
-    public SapJobStatusResult FetchLatest(SapNcoConnectionConfig connectionConfig, SapJobStatusQuery query)
+    public SapJobStatusResult Fetch(SapNcoConnectionConfig connectionConfig, SapJobStatusQuery query)
     {
         ArgumentNullException.ThrowIfNull(connectionConfig);
         ArgumentNullException.ThrowIfNull(query);
@@ -172,7 +172,7 @@ internal sealed class SapJobStatusFetcher
             DateTime upperLocal = query.UpperUtc.ToLocalTime();
             string user = Normalize(query.JobUser);
             string job = Normalize(query.JobName);
-            var filtered = rows
+            var matchedRows = rows
                 .Where(row => Normalize(row.JobName).Equals(job, StringComparison.OrdinalIgnoreCase))
                 .Where(row => string.IsNullOrWhiteSpace(user) || Normalize(row.User).Equals(user, StringComparison.OrdinalIgnoreCase))
                 .Where(row => row.EffectiveStartLocal.HasValue &&
@@ -180,11 +180,12 @@ internal sealed class SapJobStatusFetcher
                               row.EffectiveStartLocal.Value <= upperLocal)
                 .OrderByDescending(row => row.EffectiveStartLocal ?? DateTime.MinValue)
                 .ThenByDescending(row => row.JobCount, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault();
+                .ToList();
+            SapJobStatusRow? latest = matchedRows.FirstOrDefault();
 
-            string message = filtered == null
+            string message = latest == null
                 ? $"No TBTCO job matched window; rawRows={rows.Count}; lower={FormatSapLocal(lowerLocal)}; upper={FormatSapLocal(upperLocal)}"
-                : $"Latest TBTCO job {filtered.JobName}/{filtered.JobCount} status={filtered.Status}; category={NormalizeTbtcoStatusCategory(filtered.Status)}; start={FormatNullableLocal(filtered.EffectiveStartLocal)}; end={FormatNullableLocal(filtered.EndLocal)}";
+                : $"TBTCO matched {matchedRows.Count} job(s); latest {latest.JobName}/{latest.JobCount} status={latest.Status}; category={NormalizeTbtcoStatusCategory(latest.Status)}; start={FormatNullableLocal(latest.EffectiveStartLocal)}; end={FormatNullableLocal(latest.EndLocal)}";
 
             return new SapJobStatusResult
             {
@@ -192,8 +193,9 @@ internal sealed class SapJobStatusFetcher
                 Message = message,
                 SqlSummary = BuildTbtcoSqlSummary(query),
                 Options = optionsText,
-                Rows = rows,
-                Latest = filtered
+                RawRowCount = rows.Count,
+                Rows = matchedRows,
+                Latest = latest
             };
         }
         catch (Exception ex)
@@ -207,6 +209,10 @@ internal sealed class SapJobStatusFetcher
             };
         }
     }
+
+    // Kept for callers outside the workflow that only need the latest matched job.
+    public SapJobStatusResult FetchLatest(SapNcoConnectionConfig connectionConfig, SapJobStatusQuery query)
+        => Fetch(connectionConfig, query);
 
     public static List<string> BuildTbtcoWhereOptions(SapJobStatusQuery query)
     {
@@ -245,7 +251,7 @@ internal sealed class SapJobStatusFetcher
                $"WHERE JOBNAME = '{EscapeSqlLiteral(FirstNonEmpty(query.JobName, "ZFI057").Trim().ToUpperInvariant())}'{userPredicate} " +
                $"AND (SDLSTRTDT > '{lowerDate}' OR (SDLSTRTDT = '{lowerDate}' AND SDLSTRTTM >= '{lowerTime}')) " +
                $"AND (SDLSTRTDT < '{upperDate}' OR (SDLSTRTDT = '{upperDate}' AND SDLSTRTTM <= '{upperTime}')) " +
-               $"-- post-filter effective start between {FormatSapLocal(lowerLocal)} and {FormatSapLocal(upperLocal)}; latest row wins";
+                $"-- post-filter effective start between {FormatSapLocal(lowerLocal)} and {FormatSapLocal(upperLocal)}; all matched rows returned";
     }
 
     public static string NormalizeTbtcoStatusCategory(string status)
@@ -394,457 +400,6 @@ internal sealed class SapJobStatusFetcher
     }
 }
 
-internal sealed class SapGs03PlantFetchResult
-{
-    public bool Success { get; init; }
-    public string Message { get; init; } = "";
-    public List<string> Plants { get; init; } = new();
-    public string Action { get; init; } = "GET_GS03";
-    public string SetName { get; init; } = "";
-    public string BusinessArea { get; init; } = "";
-    public string JsonInput { get; init; } = "";
-    public string JsonOutput { get; init; } = "";
-    public List<string> RawLines { get; init; } = new();
-}
-
-internal sealed class SapGs03PlantFetcher
-{
-    private const string SapApiGatewayFunctionName = "ZFI_SAP_API_GATEWAY";
-    private const string ActionName = "GET_GS03";
-    public const string DefaultSetName = "Z31";
-
-    public SapGs03PlantFetchResult FetchPlantsForBusinessArea(SapNcoConnectionConfig connectionConfig, string businessArea, string setName = DefaultSetName)
-    {
-        ArgumentNullException.ThrowIfNull(connectionConfig);
-        string area = NormalizeCode(businessArea);
-        if (string.IsNullOrWhiteSpace(area))
-            return new SapGs03PlantFetchResult { Success = false, Message = "GET_GS03 business area is empty" };
-
-        string set = NormalizeCode(FirstNonEmpty(setName, DefaultSetName));
-        if (!connectionConfig.IsComplete(out string configError))
-            return new SapGs03PlantFetchResult { Success = false, Message = configError, SetName = set, BusinessArea = area };
-
-        var inputValues = new Dictionary<string, string>(StringComparer.Ordinal)
-        {
-            ["IV_SET_NAME"] = set,
-            ["iv_set_name"] = set,
-            ["IV_SETNAME"] = set,
-            ["iv_setname"] = set,
-            ["SET_NAME"] = set,
-            ["setName"] = set,
-            ["SETNAME"] = set,
-            ["setname"] = set,
-            ["set_name"] = set,
-            ["TITLE"] = area,
-            ["title"] = area,
-            ["business_area"] = area,
-            ["businessArea"] = area,
-            ["gsber"] = area
-        };
-        string input = JsonSerializer.Serialize(inputValues);
-        var inputCandidates = new List<(string Label, string JsonIn)>
-        {
-            ("object", input),
-            ("object-set-name", JsonSerializer.Serialize(new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["SET_NAME"] = set,
-                ["TITLE"] = area
-            })),
-            ("object-iv-setname", JsonSerializer.Serialize(new Dictionary<string, string>(StringComparer.Ordinal)
-            {
-                ["IV_SETNAME"] = set,
-                ["TITLE"] = area
-            })),
-            ("object-importing", JsonSerializer.Serialize(new
-            {
-                IMPORTING = new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["IV_SET_NAME"] = set
-                },
-                TITLE = area
-            })),
-            ("object-params", JsonSerializer.Serialize(new
-            {
-                PARAMS = new Dictionary<string, string>(StringComparer.Ordinal)
-                {
-                    ["IV_SET_NAME"] = set
-                },
-                TITLE = area
-            })),
-            ("options-text", $"IV_SET_NAME={set};TITLE={area}"),
-            ("json-string", JsonSerializer.Serialize(set)),
-            ("raw-string", set)
-        };
-
-        try
-        {
-            var destination = SapRpaNcoDestinationProvider.GetDestination(connectionConfig);
-            var attempts = new List<string>();
-            foreach (var candidate in inputCandidates)
-            {
-                var function = destination.Repository.CreateFunction(SapApiGatewayFunctionName);
-                function.SetValue("IV_ACTION", ActionName);
-                bool topLevelSetNameApplied = TrySetValue(function, "IV_SET_NAME", set);
-                function.SetValue("IV_JSON_IN", candidate.JsonIn);
-                function.Invoke(destination);
-
-                var outerSubrc = function.GetInt("EV_SUBRC");
-                var outerMsg = function.GetString("EV_MSG") ?? "";
-                var jsonOut = function.GetString("EV_JSON_OUT") ?? "";
-                attempts.Add($"{candidate.Label}:topLevelIV_SET_NAME={(topLevelSetNameApplied ? "yes" : "no")}:params={DescribeFunctionParameters(function)}:{outerSubrc}:{outerMsg}");
-                if (outerSubrc != 0)
-                {
-                    if (outerMsg.Contains("IV_SET_NAME", StringComparison.OrdinalIgnoreCase) && candidate.Label != inputCandidates[^1].Label)
-                        continue;
-
-                    return new SapGs03PlantFetchResult
-                    {
-                        Success = false,
-                        Message = $"ZFI_SAP_API_GATEWAY GET_GS03 failed: {outerMsg}; setName={set}; businessArea={area}; attempts={string.Join(" || ", attempts)}",
-                        SetName = set,
-                        BusinessArea = area,
-                        JsonInput = string.Join(" || ", inputCandidates.Select(x => $"{x.Label}={x.JsonIn}"))
-                    };
-                }
-
-                if (string.IsNullOrWhiteSpace(jsonOut))
-                {
-                    return new SapGs03PlantFetchResult
-                    {
-                        Success = false,
-                        Message = $"ZFI_SAP_API_GATEWAY GET_GS03 returned empty EV_JSON_OUT.; setName={set}; businessArea={area}; attempts={string.Join(" || ", attempts)}",
-                        SetName = set,
-                        BusinessArea = area,
-                        JsonInput = candidate.JsonIn
-                    };
-                }
-
-                var rawLines = new List<string>();
-                int innerSubrc = 0;
-                string innerMsg = "";
-                var plants = ExtractPlants(jsonOut, area, rawLines, out innerSubrc, out innerMsg)
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .ToList();
-
-                if (innerSubrc != 0)
-                {
-                    return new SapGs03PlantFetchResult
-                    {
-                        Success = false,
-                        Message = FirstNonEmpty(innerMsg, $"GET_GS03 inner response failed with subrc={innerSubrc}") + $"; setName={set}; businessArea={area}; attempts={string.Join(" || ", attempts)}",
-                        SetName = set,
-                        BusinessArea = area,
-                        JsonInput = candidate.JsonIn,
-                        RawLines = rawLines
-                    };
-                }
-
-                return new SapGs03PlantFetchResult
-                {
-                    Success = plants.Count > 0,
-                    Message = plants.Count > 0
-                        ? $"GET_GS03 setName={set} businessArea={area} returned {plants.Count} plant(s); input={candidate.Label}"
-                        : $"GET_GS03 setName={set} businessArea={area} returned no plants; input={candidate.Label}",
-                    Plants = plants,
-                    SetName = set,
-                    BusinessArea = area,
-                    JsonInput = candidate.JsonIn,
-                    JsonOutput = jsonOut,
-                    RawLines = rawLines
-                };
-            }
-
-            return new SapGs03PlantFetchResult
-            {
-                Success = false,
-                Message = $"ZFI_SAP_API_GATEWAY GET_GS03 failed before invocation; setName={set}; businessArea={area}; attempts={string.Join(" || ", attempts)}",
-                SetName = set,
-                BusinessArea = area,
-                JsonInput = string.Join(" || ", inputCandidates.Select(x => $"{x.Label}={x.JsonIn}"))
-            };
-        }
-        catch (Exception ex)
-        {
-            return new SapGs03PlantFetchResult
-            {
-                Success = false,
-                Message = $"ZFI_SAP_API_GATEWAY GET_GS03 threw: {ExceptionChain(ex)}; setName={set}; businessArea={area}",
-                SetName = set,
-                BusinessArea = area,
-                JsonInput = input
-            };
-        }
-    }
-
-    internal static List<string> ExtractPlantsForBusinessAreaForTest(string jsonOut, string businessArea)
-    {
-        var rawLines = new List<string>();
-        return ExtractPlants(jsonOut, NormalizeCode(businessArea), rawLines, out _, out _)
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
-    }
-
-    private static List<string> ExtractPlants(string jsonOut, string area, List<string> rawLines, out int innerSubrc, out string innerMsg)
-    {
-        innerSubrc = 0;
-        innerMsg = "";
-        var plants = new List<string>();
-        try
-        {
-            using var document = JsonDocument.Parse(jsonOut);
-            var root = document.RootElement;
-            innerSubrc = ReadInt(root, 0, "EV_SUBRC", "SUBRC", "subrc");
-            innerMsg = ReadString(root, "EV_MSG", "MSG", "MESSAGE", "message") ?? "";
-            ExtractPlants(root, area, plants, rawLines);
-        }
-        catch (JsonException)
-        {
-            ExtractPlantsFromText(jsonOut, area, plants, rawLines);
-        }
-
-        return plants
-            .Select(NormalizeCode)
-            .Where(IsPlantCode)
-            .ToList();
-    }
-
-    private static void ExtractPlants(JsonElement element, string area, List<string> plants, List<string> rawLines)
-    {
-        if (element.ValueKind == JsonValueKind.Array)
-        {
-            foreach (var item in element.EnumerateArray())
-                ExtractPlants(item, area, plants, rawLines);
-            return;
-        }
-
-        if (element.ValueKind == JsonValueKind.String)
-        {
-            ExtractPlantsFromText(element.GetString() ?? "", area, plants, rawLines);
-            return;
-        }
-
-        if (element.ValueKind != JsonValueKind.Object)
-            return;
-
-        if (TryReadString(element, out string line, "LINE", "line", "WA", "wa"))
-            ExtractPlantsFromText(line, area, plants, rawLines);
-
-        string title = ReadString(element, "TITLE", "title", "GSBER", "gsber", "BUSINESS_AREA", "business_area", "businessArea") ?? "";
-        if (TryReadString(element, out string plant, "FROM", "from", "LOW", "low", "WERKS", "werks", "PLANT", "plant") &&
-            RowMatchesBusinessArea(title, area))
-        {
-            AddPlant(plants, plant);
-        }
-
-        foreach (var name in new[] { "RT_SET_VALUES", "rt_set_values", "SET_VALUES", "set_values", "VALUES", "values", "ROWS", "rows", "DATA", "data", "ET_LINES", "LINES", "lines" })
-        {
-            if (TryGet(element, out var child, name))
-                ExtractPlants(child, area, plants, rawLines);
-        }
-    }
-
-    private static void ExtractPlantsFromText(string text, string area, List<string> plants, List<string> rawLines)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-            return;
-
-        foreach (string raw in text.Replace("\r\n", "\n").Split('\n'))
-        {
-            string line = raw.Trim();
-            if (line.Length == 0)
-                continue;
-
-            rawLines.Add(line);
-            string lineTitle = "";
-            var linePlants = new List<string>();
-            foreach (Match match in RegexMatches(line, @"(?<key>FROM|WERKS|PLANT|LOW|TITLE|GSBER|BUSINESS_AREA)\s*[:=]\s*(?<value>[A-Za-z0-9]+)"))
-            {
-                string key = match.Groups["key"].Value;
-                string value = match.Groups["value"].Value;
-                if (key.Equals("TITLE", StringComparison.OrdinalIgnoreCase) ||
-                    key.Equals("GSBER", StringComparison.OrdinalIgnoreCase) ||
-                    key.Equals("BUSINESS_AREA", StringComparison.OrdinalIgnoreCase))
-                {
-                    lineTitle = FirstNonEmpty(lineTitle, value);
-                }
-                else
-                {
-                    linePlants.Add(value);
-                }
-            }
-
-            if (linePlants.Count > 0)
-            {
-                if (RowMatchesBusinessArea(lineTitle, area))
-                {
-                    foreach (string plant in linePlants)
-                        AddPlant(plants, plant);
-                }
-
-                continue;
-            }
-
-            string valueLine = line;
-            if (line.StartsWith("ROW=", StringComparison.OrdinalIgnoreCase))
-                valueLine = line["ROW=".Length..];
-            else if (line.Contains('='))
-                continue;
-
-            string[] parts = valueLine
-                .Split(new[] { '|', '\t', ',', ';', ' ' }, StringSplitOptions.RemoveEmptyEntries)
-                .Select(part => part.Trim())
-                .ToArray();
-            if (parts.Length == 0)
-                continue;
-
-            string candidate = ResolvePlantFromDelimitedLine(parts, area);
-            if (IsPlantCode(candidate) && (parts.Length == 1 || parts.Any(part => NormalizeCode(part).Equals(area, StringComparison.OrdinalIgnoreCase))))
-            {
-                AddPlant(plants, candidate);
-            }
-        }
-    }
-
-    private static bool LooksLikeStatusLine(string line)
-        => line.StartsWith("OK:", StringComparison.OrdinalIgnoreCase) ||
-           line.StartsWith("ERROR:", StringComparison.OrdinalIgnoreCase) ||
-           line.StartsWith("MESSAGE", StringComparison.OrdinalIgnoreCase) ||
-           line.StartsWith("METHOD", StringComparison.OrdinalIgnoreCase);
-
-    private static bool RowMatchesBusinessArea(string title, string area)
-    {
-        string normalizedTitle = NormalizeCode(title);
-        return normalizedTitle.Equals(NormalizeCode(area), StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static string ResolvePlantFromDelimitedLine(string[] parts, string area)
-    {
-        if (parts.Length == 0)
-            return "";
-
-        if (parts.Length == 1)
-            return NormalizeCode(parts[0]);
-
-        int titleIndex = Array.FindIndex(parts, part => NormalizeCode(part).Equals(area, StringComparison.OrdinalIgnoreCase));
-        if (titleIndex > 0)
-        {
-            for (int i = titleIndex - 1; i >= 0; i--)
-            {
-                string candidate = NormalizeCode(parts[i]);
-                if (IsPlantCode(candidate) && !candidate.Equals(area, StringComparison.OrdinalIgnoreCase))
-                    return candidate;
-            }
-        }
-
-        return "";
-    }
-
-    private static void AddPlant(List<string> plants, string? value)
-    {
-        string plant = NormalizeCode(value);
-        if (IsPlantCode(plant))
-            plants.Add(plant);
-    }
-
-    private static bool IsPlantCode(string value)
-        => value.Length is >= 3 and <= 6 && value.All(char.IsLetterOrDigit);
-
-    private static int ReadInt(JsonElement root, int defaultValue, params string[] names)
-    {
-        if (!TryGet(root, out var token, names)) return defaultValue;
-        if (token.ValueKind == JsonValueKind.Number && token.TryGetInt32(out var value)) return value;
-        return int.TryParse(token.ToString(), out value) ? value : defaultValue;
-    }
-
-    private static string? ReadString(JsonElement root, params string[] names)
-        => TryGet(root, out var token, names) ? token.ToString() : null;
-
-    private static bool TryReadString(JsonElement root, out string value, params string[] names)
-    {
-        if (TryGet(root, out var token, names))
-        {
-            value = token.ToString();
-            return true;
-        }
-
-        value = "";
-        return false;
-    }
-
-    private static bool TryGet(JsonElement root, out JsonElement value, params string[] names)
-    {
-        if (root.ValueKind != JsonValueKind.Object)
-        {
-            value = default;
-            return false;
-        }
-
-        foreach (var name in names)
-            if (root.TryGetProperty(name, out value)) return true;
-        foreach (var property in root.EnumerateObject())
-            if (names.Any(x => property.Name.Equals(x, StringComparison.OrdinalIgnoreCase)))
-            {
-                value = property.Value;
-                return true;
-            }
-        value = default;
-        return false;
-    }
-
-    private static IEnumerable<Match> RegexMatches(string input, string pattern)
-    {
-        foreach (Match match in Regex.Matches(input, pattern, RegexOptions.IgnoreCase))
-            yield return match;
-    }
-
-    private static string NormalizeCode(string? value) => (value ?? "").Trim().ToUpperInvariant();
-
-    private static bool TrySetValue(IRfcFunction function, string name, object value)
-    {
-        try
-        {
-            function.SetValue(name, value);
-            return true;
-        }
-        catch
-        {
-            return false;
-        }
-    }
-
-    private static string DescribeFunctionParameters(IRfcFunction function)
-    {
-        try
-        {
-            var names = new List<string>();
-            var metadata = function.Metadata;
-            for (int i = 0; i < metadata.ParameterCount; i++)
-                names.Add(metadata[i].Name);
-            return string.Join(",", names);
-        }
-        catch
-        {
-            return "unavailable";
-        }
-    }
-
-    private static string FirstNonEmpty(params string?[] values)
-    {
-        foreach (string? value in values)
-            if (!string.IsNullOrWhiteSpace(value))
-                return value;
-        return "";
-    }
-
-    private static string ExceptionChain(Exception ex)
-    {
-        var parts = new List<string>();
-        for (Exception? current = ex; current != null; current = current.InnerException)
-            parts.Add($"{current.GetType().Name}: {current.Message}");
-        return string.Join(" -> ", parts);
-    }
-}
-
 internal sealed class Zfi019NlMemoryFetcher
 {
     public const string FinalMaterialColumn = "入库料号";
@@ -852,11 +407,6 @@ internal sealed class Zfi019NlMemoryFetcher
 
     private const string SapApiGatewayFunctionName = "ZFI_SAP_API_GATEWAY";
     private const string ReportSource = "ZFI019NL";
-
-    private static readonly HashSet<string> SpecialBusinessAreas = new(StringComparer.OrdinalIgnoreCase)
-    {
-        "0162", "7700", "7800", "7600", "1070", "0500", "7900"
-    };
 
     private static readonly string[] BusinessAreaNames = { "GSBER", "S_GSBER", "业务范围" };
     private static readonly string[] PostingDateNames = { "S_BUDAT", "BUDAT", "过账日期" };
@@ -941,13 +491,17 @@ internal sealed class Zfi019NlMemoryFetcher
                 };
             }
 
-            var processed = FilterAndProject(table, request);
+            var dongtai = ResolveDongtaiBusinessAreas(connectionConfig, request, table);
+            if (!dongtai.Success)
+                return Error(4, dongtai.Message, "RFC_READ_TABLE", options);
+
+            var processed = FilterAndProject(table, request, dongtai.BusinessAreas);
             if (!processed.Reliable)
             {
                 return new Zfi019NlFetchResult
                 {
                     Subrc = 4,
-                    Message = processed.Message,
+                    Message = JoinMessages(dongtai.Message, processed.Message),
                     ActualMethod = actualMethod,
                     Options = options,
                     RawLines = lines,
@@ -958,7 +512,7 @@ internal sealed class Zfi019NlMemoryFetcher
 
             var finalRows = processed.FinalRows;
             var splitRows = new List<Dictionary<string, string>>();
-            var split = AppendDongtaiSplitMaterials(destination, request, table, finalRows, splitRows);
+            var split = AppendDongtaiSplitMaterials(destination, request, dongtai.HasDongtai, finalRows, splitRows);
             if (!split.Success)
             {
                 return new Zfi019NlFetchResult
@@ -981,7 +535,7 @@ internal sealed class Zfi019NlMemoryFetcher
             {
                 Success = finalRows.Count > 0,
                 Subrc = finalRows.Count > 0 ? 0 : 4,
-                Message = finalRows.Count > 0 ? JoinMessages(innerMsg, processed.Message, split.Message) : "没有可用的 MATNR/入库料号结果。",
+                Message = finalRows.Count > 0 ? JoinMessages(innerMsg, dongtai.Message, processed.Message, split.Message) : "没有可用的 MATNR/入库料号结果。",
                 ActualMethod = actualMethod,
                 Options = options,
                 RawLines = lines,
@@ -1123,23 +677,26 @@ internal sealed class Zfi019NlMemoryFetcher
     }
 
     private static (bool Reliable, string Message, List<Dictionary<string, string>> AlvRows, List<Dictionary<string, string>> FinalRows)
-        FilterAndProject((List<string> Headers, List<string[]> Rows, List<string> Warnings) table, Zfi019NlFetchRequest request)
+        FilterAndProject(
+            (List<string> Headers, List<string[]> Rows, List<string> Warnings) table,
+            Zfi019NlFetchRequest request,
+            IReadOnlySet<string> dongtaiBusinessAreas)
     {
         var areaIndex = FindColumn(table.Headers, BusinessAreaNames);
         var inboundIndex = FindInboundMaterialColumn(table.Headers);
         var productIndex = FindProductMaterialColumn(table.Headers, inboundIndex);
         var requestedAreas = request.Conditions.Where(x => IsBusinessArea(x.Selname)).Select(x => Normalize(x.Low)).Where(x => x.Length > 0).ToList();
         if (requestedAreas.Count == 0) requestedAreas.AddRange(request.BusinessAreas.Select(Normalize).Where(x => x.Length > 0));
-        var specialRequested = requestedAreas.Any(SpecialBusinessAreas.Contains);
-        var normalRequested = requestedAreas.Any(x => !SpecialBusinessAreas.Contains(x));
+        var dongtaiRequested = requestedAreas.Any(dongtaiBusinessAreas.Contains);
+        var normalRequested = requestedAreas.Any(x => !dongtaiBusinessAreas.Contains(x));
         var uncertainScope = request.Conditions.Where(x => IsBusinessArea(x.Selname)).Any(x => !IsExactIncluded(x));
 
         if (inboundIndex < 0) return (false, "没有 MATNR/入库料号字段。", new(), new());
-        if (productIndex < 0 && (specialRequested || (areaIndex >= 0 && table.Rows.Any(x => areaIndex < x.Length && SpecialBusinessAreas.Contains(Normalize(x[areaIndex]))))))
-            return (false, "特殊业务范围缺少 SMATNR/所属成品字段。", new(), new());
+        if (productIndex < 0 && (dongtaiRequested || (areaIndex >= 0 && table.Rows.Any(x => areaIndex < x.Length && dongtaiBusinessAreas.Contains(Normalize(x[areaIndex]))))))
+            return (false, "东台业务范围缺少 SMATNR/所属成品字段。", new(), new());
         if (areaIndex < 0 && requestedAreas.Count == 0)
             return (false, "ALV 没有 GSBER，且没有显式 S_GSBER，无法确认变式中的业务范围。", new(), new());
-        if (areaIndex < 0 && (uncertainScope || (specialRequested && normalRequested)))
+        if (areaIndex < 0 && (uncertainScope || (dongtaiRequested && normalRequested)))
             return (false, "ALV 没有 GSBER，S_GSBER 范围不明确，拒绝猜测过滤结果。", new(), new());
 
         var alvRows = new List<Dictionary<string, string>>();
@@ -1148,8 +705,8 @@ internal sealed class Zfi019NlMemoryFetcher
         {
             var keep = true;
             var area = areaIndex >= 0 ? Normalize(values[areaIndex]) : "";
-            if (areaIndex >= 0 && SpecialBusinessAreas.Contains(area)) keep = Normalize(values[productIndex]).StartsWith("800", StringComparison.OrdinalIgnoreCase);
-            else if (areaIndex < 0 && specialRequested) keep = Normalize(values[productIndex]).StartsWith("800", StringComparison.OrdinalIgnoreCase);
+            if (areaIndex >= 0 && dongtaiBusinessAreas.Contains(area)) keep = Normalize(values[productIndex]).StartsWith("800", StringComparison.OrdinalIgnoreCase);
+            else if (areaIndex < 0 && dongtaiRequested) keep = Normalize(values[productIndex]).StartsWith("800", StringComparison.OrdinalIgnoreCase);
             if (!keep) continue;
 
             var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1163,17 +720,17 @@ internal sealed class Zfi019NlMemoryFetcher
             AddFinalMaterial(finalRows, values[inboundIndex], ReportSource);
         }
 
-        return (true, $"S_GSBER={string.Join(",", requestedAreas)};特殊范围过滤={(specialRequested ? "SMATNR 800*" : "无")}", alvRows, finalRows);
+        return (true, $"S_GSBER={string.Join(",", requestedAreas)};东台范围过滤={(dongtaiRequested ? "SMATNR 800*" : "无")}", alvRows, finalRows);
     }
 
     private static (bool Success, string Message) AppendDongtaiSplitMaterials(
         RfcDestination destination,
         Zfi019NlFetchRequest request,
-        (List<string> Headers, List<string[]> Rows, List<string> Warnings) table,
+        bool isDongtai,
         List<Dictionary<string, string>> finalRows,
         List<Dictionary<string, string>> splitRows)
     {
-        if (!ShouldReadDongtaiSplit(request, table)) return (true, "");
+        if (!isDongtai) return (true, "");
 
         var dateRanges = GetPostingDateRanges(request);
         if (!dateRanges.Success)
@@ -1243,18 +800,73 @@ internal sealed class Zfi019NlMemoryFetcher
         }
     }
 
-    private static bool ShouldReadDongtaiSplit(Zfi019NlFetchRequest request, (List<string> Headers, List<string[]> Rows, List<string> Warnings) table)
+    private sealed class DongtaiBusinessAreaResolution
     {
-        var customDongtaiAreas = request.DongtaiBusinessAreas.Select(Normalize).Where(x => x.Length > 0).ToList();
-        var dongtaiAreas = customDongtaiAreas.Count > 0
-            ? new HashSet<string>(customDongtaiAreas, StringComparer.OrdinalIgnoreCase)
-            : SpecialBusinessAreas;
-
-        if (GetRequestedBusinessAreas(request).Any(dongtaiAreas.Contains)) return true;
-
-        var areaIndex = FindColumn(table.Headers, BusinessAreaNames);
-        return areaIndex >= 0 && table.Rows.Any(row => areaIndex < row.Length && dongtaiAreas.Contains(Normalize(row[areaIndex])));
+        public bool Success { get; init; }
+        public string Message { get; init; } = "";
+        public HashSet<string> BusinessAreas { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+        public bool HasDongtai => BusinessAreas.Count > 0;
     }
+
+    private static DongtaiBusinessAreaResolution ResolveDongtaiBusinessAreas(
+        SapNcoConnectionConfig connectionConfig,
+        Zfi019NlFetchRequest request,
+        (List<string> Headers, List<string[]> Rows, List<string> Warnings) table)
+    {
+        var businessAreas = new HashSet<string>(GetRequestedBusinessAreas(request), StringComparer.OrdinalIgnoreCase);
+        var areaIndex = FindColumn(table.Headers, BusinessAreaNames);
+        if (areaIndex >= 0)
+        {
+            foreach (var row in table.Rows)
+            {
+                if (areaIndex < row.Length)
+                {
+                    string area = Normalize(row[areaIndex]);
+                    if (area.Length > 0) businessAreas.Add(area);
+                }
+            }
+        }
+
+        if (businessAreas.Count == 0)
+        {
+            return new DongtaiBusinessAreaResolution
+            {
+                Message = "无法从 S_GSBER 或 ZFI019NL ALV 识别业务范围，不能判定是否为东台范围。"
+            };
+        }
+
+        var dongtaiAreas = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var summaries = new List<string>();
+        var mappingFetcher = new AlvOrganizationMappingFetcher();
+        foreach (string businessArea in businessAreas.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+        {
+            AlvOrganizationMappingResult mapping = mappingFetcher.Fetch(
+                connectionConfig,
+                AlvOrganizationMappingKind.BusinessArea,
+                businessArea);
+            if (!mapping.Success)
+            {
+                return new DongtaiBusinessAreaResolution
+                {
+                    Message = $"东台范围判定失败：{mapping.Message}"
+                };
+            }
+
+            bool isDongtai = mapping.ZsbuValues.Any(IsDongtaiZsbuDescription);
+            if (isDongtai) dongtaiAreas.Add(businessArea);
+            summaries.Add($"{businessArea}={(isDongtai ? "东台" : "非东台")}");
+        }
+
+        return new DongtaiBusinessAreaResolution
+        {
+            Success = true,
+            Message = $"ZTFI48A 东台判定：{string.Join(",", summaries)}",
+            BusinessAreas = dongtaiAreas
+        };
+    }
+
+    internal static bool IsDongtaiZsbuDescription(string? value)
+        => (value ?? "").Contains("东台", StringComparison.Ordinal);
 
     private static List<string> GetRequestedBusinessAreas(Zfi019NlFetchRequest request)
     {

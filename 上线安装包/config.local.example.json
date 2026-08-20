@@ -5,7 +5,6 @@
     "alvExportStagingDirectory": "D:\\RPA\\临时文件\\ALV本地暂存"
   },
   "dingTalkOpenApi": {
-    "baseUrl": "https://你的钉钉OpenAPI网关根地址/",
     "appKey": "你的真实AppKey",
     "appSecret": "你的真实AppSecret",
     "agentId": "你的真实AgentId"
@@ -18,7 +17,6 @@
     "router": ""
   },
   "zfi057Workflow": {
-    "gs03SetName": "Z31",
     "zfi019nlMemory": {
       "report": "ZFI019NL",
       "memoryId": "%ZFI019NA%",
@@ -26,8 +24,7 @@
       "spoolDevice": "LP01",
       "waitSeconds": 60,
       "splitTable": "ZFI_SPLIT",
-      "splitBukrs": "2030",
-      "dongtaiBusinessAreas": ["0162", "7700", "7800", "7600", "1070", "0500", "7900"]
+      "splitBukrs": "2030"
     }
   }
 }

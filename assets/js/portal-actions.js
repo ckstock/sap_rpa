@@ -3,8 +3,12 @@
       document.querySelectorAll("[data-config-tab]").forEach(btn => btn.addEventListener("click", () => { state.activeConfigTab = btn.dataset.configTab; render(); }));
       document.querySelectorAll("[data-bind]").forEach(input => {
         const update = () => {
+          if (input.dataset.bind === "tCode") {
+            updateExecutionTCode(input.value);
+            return;
+          }
           state.form[input.dataset.bind] = input.value;
-          if (input.dataset.bind === "tCode" || input.dataset.bind === "factoryGroup") {
+          if (input.dataset.bind === "factoryGroup") {
             syncExecutionDefaults(true);
             render();
           }
@@ -80,12 +84,26 @@
       const scheduleName = document.getElementById("scheduleName");
       if (scheduleName) scheduleName.addEventListener("input", () => {
         state.scheduleForm.name = scheduleName.value;
-        state.scheduleForm.nameEdited = scheduleName.value.trim() !== defaultScheduleName(state.scheduleForm.tCode);
+        state.scheduleForm.nameEdited = scheduleName.value.trim() !== defaultScheduleName(state.scheduleForm.tCode, state.scheduleForm.runStrategy);
       });
       const scheduleTime = document.getElementById("scheduleTime");
       if (scheduleTime) scheduleTime.addEventListener("input", () => { state.scheduleForm.execTime = scheduleTime.value; });
       const scheduleFrequency = document.getElementById("scheduleFrequency");
-      if (scheduleFrequency) scheduleFrequency.addEventListener("change", () => { state.scheduleForm.frequency = scheduleFrequency.value; });
+      if (scheduleFrequency) scheduleFrequency.addEventListener("change", () => {
+        state.scheduleForm.frequency = scheduleFrequency.value;
+        const frequencyCode = scheduleFrequencyCode(state.scheduleForm.frequency);
+        if (frequencyCode === "weekly" || frequencyCode === "monthly") {
+          state.scheduleForm.weekday = normalizeScheduleWeekday(state.scheduleForm.weekday, "monday");
+        } else {
+          state.scheduleForm.weekday = "";
+        }
+        render();
+      });
+      const scheduleWeekday = document.getElementById("scheduleWeekday");
+      if (scheduleWeekday) scheduleWeekday.addEventListener("change", () => {
+        const frequencyCode = scheduleFrequencyCode(state.scheduleForm.frequency);
+        state.scheduleForm.weekday = normalizeScheduleWeekday(scheduleWeekday.value, frequencyCode === "weekly" ? "monday" : "");
+      });
       const scheduleEnabled = document.getElementById("scheduleEnabled");
       if (scheduleEnabled) scheduleEnabled.addEventListener("change", () => { state.scheduleForm.enabled = scheduleEnabled.checked; });
       const scheduleUseTestDateOverride = document.getElementById("scheduleUseTestDateOverride");
@@ -152,17 +170,102 @@
       document.querySelectorAll("[data-action]").forEach(el => el.addEventListener("click", () => handleAction(el)));
     }
 
-    function defaultScheduleName(tCode) {
-      const t = getTCode(tCode);
-      return `${t.code} - ${t.name}`;
+    function normalizeZco019ScheduleRunStrategy(value) {
+      const strategy = String(value || "").trim().toLowerCase();
+      return strategy === "detail" || strategy === "summary" ? strategy : "";
     }
 
-    function updateScheduleTCode(tCode) {
+    function getScheduleTCodeSelection(value) {
+      const option = String(value || "").trim();
+      const zco019Mode = /^ZCO019:(detail|summary|legacy)$/i.exec(option);
+      if (zco019Mode) {
+        return {
+          tCode: "ZCO019",
+          runStrategy: zco019Mode[1].toLowerCase() === "legacy" ? "" : zco019Mode[1].toLowerCase()
+        };
+      }
+      return { tCode: option.toUpperCase(), runStrategy: "" };
+    }
+
+    function getScheduleTCodeSelectionValue(tCode, runStrategy) {
+      if (String(tCode || "").trim().toUpperCase() !== "ZCO019") return String(tCode || "").trim().toUpperCase();
+      const strategy = normalizeZco019ScheduleRunStrategy(runStrategy);
+      return `ZCO019:${strategy || "legacy"}`;
+    }
+
+    function getScheduleTransactionOptions() {
+      const showLegacyZco019 = String(state.scheduleForm.tCode || "").toUpperCase() === "ZCO019" &&
+        !normalizeZco019ScheduleRunStrategy(state.scheduleForm.runStrategy);
+      return dashboardExecutableTCodes().flatMap(tCode => {
+        if (tCode.code !== "ZCO019") {
+          return [{ value: tCode.code, tCode: tCode.code, runStrategy: "", label: `${tCode.code} - ${tCode.name}` }];
+        }
+        const options = [];
+        if (showLegacyZco019) {
+          options.push({ value: "ZCO019:legacy", tCode: "ZCO019", runStrategy: "", label: "ZCO019 - 标准材料成本（明细 + 汇总，旧任务）" });
+        }
+        options.push(
+          { value: "ZCO019:detail", tCode: "ZCO019", runStrategy: "detail", label: "ZCO019 - 标准材料成本（明细保存）" },
+          { value: "ZCO019:summary", tCode: "ZCO019", runStrategy: "summary", label: "ZCO019 - 标准材料成本（汇总保存）" }
+        );
+        return options;
+      });
+    }
+
+    function getExecutionTCodeSelection(value) {
+      const option = String(value || "").trim();
+      const zco019Mode = /^ZCO019:(detail|summary)$/i.exec(option);
+      if (zco019Mode) {
+        return { tCode: "ZCO019", runStrategy: zco019Mode[1].toLowerCase() };
+      }
+      return { tCode: option.toUpperCase(), runStrategy: "" };
+    }
+
+    function getExecutionTCodeSelectionValue(tCode, runStrategy) {
+      if (String(tCode || "").trim().toUpperCase() !== "ZCO019") return String(tCode || "").trim().toUpperCase();
+      return `ZCO019:${normalizeZco019ScheduleRunStrategy(runStrategy) || "detail"}`;
+    }
+
+    function getExecutionTransactionOptions() {
+      return dashboardExecutableTCodes().flatMap(tCode => {
+        if (tCode.code !== "ZCO019") {
+          return [{ value: tCode.code, tCode: tCode.code, runStrategy: "", label: `${tCode.code} - ${tCode.name}` }];
+        }
+        return [
+          { value: "ZCO019:detail", tCode: "ZCO019", runStrategy: "detail", label: "ZCO019 - 标准材料成本（明细保存）" },
+          { value: "ZCO019:summary", tCode: "ZCO019", runStrategy: "summary", label: "ZCO019 - 标准材料成本（汇总保存）" }
+        ];
+      });
+    }
+
+    function updateExecutionTCode(value) {
+      const selection = getExecutionTCodeSelection(value);
+      state.form.tCode = selection.tCode;
+      state.form.runStrategy = selection.runStrategy;
+      syncExecutionDefaults(true);
+      render();
+    }
+
+    function defaultScheduleName(tCode, runStrategy = "") {
+      const t = getTCode(tCode) || { code: tCode, name: "" };
+      const strategy = normalizeZco019ScheduleRunStrategy(runStrategy);
+      const modeLabel = t.code === "ZCO019" && strategy === "detail"
+        ? "（明细保存）"
+        : t.code === "ZCO019" && strategy === "summary"
+          ? "（汇总保存）"
+          : "";
+      return `${t.code} - ${t.name}${modeLabel}`;
+    }
+
+    function updateScheduleTCode(value) {
+      const selection = getScheduleTCodeSelection(value);
+      const tCode = selection.tCode;
       state.scheduleForm.tCode = tCode;
+      state.scheduleForm.runStrategy = selection.runStrategy;
       state.scheduleForm.plants = getRuleRangeKind(getTCode(tCode)) === "dateRange" ? [] : getDefaultRunRangeForTCode(tCode, state.scheduleForm.factoryGroup);
       if (!usesExecutionDateParams(tCode)) state.scheduleForm.useTestDateOverride = false;
       if (!state.scheduleForm.nameEdited) {
-        state.scheduleForm.name = defaultScheduleName(tCode);
+        state.scheduleForm.name = defaultScheduleName(tCode, selection.runStrategy);
       }
       render();
     }
@@ -176,7 +279,7 @@
     function handleAction(el) {
       const action = el.dataset.action;
       if (action === "toggle-role") return toggleRole();
-      if (action === "go-execute") return goExecute(el.dataset.tcode);
+      if (action === "go-execute") return goExecute(el.dataset.tcode, el.dataset.runStrategy || "");
       if (action === "wake-protocol") return wakeProtocol();
       if (action === "start-run") return startRun();
       if (action === "select-factory-group") {
@@ -224,14 +327,19 @@
       const task = id ? scheduleTasks.find(item => item.id === id) : null;
       if (task) {
         const testDateState = getTestDateFormStateFromParams(task.tCode, task.params || {});
+        const taskFrequency = scheduleFrequencyCode(task.frequencyCode || task.frequency);
         state.scheduleForm = {
           id: task.id,
           name: task.name,
           tCode: task.tCode,
+          runStrategy: task.tCode === "ZCO019" ? normalizeZco019ScheduleRunStrategy(task.params?.runStrategy) : "",
           factoryGroup: task.factoryGroup || getTCode(task.tCode)?.defaultPlantGroup || factoryGroups[0]?.id || "",
           plants: getScheduleRangeValuesForTask(task),
-          execTime: task.time || "08:00",
-          frequency: scheduleFrequencyCode(task.frequencyCode || task.frequency),
+          execTime: task.time || "20:00",
+          frequency: taskFrequency,
+          weekday: taskFrequency === "weekly" || taskFrequency === "monthly"
+            ? normalizeScheduleWeekday(task.weekday || task.weekDay || task.dayOfWeek || task.scheduleWeekday || task.frequency, taskFrequency === "weekly" ? "monday" : "")
+            : "",
           notifyStart: task.notifyStart !== false,
           notifySuccess: task.notifySuccess !== false,
           notifyFail: task.notifyFail !== false,
@@ -247,16 +355,19 @@
         };
       } else {
         const tCode = state.scheduleForm.tCode || tCodes[0]?.code || "";
+        const runStrategy = tCode === "ZCO019" ? normalizeZco019ScheduleRunStrategy(state.scheduleForm.runStrategy) : "";
         const defaultGroup = getTCode(tCode)?.defaultPlantGroup || state.scheduleForm.factoryGroup || factoryGroups[0]?.id || "";
         const testDateState = getDefaultTestDateFormState();
         state.scheduleForm = {
           id: "",
-          name: defaultScheduleName(tCode),
+          name: defaultScheduleName(tCode, runStrategy),
           tCode,
+          runStrategy,
           factoryGroup: defaultGroup,
           plants: getRuleRangeKind(getTCode(tCode)) === "dateRange" ? [] : getDefaultRunRangeForTCode(tCode, defaultGroup),
-          execTime: state.scheduleForm.execTime || "08:00",
+          execTime: "20:00",
           frequency: state.scheduleForm.frequency || "weekly",
+          weekday: "monday",
           notifyStart: true,
           notifySuccess: true,
           notifyFail: true,
@@ -294,11 +405,11 @@
         const payload = buildScheduleConfigPayload();
         if (!payload.tCode) throw new Error("缺少事务码");
         if (!payload.factoryGroup) throw new Error("缺少业务范围");
-        await saveScheduleTask(payload);
+        const savedTask = await saveScheduleTask(payload);
         state.modal = null;
         await refreshConfigData({ silent: true });
-        if (!scheduleTasks.some(item => item.id === payload.id)) {
-          upsertScheduleTaskLocal(payload);
+        if (savedTask && !scheduleTasks.some(item => item.id === savedTask.id)) {
+          upsertScheduleTaskLocal(savedTask);
         }
         toast("定时任务已保存并刷新列表", "ok");
         render();
@@ -308,34 +419,20 @@
     }
 
     async function saveScheduleTask(payload) {
-      try {
-        await bridgeFetch(CONFIG_API_PATHS.schedules(payload.id), {
+      if (payload.id) {
+        const response = await bridgeFetch(CONFIG_API_PATHS.schedules(payload.id), {
           method: "PUT",
           body: JSON.stringify(payload)
         });
-        return;
-      } catch (err) {
-        if (!/404|not found/i.test(err.message || "")) throw err;
+        return normalizeScheduleTaskFromApi(response?.schedule || { ...payload, id: response?.id || payload.id });
       }
-      const currentConfig = await bridgeFetch(CONFIG_API_PATHS.root);
-      const currentSchedules = Array.isArray(currentConfig.scheduleTasks)
-        ? currentConfig.scheduleTasks
-        : Array.isArray(currentConfig.schedules)
-          ? currentConfig.schedules
-          : Array.isArray(currentConfig.scheduledTasks)
-            ? currentConfig.scheduledTasks
-            : scheduleTasks;
-      const nextSchedules = currentSchedules.filter(item => String(item.id || item.taskId || item.scheduleId || "") !== payload.id);
-      nextSchedules.push(payload);
-      await bridgeFetch(CONFIG_API_PATHS.root, {
+
+      const { id, ...createPayload } = payload;
+      const response = await bridgeFetch(CONFIG_API_PATHS.schedulesRoot || "/api/schedules", {
         method: "POST",
-        body: JSON.stringify({
-          ...currentConfig,
-          scheduleTasks: nextSchedules,
-          schedules: nextSchedules,
-          scheduledTasks: nextSchedules
-        })
+        body: JSON.stringify(createPayload)
       });
+      return normalizeScheduleTaskFromApi(response?.schedule || { ...payload, id: response?.id || "" });
     }
 
     async function deleteScheduleTaskFromList(id) {
@@ -347,15 +444,16 @@
 
       const task = scheduleTasks.find(item => item.id === id);
       const label = task ? `${task.name || id}（${task.tCode || "-"}）` : id;
-      if (!window.confirm(`确认彻底删除定时任务 ${label}？\n删除后 schedule_tasks 中这条配置会被移除，已产生的执行 run 历史保留。`)) {
+      if (!window.confirm(`确认彻底删除定时任务 ${label}？\n删除后会同步清理尚未开始的排队 run；已运行或已完成的 run 历史保留。`)) {
         return;
       }
 
       try {
-        await bridgeFetch(CONFIG_API_PATHS.schedules(id), { method: "DELETE" });
+        const response = await bridgeFetch(CONFIG_API_PATHS.schedules(id), { method: "DELETE" });
         scheduleTasks = scheduleTasks.filter(item => item.id !== id);
         await refreshConfigData({ silent: true });
-        toast("定时任务已删除", "ok");
+        const removedQueuedRuns = Math.max(0, Number(response?.removedQueuedRuns || 0));
+        toast(removedQueuedRuns > 0 ? `定时任务已删除，已同步移除 ${removedQueuedRuns} 个排队任务` : "定时任务已删除", "ok");
         render();
       } catch (err) {
         toast("定时任务删除失败：" + err.message, "err");
@@ -535,8 +633,8 @@
       };
     }
 
-    function buildExistingTransactionPayload(code) {
-      const existing = tCodes.find(item => item.code === code) || {};
+    function buildExistingTransactionPayload(code, preferredSource = tCodes) {
+      const existing = preferredSource.find(item => item.code === code) || tCodes.find(item => item.code === code) || {};
       const plantsValue = toArray(existing.plants).length ? toArray(existing.plants) : toArray(existing.fixedPlants);
       return {
         code,
@@ -590,7 +688,7 @@
 
     function buildRuleConfigPayload(mode, id) {
       const code = (mode === "edit" ? id : readInputValue("cfgRuleCode")).toUpperCase();
-      const payload = buildExistingTransactionPayload(code);
+      const payload = buildExistingTransactionPayload(code, transactionRules);
       const rangeValue = normalizeRulePlantList(readInputValue("cfgRulePlants"));
       const rangeKind = getRuleRangeKind({ ...payload, code });
       const isBusinessAreaRange = rangeKind === "businessArea";
@@ -679,10 +777,10 @@
       return fallbackId;
     }
 
-    function getConfigResourcePath(kind, id) {
+    function getConfigResourcePath(kind, id, deleting = false) {
       if (kind === "plant") return CONFIG_API_PATHS.plants(id);
       if (kind === "group") return CONFIG_API_PATHS.plantGroups(id);
-      if (kind === "tcode") return CONFIG_API_PATHS.transactionRules(id);
+      if (kind === "tcode") return deleting ? CONFIG_API_PATHS.transactions(id) : CONFIG_API_PATHS.transactionRules(id);
       if (kind === "rule") return CONFIG_API_PATHS.transactionRules(id);
       if (kind === "robot") return CONFIG_API_PATHS.notificationRobots(id);
       throw new Error("未知配置类型：" + kind);
@@ -710,13 +808,33 @@
     async function deleteConfigItem(kind, id) {
       if (!canWriteConfig()) return toast("当前 API 未连接，不能删除基础配置；请启动本机 API 后刷新再删除", "warn");
       if (!id) return toast("缺少配置主键，无法删除", "warn");
+      const labels = { plant: "工厂", group: "业务范围", tcode: "事务码", rule: "事务码规则", robot: "通知机器人" };
+      if (!window.confirm(`确认删除${labels[kind] || "该配置"} ${id}？删除后会立即从页面移除。`)) return;
       try {
-        await bridgeFetch(getConfigResourcePath(kind, id), { method: "DELETE" });
+        await bridgeFetch(getConfigResourcePath(kind, id, true), { method: "DELETE" });
+        removeDeletedConfigFromPage(kind, id);
+        render();
         await refreshConfigData({ silent: true });
         toast("基础配置已删除", "ok");
         render();
       } catch (err) {
         toast("删除失败：" + err.message, "err");
+      }
+    }
+
+    function removeDeletedConfigFromPage(kind, id) {
+      if (kind === "plant") {
+        plants = plants.filter(item => item.code !== id);
+        delete plantCatalog[id];
+      } else if (kind === "group") {
+        factoryGroups = factoryGroups.filter(item => item.id !== id);
+      } else if (kind === "tcode") {
+        tCodes = tCodes.filter(item => item.code !== id);
+        transactionRules = transactionRules.filter(item => item.code !== id);
+      } else if (kind === "rule") {
+        transactionRules = transactionRules.filter(item => item.code !== id);
+      } else if (kind === "robot") {
+        robots = robots.filter(item => item.id !== id);
       }
     }
 
@@ -749,9 +867,15 @@
       render();
     }
 
-    function goExecute(tCode) {
-      state.form.tCode = tCode;
-      state.selectedTCode = tCode;
+    function goExecute(tCode, runStrategy = "") {
+      const selection = getExecutionTCodeSelection(
+        String(tCode || "").trim().toUpperCase() === "ZCO019"
+          ? getExecutionTCodeSelectionValue(tCode, runStrategy)
+          : tCode
+      );
+      state.form.tCode = selection.tCode;
+      state.form.runStrategy = selection.runStrategy;
+      state.selectedTCode = selection.tCode;
       syncExecutionDefaults(true);
       state.page = "execute";
       render();
@@ -999,7 +1123,11 @@
         week: dateOverride?.week || "",
         dateRangeSource: dateOverride ? "testOverride" : "server",
         rangeKind: isDateRange ? "dateRange" : (isBusinessAreaRange ? "businessArea" : "plant"),
-        runStrategy: state.form.tCode === "ZFI057" ? "auto3step" : "",
+        runStrategy: state.form.tCode === "ZFI057"
+          ? "auto3step"
+          : state.form.tCode === "ZCO019"
+            ? normalizeZco019ScheduleRunStrategy(state.form.runStrategy)
+            : "",
         rangeLabel,
         rangeValues,
         rangeCsv: rangeValues.join(","),
@@ -1066,16 +1194,57 @@
       if (state.logs.length > 80) state.logs.shift();
     }
 
-    function exportHistory() {
-      const rows = [["执行时间","任务名称","事务码","工厂","时长","状态","通知","结果摘要"], ...history.map(x => [x.time, x.task, x.tCode, x.plant, x.duration, x.status, x.notify, x.result])];
-      const csv = rows.map(row => row.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(",")).join("\n");
-      const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
-      const link = document.createElement("a");
-      link.href = URL.createObjectURL(blob);
-      link.download = "sap-rpa-history.csv";
-      link.click();
-      URL.revokeObjectURL(link.href);
-      toast("执行历史已导出", "ok");
+    function exportHistoryRowValue(value) {
+      return String(value ?? "").replace(/"/g, '""');
+    }
+
+    async function loadAllRunsForExport(range) {
+      const rows = [];
+      const pageSize = 200;
+      let offset = 0;
+      while (true) {
+        const runData = await bridgeFetch(buildRunsQuery({ limit: pageSize, offset, ...range }));
+        const page = Array.isArray(runData.runs) ? runData.runs.map(normalizeRunFromApi) : [];
+        rows.push(...page);
+        if (page.length < pageSize) break;
+        offset += pageSize;
+      }
+      return rows;
+    }
+
+    async function exportHistory() {
+      try {
+        const range = getReportRangeFromInputs();
+        const rows = state.bridge.online ? await loadAllRunsForExport(range) : history.slice();
+        const csvRows = [
+          ["任务ID","执行时间","任务名称","事务码","工厂","工厂入参","业务范围入参","业务范围组","执行参数","时长","状态","通知","结果摘要"],
+          ...rows.map(x => [
+            x.id,
+            x.time,
+            x.task,
+            x.tCode,
+            x.plant || "",
+            x.plantsCsv || x.plant || "",
+            x.businessAreasCsv || x.businessAreas || "",
+            x.factoryGroup || "",
+            JSON.stringify(x.runParams || {}),
+            x.duration,
+            x.status,
+            x.notify,
+            x.result
+          ])
+        ];
+        const csv = csvRows.map(row => row.map(cell => `"${exportHistoryRowValue(cell)}"`).join(",")).join("\n");
+        const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.download = "sap-rpa-history.csv";
+        link.click();
+        URL.revokeObjectURL(link.href);
+        toast(`执行历史已导出${rows.length ? `（${rows.length} 条）` : ""}`, "ok");
+      } catch (err) {
+        toast("导出报表失败：" + (err?.message || "未知错误"), "err");
+      }
     }
 
     function nowTime() {

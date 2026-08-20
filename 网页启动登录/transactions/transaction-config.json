@@ -11,7 +11,7 @@
                              "params":  [
                                             "year",
                                             "week",
-                                            "plants"
+                                            "businessAreas"
                                         ],
                              "factoryRule":  "先四个集采工厂，再其他工厂",
                              "defaultPlantGroup":  "PINGHU_ALL",
@@ -77,7 +77,7 @@
                                             "period",
                                             "weekEnd"
                                         ],
-                             "factoryRule":  "本规则仅维护默认业务范围；执行工厂运行时由 SAP 集 Z31 的 GET_GS03 按业务范围解析，不能在此配置或用本地工厂覆盖。",
+                             "factoryRule":  "本规则仅维护默认业务范围；执行工厂运行时由 SAP 表 ZFIT_RPA_BUKRS 按 GSBER 查询 WERKS，多个工厂逐个执行，不能在此配置或用本地工厂覆盖。",
                              "defaultPlantGroup":  "PINGHU_ALL",
                              "automation":  "script",
                              "timeoutSeconds":  1800,
@@ -182,9 +182,9 @@
                              "script":  "ZFI019NA.vbs",
                              "icon":  "file-spreadsheet",
                              "params":  [
-                                            "plants"
+                                            "businessAreas"
                                         ],
-                             "factoryRule":  "东台、黄江等范围保存",
+                             "factoryRule":  "按业务范围保存",
                              "defaultPlantGroup":  "PINGHU_ALL",
                              "automation":  "script",
                              "timeoutSeconds":  600,

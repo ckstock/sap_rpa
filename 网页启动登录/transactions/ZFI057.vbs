@@ -1,8 +1,8 @@
 ' @tcode=ZFI057
 ' @name=ZFI057 value split
 ' @params=plants,businessAreas,period,weekEnd
-' @dateRule=LAST_FULL_WEEK_BY_SYSTEM_DATE_WITH_CROSS_MONTH_SPLIT
-' @factoryRule=business area maps to plant through ZFI_SAP_API_GATEWAY GET_GS03; material list comes from ZFI019NL and ZFI_SPLIT upstream data
+' @dateRule=RELEASE_COST_MONTH_WITH_CROSS_MONTH_SPLIT
+' @factoryRule=business area maps to one or more plants through ZFIT_RPA_BUKRS GSBER/WERKS; backend invokes this script once per mapped plant
 '
 ' Standardized for SapWebLauncher. Source is ASCII/WSH safe.
 
@@ -16,7 +16,9 @@ Dim SapGuiAuto, application, connection, session
 Dim retries, sleepMs, statusType, statusText
 Dim runCount, i
 Dim zfi057WindowSuccessCount, zfi057WindowNoDataCount
-Dim kadkyLow(2), kadkyHigh(2), kadatLow(2), kadatHigh(2)
+Dim kadkyLow(3), kadkyHigh(3), kadatLow(3), kadatHigh(3)
+Dim alvExportDir, alvExportFilename, scriptDir, exportTimeoutMs, alvHelperLoaded
+Dim unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
 
 tcode = "{OK_CODE}"
 plantsCsv = "{PLANTS}"
@@ -31,6 +33,13 @@ field1Name = "{FIELD1_NAME}"
 field1Value = "{FIELD1_VALUE}"
 field2Name = "{FIELD2_NAME}"
 field2Value = "{FIELD2_VALUE}"
+alvExportDir = "{ALV_EXPORT_DIR}"
+alvExportFilename = "{ALV_EXPORT_FILENAME}"
+scriptDir = "{SCRIPT_DIR}"
+exportTimeoutMs = 180000
+alvHelperLoaded = False
+unresolvedAlvExportDirToken = "{" & "ALV_EXPORT_DIR" & "}"
+unresolvedAlvExportFilenameToken = "{" & "ALV_EXPORT_FILENAME" & "}"
 
 If IsPlaceholder(tcode, "OK_CODE") Or Trim(CStr(tcode)) = "" Then tcode = "ZFI057"
 If UCase(Trim(CStr(tcode))) <> "ZFI057" Then Fail "ZFI057 script refuses tcode=" & CStr(tcode), 10
@@ -46,12 +55,15 @@ If IsPlaceholder(field1Name, "FIELD1_NAME") Then field1Name = ""
 If IsPlaceholder(field1Value, "FIELD1_VALUE") Then field1Value = ""
 If IsPlaceholder(field2Name, "FIELD2_NAME") Then field2Name = ""
 If IsPlaceholder(field2Value, "FIELD2_VALUE") Then field2Value = ""
+If Trim(CStr(alvExportDir)) = unresolvedAlvExportDirToken Then alvExportDir = ""
+If Trim(CStr(alvExportFilename)) = unresolvedAlvExportFilenameToken Then alvExportFilename = ""
+If IsPlaceholder(scriptDir, "SCRIPT_DIR") Then scriptDir = ""
 
 plantText = NormalizeListText(plantsCsv)
 plantSeedValue = FirstCsvValue(plantsCsv)
 plantCount = CountLines(plantText)
 businessAreaValue = FirstCsvValue(businessAreasCsv)
-If plantCount <= 0 Then Fail "ZFI057 requires plants from backend GET_GS03 result in {PLANTS}; business area alone is not accepted by VBS.", 5
+If plantCount <> 1 Then Fail "ZFI057 requires exactly one plant from the backend ZFIT_RPA_BUKRS GSBER/WERKS mapping in {PLANTS}; multi-plant input must be split by the backend.", 5
 
 materialText = ResolveMaterialText()
 materialCount = CountLines(materialText)
@@ -64,6 +76,46 @@ ResolveZfi057DateWindows
 Function IsPlaceholder(value, tokenName)
    IsPlaceholder = (Trim(CStr(value)) = "{" & tokenName & "}")
 End Function
+
+Function CombinePath(folderPath, fileName)
+   If Right(CStr(folderPath), 1) = "\" Then
+      CombinePath = CStr(folderPath) & CStr(fileName)
+   Else
+      CombinePath = CStr(folderPath) & "\" & CStr(fileName)
+   End If
+End Function
+
+Function LoadAlvExportHelper()
+   Dim fso, helperPath, textFile, helperText
+   On Error Resume Next
+   LoadAlvExportHelper = False
+   If alvHelperLoaded Then
+      LoadAlvExportHelper = True
+      Exit Function
+   End If
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If Trim(CStr(scriptDir)) = "" Then scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+   helperPath = CombinePath(scriptDir, "sap_alv_export_helper.vbs")
+   If Not fso.FileExists(helperPath) Then Fail "ALV export helper not found: " & helperPath, 8
+   Set textFile = fso.OpenTextFile(helperPath, 1, False, -2)
+   If Err.Number <> 0 Then Fail "open ALV export helper failed - " & Err.Description, 8
+   helperText = textFile.ReadAll
+   textFile.Close
+   ExecuteGlobal helperText
+   If Err.Number <> 0 Then Fail "load ALV export helper failed - " & Err.Description, 8
+   alvHelperLoaded = True
+   LoadAlvExportHelper = True
+   Err.Clear
+End Function
+
+Sub ExportAlvForWindow(index)
+   Dim exportFilename
+   If Not LoadAlvExportHelper() Then Fail "ALV export helper could not be loaded", 8
+   exportFilename = alvExportFilename
+   If runCount > 1 Then exportFilename = AlvBuildExportFilename(alvExportFilename, "part" & CStr(index))
+   If Not AlvExportIfConfigured(session, alvExportDir, exportFilename, exportTimeoutMs) Then Fail "ALV export returned false for ZFI057 group #" & index, 8
+   WScript.Echo "INFO: ALV export completed for ZFI057 group #" & index
+End Sub
 
 Function FirstCsvValue(value)
    Dim parts, item
@@ -173,9 +225,19 @@ Function ParseDateOrEmpty(value)
    End If
 End Function
 
+Function PreviousReleaseMonthStart(value)
+   Dim offsetDate
+   If (Month(value) Mod 2) = 0 Then
+      offsetDate = DateAdd("m", -1, value)
+   Else
+      offsetDate = DateAdd("m", -2, value)
+   End If
+   PreviousReleaseMonthStart = DateSerial(Year(offsetDate), Month(offsetDate), 1)
+End Function
+
 Sub ResolveZfi057DateWindows()
    Dim parsedStart, parsedEnd, defaultStart, defaultEnd
-   Dim firstOfStartMonth, firstOfEndMonth, prevMonthStart, startMonthEnd
+   Dim firstOfStartMonth, firstOfEndMonth, releaseMonthStart, currentMonthStart, currentMonthEnd
    defaultStart = DateAdd("d", -7, WeekStart(Date))
    defaultEnd = DateAdd("d", 6, defaultStart)
    parsedStart = ParseDateOrEmpty(periodValue)
@@ -197,17 +259,23 @@ Sub ResolveZfi057DateWindows()
       kadatLow(1) = FormatSapDate(DateAdd("d", 1, firstOfStartMonth))
       kadatHigh(1) = FormatSapDate(parsedEnd)
    Else
-      runCount = 2
-      prevMonthStart = DateSerial(Year(DateAdd("m", -1, parsedStart)), Month(DateAdd("m", -1, parsedStart)), 1)
-      startMonthEnd = DateAdd("d", -1, firstOfEndMonth)
-      kadkyLow(1) = FormatSapDate(prevMonthStart)
-      kadkyHigh(1) = FormatSapDate(startMonthEnd)
-      kadatLow(1) = FormatSapDate(DateAdd("d", 1, prevMonthStart))
-      kadatHigh(1) = FormatSapDate(startMonthEnd)
-      kadkyLow(2) = FormatSapDate(firstOfEndMonth)
-      kadkyHigh(2) = FormatSapDate(parsedEnd)
-      kadatLow(2) = FormatSapDate(DateAdd("d", 1, firstOfEndMonth))
-      kadatHigh(2) = FormatSapDate(parsedEnd)
+      runCount = 0
+      releaseMonthStart = PreviousReleaseMonthStart(parsedEnd)
+      currentMonthStart = releaseMonthStart
+      Do While currentMonthStart <= firstOfEndMonth
+         runCount = runCount + 1
+         currentMonthEnd = DateAdd("d", -1, DateAdd("m", 1, currentMonthStart))
+         kadkyLow(runCount) = FormatSapDate(currentMonthStart)
+         If Year(currentMonthStart) = Year(firstOfEndMonth) And Month(currentMonthStart) = Month(firstOfEndMonth) Then
+            kadkyHigh(runCount) = FormatSapDate(parsedEnd)
+            kadatHigh(runCount) = FormatSapDate(parsedEnd)
+         Else
+            kadkyHigh(runCount) = FormatSapDate(currentMonthEnd)
+            kadatHigh(runCount) = FormatSapDate(currentMonthEnd)
+         End If
+         kadatLow(runCount) = FormatSapDate(DateAdd("d", 1, currentMonthStart))
+         currentMonthStart = DateAdd("m", 1, currentMonthStart)
+      Loop
    End If
 End Sub
 
@@ -444,30 +512,18 @@ Sub PasteMaterialSelection()
    PressButton "wnd[1]/tbar[0]/btn[8]", "confirm S_MATNR material list", 8000
 End Sub
 
-Sub PasteWerksSelection()
-   SetClipboardText plantText, plantCount, "plant list"
-   PressButton "wnd[0]/usr/btn%_S_WERKS_%_APP_%-VALU_PUSH", "open S_WERKS multiple selection", 8000
-   PressButton "wnd[1]/tbar[0]/btn[24]", "paste S_WERKS plant list", 8000
-   PressButton "wnd[1]/tbar[0]/btn[8]", "confirm S_WERKS plant list", 8000
-End Sub
-
 Sub FillWerksSelection()
    SetField "werks-low seed", "wnd[0]/usr/ctxtS_WERKS-LOW", plantSeedValue
-   If plantCount > 1 Then
-      PasteWerksSelection
-   Else
-      WScript.Echo "INFO: single S_WERKS plant uses LOW field; skip multiple selection"
-   End If
+   WScript.Echo "INFO: single S_WERKS plant uses LOW field"
 End Sub
 
 Function RunZfi057Window(index)
    Dim plantLogValue
    plantLogValue = Replace(plantText, vbCrLf, ",")
    WScript.Echo "INFO: zfi057 input group #" & index
-   WScript.Echo "INFO: query GET_GS03 where TITLE=" & businessAreaValue & "; resolved FROM/WERKS=" & plantLogValue & "; plantCount=" & plantCount
+   WScript.Echo "INFO: query ZFIT_RPA_BUKRS where GSBER=" & businessAreaValue & "; resolved WERKS=" & plantLogValue & "; plantCount=" & plantCount
    WScript.Echo "INFO: date input group #" & index & "; S_KADKY=[" & kadkyLow(index) & "~" & kadkyHigh(index) & "]; S_KADAT=[" & kadatLow(index) & "~" & kadatHigh(index) & "]"
-   WScript.Echo "INFO: query ZFI_SPLIT fields=BUKRS,WERKS,MATNR,BEGDA,ENDDA,MTART; WERKS=" & plantLogValue & "; BEGDA<=" & kadkyHigh(index) & "; ENDDA>=" & kadkyLow(index) & "; MTART=*"
-   WScript.Echo "INFO: upstream material count=" & materialCount
+   WScript.Echo "INFO: upstream material list was prepared by backend SAP NCo query before this VBS; materialCount=" & materialCount
    OpenTransaction
    SetField "kadky-low", "wnd[0]/usr/ctxtS_KADKY-LOW", kadkyLow(index)
    SetField "kadky-high", "wnd[0]/usr/ctxtS_KADKY-HIGH", kadkyHigh(index)
@@ -476,7 +532,12 @@ Function RunZfi057Window(index)
    SetField "kadat-high", "wnd[0]/usr/ctxtS_KADAT-HIGH", kadatHigh(index)
    FillWerksSelection
    PasteMaterialSelection
-   RunZfi057Window = PressExecuteZfi057Window(index)
+   If Not PressExecuteZfi057Window(index) Then
+      RunZfi057Window = False
+      Exit Function
+   End If
+   ExportAlvForWindow index
+   RunZfi057Window = True
 End Function
 
 For retries = 1 To 100

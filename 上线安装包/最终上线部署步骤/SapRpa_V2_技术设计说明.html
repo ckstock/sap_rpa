@@ -583,7 +583,7 @@
         <tbody>
           <tr><td class="nowrap">SQLite Repository</td><td>创建/迁移表结构，读写配置、任务、日志、输出文件、定时任务运行记录。</td><td>数据库文件位于 <code>D:\RPA\data\sap-rpa-config.db</code>，运行库不提交 Git。</td></tr>
           <tr><td class="nowrap">Run Queue</td><td>将 <code>queued</code> 状态 run 串行改为 <code>running</code> 并执行。</td><td>同一交互式桌面会话只允许一个 SAP GUI 脚本执行，避免窗口和登录态互相干扰。</td></tr>
-          <tr><td class="nowrap">VBS Runner</td><td>按事务码找到脚本，替换 <code>{YEAR}</code>、<code>{WEEK}</code>、<code>{PLANTS}</code>、<code>{PERIOD}</code>、<code>{WEEK_END}</code> 等占位符，捕获标准输出。</td><td><code>ZFIR034.vbs</code> 写入 <code>S_BUDAT-LOW/HIGH</code> 和 <code>P_WEEK</code>；未传日期时脚本自身也会按系统日期计算上一完整周，并由最终开始日期推导周次。<code>P_WEEK</code> 优先写 <code>wnd[0]/usr/txtP_WEEK</code>，兜底写 <code>wnd[0]/usr/ctxtP_WEEK</code>。</td></tr>
+          <tr><td class="nowrap">VBS Runner</td><td>按事务码找到脚本，替换 <code>{YEAR}</code>、<code>{WEEK}</code>、<code>{PLANTS}</code>、<code>{PERIOD}</code>、<code>{WEEK_END}</code> 等占位符，捕获标准输出。</td><td><code>ZFIR034.vbs</code> 写入 <code>S_BUDAT-LOW/HIGH</code> 和 <code>P_GJAHR/P_WEEK</code>；未传日期时脚本自身也会按系统日期计算上一完整周，并由最终开始日期推导年度和周次。<code>P_GJAHR</code>/<code>P_WEEK</code> 优先写 <code>txt</code> 字段，兜底写 <code>ctxt</code> 字段。</td></tr>
           <tr><td class="nowrap">Notification Adapter</td><td>根据 run 状态、操作人和机器人绑定选择通知目标，调用 DingTalk OpenAPI。</td><td>密钥只来自环境变量或 <code>config.local.json</code>，不能下发前端。</td></tr>
         </tbody>
       </table>
@@ -742,7 +742,7 @@ async function pollRun(runId) {
           <tr><td><code>transaction_plant_rules</code></td><td>事务码与工厂规则。</td><td>保存某事务码允许/默认工厂、固定顺序、分组覆盖规则，例如 ZFI072A 的工厂传入顺序。</td></tr>
           <tr><td><code>notification_robots</code></td><td>通知机器人配置。</td><td>保存机器人别名、供应商、启用状态和非敏感展示信息；secret 不明文回显给页面。</td></tr>
           <tr><td><code>notification_robot_bindings</code></td><td>机器人绑定关系。</td><td>按事务码、工厂组、状态或用户范围绑定通知机器人，决定 run 完成后通知谁。</td></tr>
-          <tr><td><code>schedule_tasks</code></td><td>定时任务定义。</td><td>保存任务名称、事务码、参数模板、cron/周计划、启用状态、下次执行时间。</td></tr>
+          <tr><td><code>schedule_tasks</code></td><td>定时任务定义。</td><td>保存任务名称、事务码、参数模板、cron、日/周/月频率、执行时间、执行星期、启用状态和下次执行时间；月任务有 <code>weekday</code> 时按每月首个指定星期几触发，空值保留旧的每月固定日期规则。</td></tr>
           <tr><td><code>app_settings</code></td><td>本机运行设置。</td><td>保存脚本目录、输出目录、队列模式等非密钥设置；密钥仍优先环境变量或本机私有配置。</td></tr>
         </tbody>
       </table>

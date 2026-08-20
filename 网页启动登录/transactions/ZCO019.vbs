@@ -8,7 +8,7 @@
 
 On Error Resume Next
 
-Dim tcode, plantsCsv, factoryGroup
+Dim tcode, plantsCsv, factoryGroup, runStrategy
 Dim yearValue, weekValue, periodValue, weekEndValue, dateLowValue, dateHighValue
 Dim plantValue
 Dim SapGuiAuto, application, connection, session
@@ -19,6 +19,7 @@ Dim alvExportDir, alvExportFilename, scriptDir, exportTimeoutMs, alvHelperLoaded
 tcode = "{OK_CODE}"
 plantsCsv = "{PLANTS}"
 factoryGroup = "{FACTORY_GROUP}"
+runStrategy = "{RUN_STRATEGY}"
 yearValue = "{YEAR}"
 weekValue = "{WEEK}"
 periodValue = "{PERIOD}"
@@ -36,6 +37,10 @@ unresolvedAlvExportFilenameToken = "{" & "ALV_EXPORT_FILENAME" & "}"
 If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZCO019"
 If UCase(Trim(CStr(tcode))) <> "ZCO019" Then Fail "ZCO019 script refuses tcode=" & CStr(tcode), 10
 If Trim(CStr(plantsCsv)) = unresolvedPlantsToken Then plantsCsv = ""
+If IsPlaceholder(runStrategy, "RUN_STRATEGY") Then runStrategy = ""
+runStrategy = LCase(Trim(CStr(runStrategy)))
+If runStrategy = "" Then runStrategy = "both"
+If runStrategy <> "detail" And runStrategy <> "summary" And runStrategy <> "both" Then Fail "ZCO019 unsupported runStrategy=" & runStrategy, 6
 If IsPlaceholder(yearValue, "YEAR") Then yearValue = ""
 If IsPlaceholder(weekValue, "WEEK") Then weekValue = ""
 If IsPlaceholder(periodValue, "PERIOD") Then periodValue = ""
@@ -296,6 +301,7 @@ WScript.Echo "INFO: period=" & dateLowValue
 WScript.Echo "INFO: weekEnd=" & dateHighValue
 If plantValue <> "" Then WScript.Echo "INFO: plant=" & plantValue
 If factoryGroup <> "" And Not IsPlaceholder(factoryGroup, "FACTORY_GROUP") Then WScript.Echo "INFO: factoryGroup=" & factoryGroup
+WScript.Echo "INFO: runStrategy=" & runStrategy
 
 Err.Clear
 session.findById("wnd[0]").maximize
@@ -310,18 +316,24 @@ CheckSapStatus "open transaction"
 SetField "budat-low", "wnd[0]/usr/ctxtS_BUDAT-LOW", dateLowValue
 SetField "budat-high", "wnd[0]/usr/ctxtS_BUDAT-HIGH", dateHighValue
 SetField "werks-low", "wnd[0]/usr/ctxtS_WERKS-LOW", plantValue
-PressExecute
-WaitReady 600000
-SelectAllGrid
-ExportAlvBeforeSave "export detail before save", "detail"
-PressToolbarButton "wnd[0]/tbar[1]/btn[26]", "save/export first result"
-PressToolbarButton "wnd[0]/tbar[0]/btn[3]", "back"
-SetRadioIfExists "wnd[0]/usr/radP_RADIO2"
-PressExecute
-WaitReady 600000
-SelectAllGrid
-ExportAlvBeforeSave "export saved result", "saved"
-PressToolbarButton "wnd[0]/tbar[1]/btn[26]", "save/export second result"
+If runStrategy <> "summary" Then
+   SetRadioIfExists "wnd[0]/usr/radP_RADIO1"
+   PressExecute
+   WaitReady 600000
+   SelectAllGrid
+   ExportAlvBeforeSave "export detail before save", "detail"
+   PressToolbarButton "wnd[0]/tbar[1]/btn[26]", "save/export detail result"
+End If
+
+If runStrategy <> "detail" Then
+   If runStrategy <> "summary" Then PressToolbarButton "wnd[0]/tbar[0]/btn[3]", "back"
+   SetRadioIfExists "wnd[0]/usr/radP_RADIO2"
+   PressExecute
+   WaitReady 600000
+   SelectAllGrid
+   ExportAlvBeforeSave "export summary before save", "summary"
+   PressToolbarButton "wnd[0]/tbar[1]/btn[26]", "save/export summary result"
+End If
 
 CheckSapStatus "finish"
 WScript.Echo "INFO: transaction script executed"

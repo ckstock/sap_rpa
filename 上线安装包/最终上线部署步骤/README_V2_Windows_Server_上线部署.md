@@ -84,7 +84,7 @@ D:\RPA\config.local.json
 ```powershell
 git clone https://github.com/ckstock/sap_rpa.git "D:\RPA\RpaProject"
 Set-Location "D:\RPA\RpaProject"
-git checkout codex/v2-local-api-sqlite
+git checkout sap-rpa-v2-local-service
 git pull
 ```
 
@@ -203,7 +203,6 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
     "router": ""
   },
   "zfi057Workflow": {
-    "gs03SetName": "Z31",
     "zfi019nlMemory": {
       "report": "ZFI019NL",
       "memoryId": "%ZFI019NA%",
@@ -242,23 +241,23 @@ sap dingtalk openapi sent: userid=...
 
 ## 6.1 配置 SAP NCo / ZFI019NL memory fetch
 
-`ZFI057` 产值拆分入口后台第一步不运行 `ZFI019NL.vbs`，而是通过 SAP NCo 调用 `ZFI_SAP_API_GATEWAY` 的 `REPORT_SUBMIT/MEMORY_EXPORT`，从 `ZFI019NL` memory 输出读取物料集合。业务范围到工厂映射通过 `GET_GS03` 获取，默认传 `IV_SET_NAME=Z31`，再从返回表筛 `TITLE=业务范围` 并取 `FROM` 作为工厂；同一 `TITLE` 返回多行时必须全部取 `FROM`。步骤二“业务范围一次执行、一次性传入全部工厂”只针对 `ZFI057` 自动三步工作流，不改变 `ZFI072A`、`ZFI080`、`ZCO019` 等其他事务码的按工厂执行方式；VBS 先填日期和 `S_MTART-LOW=*`，再把首个工厂写入 `S_WERKS-LOW` 通过 SAP 必填校验，多工厂时继续把全部工厂写入 `S_WERKS` 多选，单工厂时跳过多选。上线前必须确认：
+`ZFI057` 产值拆分入口后台执行三步：第一步通过 SAP NCo 调用 `ZFI_SAP_API_GATEWAY` 的 `REPORT_SUBMIT/MEMORY_EXPORT` 读取 `ZFI019NL` memory 物料集合。第二步只读查询 SAP 表 `ZFIT_RPA_BUKRS`：以 `GSBER=业务范围` 取全部非空 `WERKS`；同一业务范围有多个工厂时，后端按工厂逐个调用 `ZFI057.vbs`，每次 VBS 只写一个 `S_WERKS-LOW`，同时写入步骤一得到的物料集合。单个工厂无数据或失败不会阻断后续工厂；至少一个工厂步骤二成功后，第三步才运行一次 `ZCO020.vbs`。步骤一不运行 `ZFI019NL.vbs`，也不把工厂作为步骤一入参；不得回退读取 `ZTSD001`、SQLite `plants`、SAP 集或 VBS 本地硬编码映射。`ZFI057` 生产入口必须传 `businessAreas`，只传 `plants` 会被视为无有效业务范围。
 
 | 项目 | 要求 |
 | --- | --- |
 | NCo 依赖源 | `D:\RPA\依赖\SapNco\sapnco.dll`、`sapnco_utils.dll`、`ijwhost.dll`、`cpc4n.dll` |
 | 运行目录 DLL | `D:\RPA\bin\` 必须包含上述四个 DLL，以及 `System.Configuration.ConfigurationManager.dll`、`System.Security.Permissions.dll` |
-| 本机配置 | `D:\RPA\config.local.json` 必须包含 `sapNco`、`zfi057Workflow.gs03SetName` 和 `zfi057Workflow.zfi019nlMemory`；`gs03SetName` 默认 `Z31` |
+| 本机配置 | `D:\RPA\config.local.json` 必须包含 `sapNco` 和 `zfi057Workflow.zfi019nlMemory` |
 | SAP 登录配置 | `%LOCALAPPDATA%\SapWebLauncher\config.json` 仍由 `04_配置SAP登录信息.bat` 在固定 Windows 执行账号下生成 |
-| SAP 网关对象 | `ZFI_SAP_API_GATEWAY` 必须支持 `GET_GS03`；调用参数为 `IV_SET_NAME=Z31`，返回表用 `TITLE` 匹配业务范围，同一 `TITLE` 多行时用全部 `FROM` 输出工厂 |
+| SAP 工厂映射表 | 执行账户必须有 SAP 表 `ZFIT_RPA_BUKRS` 的只读权限，并可读取字段 `GSBER`、`WERKS`；上线前必须运行下面的映射诊断 |
 
 单独验收业务范围到工厂映射：
 
 ```powershell
-& "D:\RPA\bin\SapWebLauncher.exe" --test-zfi057-get-gs03 --businessArea 2800 --setName Z31
+& "D:\RPA\bin\SapWebLauncher.exe" --test-zfi057-bukrs-mapping --businessArea 2800
 ```
 
-成功标准：`status=success`、`setName=Z31`、`plantCount` 大于 0、`plants` 包含 `GET_GS03` 返回表中 `TITLE=2800` 对应的全部 `FROM` 工厂。
+成功标准：输出包含 `status=success`、`table=ZFIT_RPA_BUKRS`，`plantCount` 大于 0，且 `plants` 包含该 `GSBER=2800` 的全部非空 `WERKS`。如果 `plantCount=0`，先维护 SAP 表映射；不得回退本地工厂表、SQLite 或旧 VBS 映射。
 
 单独验收 ZFI019NL memory 物料集合：
 

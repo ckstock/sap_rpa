@@ -91,9 +91,10 @@
       return "/api/reports/execution" + (query ? "?" + query : "");
     }
 
-    function buildRunsQuery({ limit = 20, from = "", to = "", status = "" } = {}) {
+    function buildRunsQuery({ limit = 20, offset = 0, from = "", to = "", status = "" } = {}) {
       const params = new URLSearchParams();
       params.set("limit", String(limit));
+      params.set("offset", String(offset));
       if (status) params.set("status", status);
       if (from) params.set("from", `${from} 00:00:00`);
       if (to) params.set("to", `${to} 23:59:59`);
@@ -397,10 +398,10 @@
       },
       {
         title: "标准价",
-        summary: "ZCO019-明细、ZCO019汇总",
+        summary: "ZCO019-明细、ZCO019-汇总",
         entries: [
           { code: "ZCO019", displayCode: "ZCO019-明细", note: "明细" },
-          { code: "ZCO019", displayCode: "ZCO019汇总", note: "汇总" }
+          { code: "ZCO019", displayCode: "ZCO019-汇总", note: "汇总", runStrategy: "summary" }
         ]
       },
       {
@@ -425,6 +426,7 @@
             displayCode: entry.displayCode || base.code,
             displayName: entry.displayName || base.name,
             dashboardNote: entry.note || "",
+            runStrategy: entry.runStrategy || (base.code === "ZCO019" ? "detail" : ""),
             workflowTitle: group.title,
             workflowStep: index + 1,
             runCode: base.code
@@ -466,7 +468,7 @@
               ${item.dashboardNote ? `<div class="transaction-note">${esc(item.dashboardNote)}</div>` : ""}
             </div>
           </div>
-          <button class="btn primary small" data-action="go-execute" data-tcode="${esc(runCode)}">${icon("send")}提交</button>
+          <button class="btn primary small" data-action="go-execute" data-tcode="${esc(runCode)}" data-run-strategy="${esc(item.runStrategy || "")}">${icon("send")}提交</button>
         </div>
       `;
     }
@@ -476,7 +478,7 @@
     }
 
     function isSaveActionTransaction(item) {
-      const saveActionCodes = new Set(["ZFI072A", "ZFI072N", "ZFI080", "ZFI080B", "ZCO019", "ZFI019NA", "ZFI019NL"]);
+      const saveActionCodes = new Set(["ZFI072A", "ZFI072N", "ZFI080", "ZFI080B", "ZCO019", "ZFI019NA", "ZFI019NL", "ZFI057", "ZFI148", "ZFIR034"]);
       const code = String(item.runCode || item.code || "").trim().toUpperCase();
       const text = [
         item.name,
@@ -523,7 +525,16 @@
 
     function renderExecute() {
       syncExecutionDefaults();
-      const executableTCodes = dashboardExecutableTCodes();
+      const executionTCodeOptions = getExecutionTransactionOptions();
+      let executionTCodeValue = getExecutionTCodeSelectionValue(state.form.tCode, state.form.runStrategy);
+      if (!executionTCodeOptions.some(option => option.value === executionTCodeValue)) {
+        const firstOption = executionTCodeOptions[0] || { value: "", tCode: "", runStrategy: "" };
+        state.form.tCode = firstOption.tCode;
+        state.form.runStrategy = firstOption.runStrategy;
+        executionTCodeValue = firstOption.value;
+      } else if (state.form.tCode === "ZCO019") {
+        state.form.runStrategy = getExecutionTCodeSelection(executionTCodeValue).runStrategy;
+      }
       const notifyBlocked = isNotifyUserBlocked();
       return `
         <section class="grid cols-2">
@@ -538,7 +549,7 @@
                 <div class="execute-form-grid">
                   <div class="field">
                     <label for="tCode">事务码</label>
-                    <select id="tCode" data-bind="tCode">${executableTCodes.map(x => `<option value="${x.code}" ${state.form.tCode === x.code ? "selected" : ""}>${x.code} - ${x.name}</option>`).join("")}</select>
+                    <select id="tCode" data-bind="tCode">${executionTCodeOptions.map(option => `<option value="${option.value}" ${executionTCodeValue === option.value ? "selected" : ""}>${option.label}</option>`).join("")}</select>
                   </div>
                 </div>
                 ${renderExecutePlants()}
@@ -585,10 +596,14 @@
 
     function renderExecutePlants() {
       const payload = buildRunPayload();
+      const transaction = getTCode(payload.tcode);
       const chips = payload.rangeValues.map((code, index) => {
         const label = payload.rangeKind === "dateRange" ? (index === 0 ? "开始" : "截止") + " " : "";
         return `<span class="area-chip">${esc(label + code)}</span>`;
       }).join("") || `<span class="area-chip">${esc(payload.rangeEmptyText)}</span>`;
+      const fixedScopeHint = hasFixedConfiguredBusinessAreas(transaction) && transaction?.code !== "ZFI057"
+        ? `<div class="table-hint">固定业务范围来自基础配置；ZFI057 的执行工厂由 SAP 表 ZFIT_RPA_BUKRS 在运行时按 GSBER 查询。</div>`
+        : "";
       const testDateOverride = renderTestDateOverrideControl(payload);
       return `
         <div class="execute-range">
@@ -596,6 +611,7 @@
             <div class="execute-range-label">执行${esc(payload.rangeLabel)}</div>
             <div class="area-chips">${chips}</div>
           </div>
+          ${fixedScopeHint}
           ${testDateOverride}
         </div>
       `;
@@ -817,11 +833,18 @@
       return getDefaultPlantsForTCode(tCode, groupId);
     }
 
+    function hasFixedConfiguredBusinessAreas(transaction) {
+      return getRuleRangeKind(transaction) === "businessArea" &&
+        String(transaction?.businessAreaMode || "").toLowerCase() === "fixed" &&
+        toArray(transaction?.businessAreas).length > 0;
+    }
+
     function getRunRangeForTCode(tCode, selectedValues, groupId = state.form.factoryGroup) {
       const t = getTCode(tCode);
       const selected = unique(toArray(selectedValues));
       if (getRuleRangeKind(t) === "dateRange") return getDefaultRunRangeForTCode(tCode, groupId);
       if (getRuleRangeKind(t) === "businessArea") {
+        if (hasFixedConfiguredBusinessAreas(t) && tCode !== "ZFI057") return getDefaultRunRangeForTCode(tCode, groupId);
         return selected.length ? selected : getDefaultRunRangeForTCode(tCode, groupId);
       }
       return getRunPlantsForTCode(tCode, selected);
@@ -834,10 +857,10 @@
       if (getRuleRangeKind(t) === "businessArea") {
         const explicitAreas = toArray(t?.businessAreas);
         if (explicitAreas.length) return unique(explicitAreas);
-        if (tCode === "ZFI019NL") return unique(toArray(group.zfi019nlAreas).length ? group.zfi019nlAreas : plantList.map(code => plantCatalog[code]?.area));
+        if (tCode === "ZFI019NL" || tCode === "ZFI019NA") return unique(toArray(group.zfi019nlAreas).length ? group.zfi019nlAreas : plantList.map(code => plantCatalog[code]?.area));
       }
       if (!plantList.length) return [];
-      if (tCode === "ZFI019NL") return unique(toArray(group.zfi019nlAreas).length ? group.zfi019nlAreas : plantList.map(code => plantCatalog[code]?.area));
+      if (tCode === "ZFI019NL" || tCode === "ZFI019NA") return unique(toArray(group.zfi019nlAreas).length ? group.zfi019nlAreas : plantList.map(code => plantCatalog[code]?.area));
       if (tCode === "ZFI080") return unique(toArray(group.zfi080Areas).length ? group.zfi080Areas : plantList.map(code => plantCatalog[code]?.area));
       if (tCode === "ZCO019" || tCode === "ZFI057") {
         return unique(plantList.map(code => plantCatalog[code]?.area));
@@ -854,7 +877,8 @@
       if (forcePlants && t?.defaultPlantGroup) {
         state.form.factoryGroup = t.defaultPlantGroup;
       }
-      if (!Array.isArray(state.form.plants)) state.form.plants = getDefaultRunRangeForTCode(state.form.tCode);
+      const fixedBusinessAreas = hasFixedConfiguredBusinessAreas(t) && state.form.tCode !== "ZFI057";
+      if (!Array.isArray(state.form.plants) || fixedBusinessAreas) state.form.plants = getDefaultRunRangeForTCode(state.form.tCode);
       if (!state.form.factoryGroup) state.form.factoryGroup = "PINGHU_30";
       if (forcePlants) {
         state.form.plants = getDefaultRunRangeForTCode(state.form.tCode);
@@ -876,7 +900,7 @@
       const online = state.bridge.online && state.config.online;
       const noticeClass = online ? "ok" : "warn";
       const noticeText = online
-        ? `API 已连接，保存定时任务会写入 ${BRIDGE_API}${CONFIG_API_PATHS.root} 并刷新列表。`
+        ? `API 已连接，保存定时任务会写入 ${BRIDGE_API}${CONFIG_API_PATHS.schedulesRoot || "/api/schedules"} 并刷新列表。`
         : `本机 API 未启动或配置接口不可用，当前仅显示只读示例/缓存列表；保存不会生效，请启动 API 后再保存。${state.config.error ? "原因：" + state.config.error : ""}`;
       return `
         <section class="panel">
@@ -894,12 +918,12 @@
                   <tr>
                     <td>${esc(task.id)}</td>
                     <td>${esc(task.name)}</td>
-                    <td>${esc(task.tCode)}</td>
+                    <td>${esc(formatScheduleTaskTCode(task))}</td>
                     <td>${esc(getScheduleFactoryGroupName(task))}</td>
                     <td>${renderCodeChips(getScheduleBusinessAreas(task))}</td>
                     <td>${getScheduleScopeChips(task)}</td>
                     <td>${esc(task.time || "-")}</td>
-                    <td>${esc(task.frequency || "-")}</td>
+                    <td>${esc(formatScheduleFrequency(task.frequencyCode || task.frequency, task.weekday) || "-")}</td>
                     <td><span class="tag ${getScheduleStatusClass(task.status)}">${esc(task.status || "-")}</span></td>
                     <td><span class="tag info">${esc(getScheduleSetterName(task))}</span></td>
                     <td>${esc(task.next || "-")}</td>
@@ -1059,7 +1083,7 @@
                   <td>${esc(String(t.timeoutSeconds ?? t.timeout ?? "-"))}</td>
                   <td>${esc(String(t.retryCount ?? t.retry ?? "-"))}</td>
                   <td><span class="tag ${t.enabled === false ? "warn" : t.automation === "script" ? "ok" : "info"}">${t.enabled === false ? "停用" : t.automation === "script" ? "已接脚本" : "打开事务码"}</span></td>
-                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="tcode" data-mode="edit" data-id="${esc(t.code)}">${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="tcode" data-id="${esc(t.code)}">${icon("trash-2")}停用</button></span></td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="tcode" data-mode="edit" data-id="${esc(t.code)}">${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="tcode" data-id="${esc(t.code)}">${icon("trash-2")}删除</button></span></td>
                 </tr>`).join("") : `<tr><td colspan="9" class="empty-cell">暂无事务码配置</td></tr>`}</tbody>
             </table>
           </div>
@@ -1078,14 +1102,14 @@
           <div class="table-wrap">
             <table>
               <thead><tr><th>事务码</th><th>默认业务范围</th><th>对应工厂</th><th>规则说明</th><th>状态</th><th>操作</th></tr></thead>
-              <tbody>${tCodes.length ? tCodes.map(t => `
+              <tbody>${transactionRules.length ? transactionRules.map(t => `
                 <tr>
                   <td><strong>${esc(t.code)}</strong><div class="table-hint">${esc(t.name)}</div></td>
                   <td>${esc(getFactoryGroup(t.defaultPlantGroup)?.name || t.defaultPlantGroup || "-")}</td>
                   <td>${renderCodeChips(getResolvedPlantsForRule(t))}</td>
                   <td>${esc(t.factoryRule || "-")}</td>
                   <td><span class="tag ${t.enabled === false ? "warn" : "ok"}">${t.enabled === false ? "停用" : "启用"}</span></td>
-                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="rule" data-mode="edit" data-id="${esc(t.code)}">${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="rule" data-id="${esc(t.code)}">${icon("trash-2")}停用</button></span></td>
+                  <td><span class="inline-actions"><button class="btn small" data-action="open-config-modal" data-kind="rule" data-mode="edit" data-id="${esc(t.code)}">${icon("pencil")}编辑</button><button class="btn small red" data-action="delete-config" data-kind="rule" data-id="${esc(t.code)}">${icon("trash-2")}删除</button></span></td>
                 </tr>`).join("") : `<tr><td colspan="6" class="empty-cell">暂无事务码与工厂/业务范围规则</td></tr>`}</tbody>
             </table>
           </div>
@@ -1123,7 +1147,7 @@
 
     function getDisplayParamsForTransaction(transaction) {
       const params = toArray(transaction?.params);
-      if (transaction?.code === "ZFI019NL") {
+      if (transaction?.code === "ZFI019NL" || transaction?.code === "ZFI019NA") {
         return unique(params.map(param => param === "plants" ? "businessAreas" : param));
       }
       return params;
@@ -1147,7 +1171,7 @@
       const code = String(transaction?.code || "").toUpperCase();
       const params = getDisplayParamsForTransaction(transaction);
       if (code === "ZFIR034" || (params.includes("period") && params.includes("weekEnd") && !params.includes("plants") && !params.includes("businessAreas"))) return "dateRange";
-      if (code === "ZFI019NL" || code === "ZFI057" || code === "ZCO020") return "businessArea";
+      if (code === "ZFI019NL" || code === "ZFI019NA" || code === "ZFI057" || code === "ZCO020") return "businessArea";
       return params.includes("businessAreas") && !params.includes("plants") ? "businessArea" : "plant";
     }
 
@@ -1226,22 +1250,43 @@
       return task?.updatedBy || task?.createdBy || "-";
     }
 
+    function allowsCustomScheduleBusinessAreaScope(tCode) {
+      const code = String(tCode || "").toUpperCase();
+      return code === "ZFI057" || code === "ZFI019NL" || code === "ZFI019NA";
+    }
+
     function buildScheduleNotifyTarget() {
       const dingTalkId = getResolvedNotifyUserId();
       return dingTalkId ? `dingtalk:${dingTalkId}` : "dingtalk";
     }
 
     function buildScheduleConfigPayload() {
-      const tCode = readInputValue("scheduleTCode") || state.scheduleForm.tCode || tCodes[0]?.code || "";
+      const tCodeSelection = getScheduleTCodeSelection(readInputValue("scheduleTCode") || state.scheduleForm.tCode || tCodes[0]?.code || "");
+      const tCode = tCodeSelection.tCode;
+      const scheduleRunStrategy = tCode === "ZCO019"
+        ? tCodeSelection.runStrategy
+        : "";
       const factoryGroup = readInputValue("scheduleFactoryGroup") || state.scheduleForm.factoryGroup || getTCode(tCode)?.defaultPlantGroup || factoryGroups[0]?.id || "";
       const schedulePlantsInput = document.getElementById("schedulePlants");
       const rangeKind = getRuleRangeKind(getTCode(tCode));
       const isDateRange = rangeKind === "dateRange";
       const isBusinessAreaRange = rangeKind === "businessArea";
-      const rangeValue = isDateRange ? [] : normalizeRulePlantList(schedulePlantsInput ? schedulePlantsInput.value : state.scheduleForm.plants);
+      const fixedBusinessAreas = !allowsCustomScheduleBusinessAreaScope(tCode) &&
+        isBusinessAreaRange && hasFixedConfiguredBusinessAreas(getTCode(tCode));
+      const rangeValue = isDateRange
+        ? []
+        : fixedBusinessAreas
+          ? getDefaultRunRangeForTCode(tCode, factoryGroup)
+          : normalizeRulePlantList(schedulePlantsInput ? schedulePlantsInput.value : state.scheduleForm.plants);
       const plantsValue = isBusinessAreaRange || isDateRange ? [] : rangeValue;
       const businessAreas = isDateRange ? [] : (isBusinessAreaRange ? rangeValue : getBusinessAreasForSelection(tCode, plantsValue, factoryGroup));
-      const frequency = readInputValue("scheduleFrequency") || state.scheduleForm.frequency || "weekly";
+      if (tCode === "ZFI057" && businessAreas.length === 0) throw new Error("ZFI057 至少需要一个业务范围代码");
+      const frequency = scheduleFrequencyCode(readInputValue("scheduleFrequency") || state.scheduleForm.frequency || "weekly");
+      const scheduleWeekdayInput = document.getElementById("scheduleWeekday");
+      const scheduleWeekdayRaw = scheduleWeekdayInput ? scheduleWeekdayInput.value : state.scheduleForm.weekday;
+      const weekday = frequency === "weekly" || frequency === "monthly"
+        ? normalizeScheduleWeekday(scheduleWeekdayRaw, frequency === "weekly" ? "monday" : "")
+        : "";
       const enabled = readInputChecked("scheduleEnabled");
       const notifyEnabled = readInputChecked("scheduleNotifyStart") || readInputChecked("scheduleNotifySuccess") || readInputChecked("scheduleNotifyFail");
       if (notifyEnabled && !getResolvedNotifyUserId()) throw new Error(notifyUserBlockingText() || "缺少定时任务通知人钉钉 ID");
@@ -1256,8 +1301,8 @@
       };
       const scheduleDateOverride = buildTestDateOverrideForTCode(tCode, scheduleDateForm);
       const task = {
-        id: state.scheduleForm.id || nextScheduleTaskId(),
-        name: readInputValue("scheduleName") || defaultScheduleName(tCode),
+        id: state.scheduleForm.id || "",
+        name: readInputValue("scheduleName") || defaultScheduleName(tCode, scheduleRunStrategy),
         tCode,
         transactionCode: tCode,
         factoryGroup,
@@ -1273,10 +1318,14 @@
         businessAreasCsv: businessAreas.join(","),
         rangeKind: isDateRange ? "dateRange" : (isBusinessAreaRange ? "businessArea" : "plant"),
         dateRule: isDateRange ? "LAST_FULL_WEEK_BY_SYSTEM_DATE" : "",
-        time: readInputValue("scheduleTime") || "08:00",
-        execTime: readInputValue("scheduleTime") || "08:00",
+        time: readInputValue("scheduleTime") || "20:00",
+        execTime: readInputValue("scheduleTime") || "20:00",
         frequency,
-        frequencyText: formatScheduleFrequency(frequency),
+        frequencyText: formatScheduleFrequency(frequency, weekday),
+        weekday,
+        dayOfWeek: weekday,
+        scheduleWeekday: weekday,
+        weekdayLabel: formatScheduleWeekday(weekday),
         defaultBusinessScope: factoryGroup,
         params: {
           plants: plantsValue.join(","),
@@ -1284,7 +1333,7 @@
           plantCodes: plantsValue.join(","),
           factoryCodes: plantsValue.join(","),
           businessAreas: businessAreas.join(","),
-          runStrategy: tCode === "ZFI057" ? "auto3step" : "",
+          runStrategy: tCode === "ZFI057" ? "auto3step" : scheduleRunStrategy,
           rangeKind: isDateRange ? "dateRange" : (isBusinessAreaRange ? "businessArea" : ""),
           dateRule: isDateRange ? "LAST_FULL_WEEK_BY_SYSTEM_DATE" : "",
           factoryGroup
@@ -1320,9 +1369,13 @@
       return task;
     }
 
-    function nextScheduleTaskId() {
-      const next = scheduleTasks.length + 1;
-      return "SCH-" + String(next).padStart(3, "0");
+    function formatScheduleTaskTCode(task) {
+      const tCode = String(task?.tCode || "").trim().toUpperCase();
+      if (tCode !== "ZCO019") return tCode;
+      const strategy = normalizeZco019ScheduleRunStrategy(task?.params?.runStrategy);
+      if (strategy === "detail") return "ZCO019-明细";
+      if (strategy === "summary") return "ZCO019-汇总";
+      return "ZCO019";
     }
 
     function renderSecretState(value) {
@@ -1363,23 +1416,46 @@
         `;
       }
       if (state.modal === "schedule") {
-        const executableTCodes = dashboardExecutableTCodes();
-        if (!executableTCodes.some(t => t.code === state.scheduleForm.tCode)) {
-          state.scheduleForm.tCode = executableTCodes[0]?.code || "";
+        const scheduleTCodeOptions = getScheduleTransactionOptions();
+        let scheduleTCodeValue = getScheduleTCodeSelectionValue(state.scheduleForm.tCode, state.scheduleForm.runStrategy);
+        if (!scheduleTCodeOptions.some(option => option.value === scheduleTCodeValue)) {
+          const firstOption = scheduleTCodeOptions[0] || { value: "", tCode: "", runStrategy: "" };
+          state.scheduleForm.tCode = firstOption.tCode;
+          state.scheduleForm.runStrategy = firstOption.runStrategy;
+          scheduleTCodeValue = firstOption.value;
         }
-        const schedulePlants = normalizeRulePlantList(state.scheduleForm.plants);
         const scheduleRangeKind = getRuleRangeKind(getTCode(state.scheduleForm.tCode));
         const isDateRange = scheduleRangeKind === "dateRange";
         const isBusinessAreaRange = scheduleRangeKind === "businessArea";
+        const fixedBusinessAreas = !allowsCustomScheduleBusinessAreaScope(state.scheduleForm.tCode) &&
+          isBusinessAreaRange && hasFixedConfiguredBusinessAreas(getTCode(state.scheduleForm.tCode));
+        const schedulePlants = fixedBusinessAreas
+          ? getDefaultRunRangeForTCode(state.scheduleForm.tCode, state.scheduleForm.factoryGroup)
+          : normalizeRulePlantList(state.scheduleForm.plants);
         const scheduleAreas = isDateRange ? [] : (isBusinessAreaRange ? schedulePlants : getBusinessAreasForSelection(state.scheduleForm.tCode, schedulePlants, state.scheduleForm.factoryGroup));
         const scheduleRange = getLastFullWeekDateRange();
         const scheduleTestDateOverride = renderScheduleTestDateOverrideControl(state.scheduleForm.tCode);
+        const scheduleFrequencyValue = scheduleFrequencyCode(state.scheduleForm.frequency || "weekly");
+        const scheduleWeekdayFallback = scheduleFrequencyValue === "weekly" ? "monday" : "";
+        const scheduleWeekdaySource = state.scheduleForm.weekday || (scheduleFrequencyValue === "weekly" ? state.scheduleForm.frequency : "");
+        const scheduleWeekdayValue = normalizeScheduleWeekday(scheduleWeekdaySource, scheduleWeekdayFallback);
+        const scheduleMonthlyLegacyOption = scheduleFrequencyValue === "monthly" && !scheduleWeekdayValue
+          ? `<option value="" selected>\u6309\u539F\u6BCF\u6708\u65E5\u671F</option>`
+          : "";
+        const scheduleWeekdayControl = scheduleFrequencyValue === "weekly" || scheduleFrequencyValue === "monthly" ? `
+                  <div class="field"><label>${scheduleFrequencyValue === "monthly" ? "\u6708\u5EA6\u661F\u671F" : "执行星期"}</label><select id="scheduleWeekday">${scheduleMonthlyLegacyOption}${getScheduleWeekdayOptions().map(option => `<option value="${option.value}" ${scheduleWeekdayValue === option.value ? "selected" : ""}>${option.label}</option>`).join("")}</select></div>` : "";
         const scheduleScopeEditor = isDateRange ? `
                   <div class="schedule-plant-preview">
                     <div class="schedule-plant-title">日期范围</div>
                     <input type="hidden" id="schedulePlants" value="">
                     <div id="schedulePlantChips" class="area-chips">${renderCodeChips([`开始 ${scheduleRange.period}`, `截止 ${scheduleRange.weekEnd}`])}</div>
                     <div class="table-hint">实际定时触发时按服务器系统日期重新计算上一完整周。</div>
+                  </div>` : fixedBusinessAreas ? `
+                  <div class="schedule-plant-preview">
+                    <div class="schedule-plant-title">固定业务范围代码</div>
+                    <input type="hidden" id="schedulePlants" value="${esc(schedulePlants.join(","))}">
+                    <div id="schedulePlantChips" class="area-chips">${renderCodeChips(schedulePlants)}</div>
+                    <div class="table-hint">范围以基础配置为准；运行时工厂由 SAP 表 ZFIT_RPA_BUKRS 按 GSBER 查询。</div>
                   </div>` : `
                   <div class="schedule-plant-preview">
                     <div class="rule-plant-head">
@@ -1403,11 +1479,12 @@
               <div class="modal-header"><strong>${state.scheduleForm.id ? "编辑定时任务" : "新建定时任务"}</strong><button class="btn small" data-action="close-modal">${icon("x")}关闭</button></div>
               <div class="modal-body">
                 <div class="form-grid">
-                  <div class="field"><label>事务码</label><select id="scheduleTCode">${executableTCodes.map(t => `<option value="${t.code}" ${state.scheduleForm.tCode === t.code ? "selected" : ""}>${t.code} - ${t.name}</option>`).join("")}</select></div>
+                  <div class="field"><label>事务码</label><select id="scheduleTCode">${scheduleTCodeOptions.map(option => `<option value="${option.value}" ${scheduleTCodeValue === option.value ? "selected" : ""}>${option.label}</option>`).join("")}</select></div>
                   <div class="field span-2"><label>任务名称</label><input id="scheduleName" value="${esc(state.scheduleForm.name)}" placeholder="选择事务码后自动带出，可继续补充"></div>
                   <div class="field"><label>业务范围</label><select id="scheduleFactoryGroup">${factoryGroups.map(group => `<option value="${group.id}" ${state.scheduleForm.factoryGroup === group.id ? "selected" : ""}>${getFactoryGroup(group.id).name}</option>`).join("")}</select></div>
                   <div class="field"><label>执行时间</label><input id="scheduleTime" type="time" value="${esc(state.scheduleForm.execTime)}"></div>
-                  <div class="field"><label>执行频率</label><select id="scheduleFrequency"><option value="daily" ${state.scheduleForm.frequency === "daily" ? "selected" : ""}>每天</option><option value="weekly" ${state.scheduleForm.frequency === "weekly" ? "selected" : ""}>每周</option><option value="monthly" ${state.scheduleForm.frequency === "monthly" ? "selected" : ""}>每月</option></select></div>
+                  <div class="field"><label>执行频率</label><select id="scheduleFrequency"><option value="daily" ${scheduleFrequencyValue === "daily" ? "selected" : ""}>每天</option><option value="weekly" ${scheduleFrequencyValue === "weekly" ? "selected" : ""}>每周</option><option value="monthly" ${scheduleFrequencyValue === "monthly" ? "selected" : ""}>每月</option></select></div>
+${scheduleWeekdayControl}
                   <div class="field"><label>状态</label><label class="radio-chip"><input id="scheduleEnabled" type="checkbox" ${state.scheduleForm.enabled === false ? "" : "checked"}>启用</label></div>
 ${scheduleScopeEditor}
 ${scheduleTestDateOverride}
@@ -1550,7 +1627,7 @@ ${scheduleTestDateOverride}
     }
 
     function renderRuleModalBody(mode, id) {
-      const item = mode === "edit" ? getTCode(id) : null;
+      const item = mode === "edit" ? transactionRules.find(rule => rule.code === id) : null;
       const data = item || { code: "", name: "", module: "", stage: "并行启动", script: "", params: ["year", "week", "plants"], factoryRule: "", defaultPlantGroup: factoryGroups[0]?.id || "", plants: [], fixedPlants: [], selectableGroupIds: [], businessAreaMode: "byPlant", businessAreas: [], automation: "openOnly", timeout: 180, retry: 2, enabled: true };
       const selectedGroupId = data.defaultPlantGroup || factoryGroups[0]?.id || "";
       const defaultPlants = getDefaultPlantsForTCode(data.code, selectedGroupId);

@@ -1,23 +1,23 @@
 ' @tcode=ZFI019NA
 ' @name=ZFI019NA receipt export
-' @params=plants
+' @params=businessAreas
 ' @dateRule=LAST_FULL_WEEK_BY_SYSTEM_DATE
-' @factoryRule=single plant supplied by launcher/API
+' @factoryRule=single business area supplied by launcher/API
 '
 ' Standardized for SapWebLauncher. Source is ASCII/WSH safe.
 
 On Error Resume Next
 
-Dim tcode, plantsCsv, factoryGroup
+Dim tcode, businessAreasCsv, factoryGroup
 Dim yearValue, weekValue, periodValue, weekEndValue, dateLowValue, dateHighValue
-Dim plantValue
+Dim businessAreaValue
 Dim SapGuiAuto, application, connection, session
 Dim retries, sleepMs, statusType, statusText
-Dim unresolvedOkCodeToken, unresolvedPlantsToken, unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
+Dim unresolvedOkCodeToken, unresolvedAreasToken, unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
 Dim alvExportDir, alvExportFilename, scriptDir, exportTimeoutMs, alvHelperLoaded
 
 tcode = "{OK_CODE}"
-plantsCsv = "{PLANTS}"
+businessAreasCsv = "{BUSINESS_AREAS}"
 factoryGroup = "{FACTORY_GROUP}"
 yearValue = "{YEAR}"
 weekValue = "{WEEK}"
@@ -29,13 +29,13 @@ scriptDir = "{SCRIPT_DIR}"
 exportTimeoutMs = 180000
 alvHelperLoaded = False
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
-unresolvedPlantsToken = "{" & "PLANTS" & "}"
+unresolvedAreasToken = "{" & "BUSINESS_AREAS" & "}"
 unresolvedAlvExportDirToken = "{" & "ALV_EXPORT_DIR" & "}"
 unresolvedAlvExportFilenameToken = "{" & "ALV_EXPORT_FILENAME" & "}"
 
 If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFI019NA"
 If UCase(Trim(CStr(tcode))) <> "ZFI019NA" Then Fail "ZFI019NA script refuses tcode=" & CStr(tcode), 10
-If Trim(CStr(plantsCsv)) = unresolvedPlantsToken Then plantsCsv = ""
+If Trim(CStr(businessAreasCsv)) = unresolvedAreasToken Then businessAreasCsv = ""
 If IsPlaceholder(yearValue, "YEAR") Then yearValue = ""
 If IsPlaceholder(weekValue, "WEEK") Then weekValue = ""
 If IsPlaceholder(periodValue, "PERIOD") Then periodValue = ""
@@ -44,8 +44,8 @@ If Trim(CStr(alvExportDir)) = unresolvedAlvExportDirToken Then alvExportDir = ""
 If Trim(CStr(alvExportFilename)) = unresolvedAlvExportFilenameToken Then alvExportFilename = ""
 If IsPlaceholder(scriptDir, "SCRIPT_DIR") Then scriptDir = ""
 
-plantValue = FirstCsvValue(plantsCsv)
-If plantValue = "" Then Fail "ZFI019NA requires one plant from {PLANTS}", 5
+businessAreaValue = FirstCsvValue(businessAreasCsv)
+If businessAreaValue = "" Then Fail "ZFI019NA requires one business area from {BUSINESS_AREAS}", 5
 
 ResolveDates
 
@@ -294,7 +294,7 @@ WScript.Echo "INFO: year=" & yearValue
 WScript.Echo "INFO: week=" & weekValue
 WScript.Echo "INFO: period=" & dateLowValue
 WScript.Echo "INFO: weekEnd=" & dateHighValue
-If plantValue <> "" Then WScript.Echo "INFO: plant=" & plantValue
+If businessAreaValue <> "" Then WScript.Echo "INFO: businessArea=" & businessAreaValue
 If factoryGroup <> "" And Not IsPlaceholder(factoryGroup, "FACTORY_GROUP") Then WScript.Echo "INFO: factoryGroup=" & factoryGroup
 
 Err.Clear
@@ -309,7 +309,7 @@ CheckSapStatus "open transaction"
 ' === SAP operation block ===
 SetField "budat-low", "wnd[0]/usr/ctxtS_BUDAT-LOW", dateLowValue
 SetField "budat-high", "wnd[0]/usr/ctxtS_BUDAT-HIGH", dateHighValue
-SetField "werks-low", "wnd[0]/usr/ctxtS_WERKS-LOW", plantValue
+SetField "gsber-low", "wnd[0]/usr/ctxtS_GSBER-LOW", businessAreaValue
 PressExecute
 WaitReady 600000
 SelectAllGrid

@@ -13,7 +13,8 @@ Dim yearValue, weekValue, periodValue, weekEndValue, dateLowValue, dateHighValue
 Dim plantValue
 Dim SapGuiAuto, application, connection, session
 Dim retries, sleepMs, statusType, statusText
-Dim unresolvedOkCodeToken, unresolvedPlantsToken
+Dim unresolvedOkCodeToken, unresolvedPlantsToken, unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
+Dim alvExportDir, alvExportFilename, scriptDir, exportTimeoutMs, alvHelperLoaded
 
 tcode = "{OK_CODE}"
 plantsCsv = "{PLANTS}"
@@ -22,8 +23,15 @@ yearValue = "{YEAR}"
 weekValue = "{WEEK}"
 periodValue = "{PERIOD}"
 weekEndValue = "{WEEK_END}"
+alvExportDir = "{ALV_EXPORT_DIR}"
+alvExportFilename = "{ALV_EXPORT_FILENAME}"
+scriptDir = "{SCRIPT_DIR}"
+exportTimeoutMs = 180000
+alvHelperLoaded = False
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
 unresolvedPlantsToken = "{" & "PLANTS" & "}"
+unresolvedAlvExportDirToken = "{" & "ALV_EXPORT_DIR" & "}"
+unresolvedAlvExportFilenameToken = "{" & "ALV_EXPORT_FILENAME" & "}"
 
 If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFI148"
 If UCase(Trim(CStr(tcode))) <> "ZFI148" Then Fail "ZFI148 script refuses tcode=" & CStr(tcode), 10
@@ -32,6 +40,9 @@ If IsPlaceholder(yearValue, "YEAR") Then yearValue = ""
 If IsPlaceholder(weekValue, "WEEK") Then weekValue = ""
 If IsPlaceholder(periodValue, "PERIOD") Then periodValue = ""
 If IsPlaceholder(weekEndValue, "WEEK_END") Then weekEndValue = ""
+If Trim(CStr(alvExportDir)) = unresolvedAlvExportDirToken Then alvExportDir = ""
+If Trim(CStr(alvExportFilename)) = unresolvedAlvExportFilenameToken Then alvExportFilename = ""
+If IsPlaceholder(scriptDir, "SCRIPT_DIR") Then scriptDir = ""
 
 plantValue = FirstCsvValue(plantsCsv)
 If plantValue = "" Then Fail "ZFI148 requires one plant from {PLANTS}", 5
@@ -70,6 +81,43 @@ Function CsvCount(value)
    Next
    CsvCount = count
 End Function
+
+Function CombinePath(folderPath, fileName)
+   If Right(CStr(folderPath), 1) = "\" Then
+      CombinePath = CStr(folderPath) & CStr(fileName)
+   Else
+      CombinePath = CStr(folderPath) & "\" & CStr(fileName)
+   End If
+End Function
+
+Function LoadAlvExportHelper()
+   Dim fso, helperPath, textFile, helperText
+   On Error Resume Next
+   LoadAlvExportHelper = False
+   If alvHelperLoaded Then
+      LoadAlvExportHelper = True
+      Exit Function
+   End If
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If Trim(CStr(scriptDir)) = "" Then scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+   helperPath = CombinePath(scriptDir, "sap_alv_export_helper.vbs")
+   If Not fso.FileExists(helperPath) Then Fail "ALV export helper not found: " & helperPath, 8
+   Set textFile = fso.OpenTextFile(helperPath, 1, False, -2)
+   If Err.Number <> 0 Then Fail "open ALV export helper failed - " & Err.Description, 8
+   helperText = textFile.ReadAll
+   textFile.Close
+   ExecuteGlobal helperText
+   If Err.Number <> 0 Then Fail "load ALV export helper failed - " & Err.Description, 8
+   alvHelperLoaded = True
+   LoadAlvExportHelper = True
+   Err.Clear
+End Function
+
+Sub ExportAlvResult(label)
+   If Not LoadAlvExportHelper() Then Fail "ALV export helper could not be loaded", 8
+   If Not AlvExportIfConfigured(session, alvExportDir, alvExportFilename, exportTimeoutMs) Then Fail "ALV export returned false after " & label, 8
+   WScript.Echo "INFO: ALV export completed after " & label
+End Sub
 
 Function FormatSapDate(value)
    FormatSapDate = Year(value) & "." & Right("0" & Month(value), 2) & "." & Right("0" & Day(value), 2)
@@ -269,6 +317,7 @@ SetFieldByCandidates "p-week", Array("wnd[0]/usr/txtP_WEEK", "wnd[0]/usr/ctxtP_W
 FocusFieldByCandidates Array("wnd[0]/usr/txtP_WEEK", "wnd[0]/usr/ctxtP_WEEK"), weekValue
 
 PressToolbarButton "wnd[0]/tbar[1]/btn[8]", "execute"
+ExportAlvResult "execute"
 PressToolbarButton "wnd[0]/tbar[1]/btn[16]", "toolbar button 16"
 PressToolbarButton "wnd[0]/tbar[1]/btn[13]", "toolbar button 13"
 

@@ -444,27 +444,98 @@
       return "未识别 token";
     }
 
-    function formatScheduleFrequency(value) {
+    const SCHEDULE_WEEKDAY_OPTIONS = [
+      { value: "monday", label: "周一" },
+      { value: "tuesday", label: "周二" },
+      { value: "wednesday", label: "周三" },
+      { value: "thursday", label: "周四" },
+      { value: "friday", label: "周五" },
+      { value: "saturday", label: "周六" },
+      { value: "sunday", label: "周日" }
+    ];
+
+    function getScheduleWeekdayOptions() {
+      return SCHEDULE_WEEKDAY_OPTIONS.map(item => ({ ...item }));
+    }
+
+    function normalizeScheduleWeekday(value, fallback = "monday") {
+      const raw = String(value ?? "").trim();
+      const normalized = raw.toLowerCase().replace(/[\s_\-]+/g, "");
       const map = {
-        daily: "每天",
-        weekly: "每周",
-        monthly: "每月",
-        "每天": "每天",
-        "每周": "每周",
-        "每月": "每月",
-        "每周一": "每周一"
+        "1": "monday", "01": "monday", mon: "monday", monday: "monday", "周一": "monday", "星期一": "monday", "礼拜一": "monday", "每周一": "monday", "每星期一": "monday",
+        "2": "tuesday", "02": "tuesday", tue: "tuesday", tues: "tuesday", tuesday: "tuesday", "周二": "tuesday", "星期二": "tuesday", "礼拜二": "tuesday", "每周二": "tuesday", "每星期二": "tuesday",
+        "3": "wednesday", "03": "wednesday", wed: "wednesday", wednesday: "wednesday", "周三": "wednesday", "星期三": "wednesday", "礼拜三": "wednesday", "每周三": "wednesday", "每星期三": "wednesday",
+        "4": "thursday", "04": "thursday", thu: "thursday", thur: "thursday", thurs: "thursday", thursday: "thursday", "周四": "thursday", "星期四": "thursday", "礼拜四": "thursday", "每周四": "thursday", "每星期四": "thursday",
+        "5": "friday", "05": "friday", fri: "friday", friday: "friday", "周五": "friday", "星期五": "friday", "礼拜五": "friday", "每周五": "friday", "每星期五": "friday",
+        "6": "saturday", "06": "saturday", sat: "saturday", saturday: "saturday", "周六": "saturday", "星期六": "saturday", "礼拜六": "saturday", "每周六": "saturday", "每星期六": "saturday",
+        "0": "sunday", "7": "sunday", "00": "sunday", "07": "sunday", sun: "sunday", sunday: "sunday", "周日": "sunday", "周天": "sunday", "星期日": "sunday", "星期天": "sunday", "礼拜日": "sunday", "礼拜天": "sunday", "每周日": "sunday", "每周天": "sunday", "每星期日": "sunday", "每星期天": "sunday"
+      };
+      const monthlyMatch = normalized.match(/^(?:\u6BCF\u6708(?:\u9996\u4E2A|\u7B2C\u4E00\u4E2A)?)(.+)$/);
+      if (monthlyMatch && map[monthlyMatch[1]]) return map[monthlyMatch[1]];
+      if (map[normalized]) return map[normalized];
+      if (fallback === "") return "";
+      return SCHEDULE_WEEKDAY_OPTIONS.some(item => item.value === fallback) ? fallback : "monday";
+    }
+
+    function formatScheduleWeekday(value) {
+      const normalized = normalizeScheduleWeekday(value, "");
+      return SCHEDULE_WEEKDAY_OPTIONS.find(item => item.value === normalized)?.label || "";
+    }
+
+    function formatScheduleFrequency(value, weekday = "") {
+      const code = scheduleFrequencyCode(value);
+      if (code === "weekly") {
+        const label = formatScheduleWeekday(weekday || value);
+        return label ? `每${label}` : "每周";
+      }
+      if (code === "monthly") {
+        const label = formatScheduleWeekday(weekday || value);
+        return label ? `\u6BCF\u6708\u9996\u4E2A${label}` : "\u6BCF\u6708";
+      }
+      const map = {
+        daily: "\u6BCF\u5929",
+        monthly: "\u6BCF\u6708",
+        "\u6BCF\u5929": "\u6BCF\u5929",
+        "\u6BCF\u6708": "\u6BCF\u6708"
       };
       return map[value] || value || "每周";
     }
 
     function scheduleFrequencyCode(value) {
+      const raw = String(value ?? "").trim();
+      const normalized = raw.toLowerCase().replace(/[\s_\-]+/g, "");
       const map = {
         "每天": "daily",
+        day: "daily",
+        daily: "daily",
+        everyday: "daily",
         "每周": "weekly",
+        week: "weekly",
+        weekly: "weekly",
+        everyweek: "weekly",
         "每周一": "weekly",
-        "每月": "monthly"
+        "每周二": "weekly",
+        "每周三": "weekly",
+        "每周四": "weekly",
+        "每周五": "weekly",
+        "每周六": "weekly",
+        "每周日": "weekly",
+        "每周天": "weekly",
+        "每星期一": "weekly",
+        "每星期二": "weekly",
+        "每星期三": "weekly",
+        "每星期四": "weekly",
+        "每星期五": "weekly",
+        "每星期六": "weekly",
+        "每星期日": "weekly",
+        "每星期天": "weekly",
+        "每月": "monthly",
+        month: "monthly",
+        monthly: "monthly",
+        everymonth: "monthly"
       };
-      return map[value] || value || "weekly";
+      if (/^\u6BCF\u6708/.test(raw)) return "monthly";
+      return map[normalized] || map[raw] || value || "weekly";
     }
 
     function formatScheduleStatus(value, enabled = true) {
@@ -477,7 +548,10 @@
     }
 
     function restoreFallbackConfig({ includeTransactions = true } = {}) {
-      if (includeTransactions) tCodes = clonePlain(fallbackConfig.tCodes);
+      if (includeTransactions) {
+        tCodes = clonePlain(fallbackConfig.tCodes);
+        transactionRules = clonePlain(fallbackConfig.transactionRules);
+      }
       plants = clonePlain(fallbackConfig.plants);
       factoryGroups = clonePlain(fallbackConfig.factoryGroups);
       robots = clonePlain(fallbackConfig.robots);

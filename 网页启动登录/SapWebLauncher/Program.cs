@@ -20,6 +20,16 @@ using System.Threading;
 
 namespace SapWebLauncher;
 
+sealed class ApiRequestException : Exception
+{
+    public int StatusCode { get; }
+
+    public ApiRequestException(int statusCode, string message) : base(message)
+    {
+        StatusCode = statusCode;
+    }
+}
+
 static class Program
 {
     private const string PrimaryProtocolName = "sap-rpa";
@@ -133,10 +143,10 @@ static class Program
         }
 
         if (args.Length > 0 &&
-            (args[0].Equals("--test-zfi057-get-gs03", StringComparison.OrdinalIgnoreCase) ||
-             args[0].Equals("test-zfi057-get-gs03", StringComparison.OrdinalIgnoreCase)))
+            (args[0].Equals("--test-zfi057-bukrs-mapping", StringComparison.OrdinalIgnoreCase) ||
+             args[0].Equals("test-zfi057-bukrs-mapping", StringComparison.OrdinalIgnoreCase)))
         {
-            Environment.Exit(RunZfi057GetGs03Diagnostic(args.Skip(1).ToArray()));
+            Environment.Exit(RunZfi057BukrsMappingDiagnostic(args.Skip(1).ToArray()));
             return;
         }
 
@@ -145,6 +155,14 @@ static class Program
              args[0].Equals("test-zbu-mapping", StringComparison.OrdinalIgnoreCase)))
         {
             Environment.Exit(RunAlvOrganizationMappingDiagnostic(args.Skip(1).ToArray()));
+            return;
+        }
+
+        if (args.Length > 0 &&
+            (args[0].Equals("--test-dingtalk-gateway-config", StringComparison.OrdinalIgnoreCase) ||
+             args[0].Equals("test-dingtalk-gateway-config", StringComparison.OrdinalIgnoreCase)))
+        {
+            Environment.Exit(RunDingTalkGatewayConfigDiagnostic());
             return;
         }
 
@@ -189,7 +207,7 @@ static class Program
         Console.WriteLine($"  初始化本机数据库: {Process.GetCurrentProcess().ProcessName}.exe --init-db");
         Console.WriteLine($"  启动本机 Bridge API: {Process.GetCurrentProcess().ProcessName}.exe --serve");
         Console.WriteLine($"  诊断 ZFI019NL memory 取数: {Process.GetCurrentProcess().ProcessName}.exe --test-zfi019nl-memory --businessArea 2800 --period 2026.04.27 --weekEnd 2026.05.03");
-        Console.WriteLine($"  诊断 ZFI057 业务范围工厂: {Process.GetCurrentProcess().ProcessName}.exe --test-zfi057-get-gs03 --businessArea 2800 --setName Z31");
+        Console.WriteLine($"  诊断 ZFI057 业务范围工厂: {Process.GetCurrentProcess().ProcessName}.exe --test-zfi057-bukrs-mapping --businessArea 2800");
         Console.WriteLine($"  或从浏览器跳转 {PrimaryProtocolName}://run?action=run&tcode=ZFI019NL&script=ZFI019NL.vbs&businessAreas=2800");
     }
 
@@ -490,7 +508,7 @@ static class Program
         }
     }
 
-    static int RunZfi057GetGs03Diagnostic(string[] args)
+    static int RunZfi057BukrsMappingDiagnostic(string[] args)
     {
         try
         {
@@ -499,10 +517,6 @@ static class Program
             string businessArea = FirstNonEmpty(
                 First(values, "businessArea", "businessarea", "gsber") ?? "",
                 "2800");
-            string setName = FirstNonEmpty(
-                First(values, "setName", "setname", "gs03SetName", "gs03setname") ?? "",
-                LoadZfi057Gs03SetName(),
-                SapGs03PlantFetcher.DefaultSetName);
 
             var p = ApplyLocalConfig(new SapRunParams
             {
@@ -514,24 +528,20 @@ static class Program
             });
 
             SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
-            var result = new SapGs03PlantFetcher().FetchPlantsForBusinessArea(connectionConfig, businessArea, setName);
-            Console.WriteLine("ZFI057 GET_GS03 diagnostic");
+            var result = new Zfi057BusinessAreaPlantFetcher().Fetch(connectionConfig, businessArea);
+            Console.WriteLine("ZFI057 ZFIT_RPA_BUKRS mapping diagnostic");
             Console.WriteLine($"status={(result.Success ? "success" : "failed")}");
             Console.WriteLine($"message={result.Message}");
-            Console.WriteLine($"action={result.Action}");
-            Console.WriteLine($"setName={result.SetName}");
+            Console.WriteLine($"table={Zfi057BusinessAreaPlantFetcher.TableName}");
             Console.WriteLine($"businessArea={businessArea}");
             Console.WriteLine($"plants={string.Join(",", result.Plants)}");
             Console.WriteLine($"plantCount={result.Plants.Count}");
-            Console.WriteLine($"jsonInput={result.JsonInput}");
-            Console.WriteLine($"jsonOutput={Truncate(result.JsonOutput, 4000)}");
-            Console.WriteLine($"rawLines={string.Join(" | ", result.RawLines.Take(20))}");
             return result.Success && result.Plants.Count > 0 ? 0 : 2;
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"ZFI057 GET_GS03 diagnostic failed: {ex.Message}");
-            Log($"ZFI057 GET_GS03 diagnostic failed: {ex}");
+            Console.Error.WriteLine($"ZFI057 ZFIT_RPA_BUKRS mapping diagnostic failed: {ex.Message}");
+            Log($"ZFI057 ZFIT_RPA_BUKRS mapping diagnostic failed: {ex}");
             return 1;
         }
     }
@@ -584,6 +594,27 @@ static class Program
         {
             Console.Error.WriteLine($"SAP ALV organization mapping diagnostic failed: {ex.Message}");
             Log($"SAP ALV organization mapping diagnostic failed: {ex}");
+            return 1;
+        }
+    }
+
+    static int RunDingTalkGatewayConfigDiagnostic()
+    {
+        try
+        {
+            DingTalkGatewayConfigFetchResult result = FetchDingTalkGatewayConfig();
+            Console.WriteLine("SAP DingTalk gateway configuration diagnostic");
+            Console.WriteLine($"status={(result.Success ? "success" : "failed")}");
+            Console.WriteLine($"table={DingTalkGatewayConfigFetcher.TableName}");
+            Console.WriteLine($"filter={DingTalkGatewayConfigFetcher.ProgramField}={DingTalkGatewayConfigFetcher.ProgramValue}");
+            Console.WriteLine($"baseUrl={result.BaseUrl}");
+            Console.WriteLine($"message={result.Message}");
+            return result.Success ? 0 : 2;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"SAP DingTalk gateway configuration diagnostic failed: {ex.Message}");
+            Log($"SAP DingTalk gateway configuration diagnostic failed: {ex}");
             return 1;
         }
     }
@@ -661,22 +692,22 @@ static class Program
         string[] step2Plants = plants.Where(plant => !string.IsNullOrWhiteSpace(plant)).ToArray();
         if (step2Plants.Length == 0)
         {
-            lines.Add("no step2 plants resolved by GET_GS03");
+            lines.Add("no step2 plants resolved by ZFIT_RPA_BUKRS");
         }
 
-        if (step2Plants.Length > 0)
+        for (int plantIndex = 0; plantIndex < step2Plants.Length; plantIndex++)
         {
             var step2 = CloneSapRunParams(p);
             step2.TCode = "ZFI057";
             step2.Script = "ZFI057.vbs";
             step2.BusinessAreas = businessArea;
             step2.BusinessArea = businessArea;
-            step2.Plants = string.Join(",", step2Plants);
-            step2.Plant = "";
+            step2.Plants = step2Plants[plantIndex];
+            step2.Plant = step2Plants[plantIndex];
             step2.Materials = "";
             step2.RunStrategy = "workflow-step";
             step2.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 1800);
-            lines.Add(BuildZfi057Step2InputSummary(step2, businessArea, step2.Plants, 1, 1, fetch.Materials.Length));
+            lines.Add(BuildZfi057Step2InputSummary(step2, businessArea, step2.Plants, plantIndex + 1, step2Plants.Length, fetch.Materials.Length));
         }
 
         lines.AddRange(new[]
@@ -746,8 +777,8 @@ static class Program
             $"businessArea={businessArea}",
             $"plantCount={plantItems.Length}",
             $"plants={plantText}",
-            $"GET_GS03.TITLE={businessArea}",
-            $"GET_GS03.FROM={plantText}",
+            $"ZFIT_RPA_BUKRS.GSBER={businessArea}",
+            $"ZFIT_RPA_BUKRS.WERKS={plantText}",
             $"S_WERKS.mode={werksMode}",
             $"S_WERKS-LOW.seed={werksSeed}",
             $"S_WERKS.items={plantText}",
@@ -780,6 +811,12 @@ static class Program
         return string.Join("; ", parts);
     }
 
+    static DateTime GetZfi057PreviousReleaseMonthStart(DateTime end)
+    {
+        DateTime previousReleaseMonth = end.AddMonths(end.Month % 2 == 0 ? -1 : -2);
+        return new DateTime(previousReleaseMonth.Year, previousReleaseMonth.Month, 1);
+    }
+
     static List<Zfi057Step2DateWindow> ResolveZfi057Step2DateWindows(string period, string weekEnd)
     {
         var defaultRange = ResolveDefaultExecutionDateRange();
@@ -798,14 +835,25 @@ static class Program
             };
         }
 
-        DateTime previousMonthOfStart = start.AddMonths(-1);
-        DateTime previousMonthStart = new(previousMonthOfStart.Year, previousMonthOfStart.Month, 1);
-        DateTime startMonthEnd = firstOfEndMonth.AddDays(-1);
-        return new List<Zfi057Step2DateWindow>
+        DateTime releaseMonthStart = GetZfi057PreviousReleaseMonthStart(end);
+        var windows = new List<Zfi057Step2DateWindow>();
+        DateTime currentMonthStart = releaseMonthStart;
+        int index = 1;
+
+        while (currentMonthStart <= firstOfEndMonth)
         {
-            new(1, FormatSapDate(previousMonthStart), FormatSapDate(startMonthEnd), FormatSapDate(previousMonthStart.AddDays(1)), FormatSapDate(startMonthEnd)),
-            new(2, FormatSapDate(firstOfEndMonth), FormatSapDate(end), FormatSapDate(firstOfEndMonth.AddDays(1)), FormatSapDate(end))
-        };
+            DateTime currentMonthEnd = currentMonthStart.AddMonths(1).AddDays(-1);
+            DateTime windowHigh = currentMonthStart.Year == end.Year && currentMonthStart.Month == end.Month ? end : currentMonthEnd;
+            windows.Add(new Zfi057Step2DateWindow(
+                index++,
+                FormatSapDate(currentMonthStart),
+                FormatSapDate(windowHigh),
+                FormatSapDate(currentMonthStart.AddDays(1)),
+                FormatSapDate(windowHigh)));
+            currentMonthStart = currentMonthStart.AddMonths(1);
+        }
+
+        return windows;
     }
 
     static string FindLogicalSapLine(IEnumerable<string> rawLines, string prefix)
@@ -1088,6 +1136,7 @@ static class Program
             Script = script,
             Plant = First(query, "plant", "werks") ?? "",
             Plants = First(query, "plants", "werkslist", "plantlist") ?? "",
+            Zfi057PlantFilter = First(query, "zfi057plantfilter", "zfi057_plant_filter", "zfi057plantfiltercsv") ?? "",
             Year = First(query, "year", "gjahr") ?? "",
             Week = First(query, "week", "weekno", "wk") ?? "",
             Period = First(query, "period", "periodtext", "startDate", "start_date", "fromDate", "dateFrom", "beginDate", "dateBegin") ?? "",
@@ -1110,6 +1159,7 @@ static class Program
             ButtonId = First(query, "button", "buttonid") ?? "",
             RunId = First(query, "runid", "run_id") ?? "",
             ParentRunId = First(query, "parentrunid", "parent_run_id") ?? "",
+            IsScheduleSnapshot = First(query, "schedulesnapshot") == "1",
             TimeoutSeconds = ParseOptionalPositiveInt(First(query, "timeoutseconds", "timeout", "vbstimeoutseconds"))
         };
 
@@ -1134,6 +1184,7 @@ static class Program
         }
 
         p.Plants = NormalizePlantCodesCsv(FirstNonEmpty(p.Plants, p.Plant));
+        p.Zfi057PlantFilter = "";
         p.BusinessAreas = NormalizeCsv(FirstNonEmpty(p.BusinessAreas, p.BusinessArea));
         p.Plant = FirstCsvValue(p.Plants);
         p.BusinessArea = FirstCsvValue(p.BusinessAreas);
@@ -1227,14 +1278,22 @@ static class Program
         string scriptFile = "";
         string automation = "";
         string defaultGroup = "";
+        string businessAreaMode = "";
+        string businessAreasJson = "[]";
         int timeoutSeconds = 0;
 
         using (var command = connection.CreateCommand())
         {
             command.CommandText = """
-SELECT script_file, automation, default_group, timeout_seconds
-FROM transactions
-WHERE tcode=$tcode AND enabled=1;
+SELECT t.script_file,
+       t.automation,
+       COALESCE(r.default_group, t.default_group),
+       t.timeout_seconds,
+       COALESCE(r.business_area_mode, ''),
+       COALESCE(r.business_areas_json, '[]')
+FROM transactions t
+LEFT JOIN transaction_plant_rules r ON r.tcode=t.tcode AND r.enabled=1
+WHERE t.tcode=$tcode AND t.enabled=1;
 """;
             command.Parameters.AddWithValue("$tcode", p.TCode.ToUpperInvariant());
             using var reader = command.ExecuteReader();
@@ -1244,7 +1303,19 @@ WHERE tcode=$tcode AND enabled=1;
                 automation = reader.GetString(1);
                 defaultGroup = reader.GetString(2);
                 timeoutSeconds = reader.GetInt32(3);
+                businessAreaMode = reader.GetString(4);
+                businessAreasJson = reader.GetString(5);
             }
+        }
+
+        // A queued schedule must run with the scope saved on that schedule. Transaction rules
+        // still supply script and timeout defaults, but must not replace its plant/area snapshot.
+        if (!p.IsScheduleSnapshot)
+        {
+            if (AllowsCustomBusinessAreaScope(p.TCode))
+                ApplyCustomBusinessAreaScope(p, GetFixedBusinessAreasCsv(businessAreaMode, businessAreasJson));
+            else
+                ApplyFixedBusinessAreaScope(p, GetFixedBusinessAreasCsv(businessAreaMode, businessAreasJson));
         }
 
         if (timeoutSeconds > 0 && (!p.TimeoutSeconds.HasValue || p.TimeoutSeconds.Value <= 0))
@@ -1493,6 +1564,26 @@ WHERE tcode=$tcode AND enabled=1;
             }
 
             if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                path.Equals("/api/diagnostics/dingtalk-gateway", StringComparison.OrdinalIgnoreCase))
+            {
+                DingTalkGatewayConfigFetchResult result = FetchDingTalkGatewayConfig();
+                WriteJson(context.Response, new
+                {
+                    ok = result.Success,
+                    source = new
+                    {
+                        table = DingTalkGatewayConfigFetcher.TableName,
+                        filterField = DingTalkGatewayConfigFetcher.ProgramField,
+                        filterValue = DingTalkGatewayConfigFetcher.ProgramValue,
+                        valueField = DingTalkGatewayConfigFetcher.UrlField
+                    },
+                    baseUrl = result.BaseUrl,
+                    message = result.Message
+                }, result.Success ? 200 : 503);
+                return;
+            }
+
+            if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                 path.Equals("/api/transactions", StringComparison.OrdinalIgnoreCase))
             {
                 WriteJson(context.Response, LoadTransactionsFromDatabase());
@@ -1551,15 +1642,20 @@ WHERE tcode=$tcode AND enabled=1;
                 context.Request.HttpMethod.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
             {
                 string tcode = SanitizeTCode(transactionMatch.Groups[1].Value).ToUpperInvariant();
-                SetTransactionEnabled(tcode, enabled: false);
-                WriteJson(context.Response, new { ok = true, code = tcode, enabled = false });
+                if (!DeleteTransaction(tcode))
+                {
+                    WriteJson(context.Response, new { error = $"transaction not found: {tcode}" }, 404);
+                    return;
+                }
+
+                WriteJson(context.Response, new { ok = true, code = tcode, deleted = true });
                 return;
             }
 
             if (context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
                 path.Equals("/api/config", StringComparison.OrdinalIgnoreCase))
             {
-                WriteJson(context.Response, LoadBasicConfig());
+                WriteJson(context.Response, LoadBasicConfig(context.Request));
                 return;
             }
 
@@ -1577,8 +1673,13 @@ WHERE tcode=$tcode AND enabled=1;
                 context.Request.HttpMethod.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
             {
                 string code = SanitizePlantCode(plantMatch.Groups[1].Value);
-                SetPlantEnabled(code, enabled: false);
-                WriteJson(context.Response, new { ok = true, code, enabled = false });
+                if (!DeletePlant(code))
+                {
+                    WriteJson(context.Response, new { error = $"plant not found: {code}" }, 404);
+                    return;
+                }
+
+                WriteJson(context.Response, new { ok = true, code, deleted = true });
                 return;
             }
 
@@ -1596,8 +1697,13 @@ WHERE tcode=$tcode AND enabled=1;
                 context.Request.HttpMethod.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
             {
                 string id = SanitizeConfigId(plantGroupMatch.Groups[1].Value, "plant group id");
-                SetPlantGroupEnabled(id, enabled: false);
-                WriteJson(context.Response, new { ok = true, id, enabled = false });
+                if (!DeletePlantGroup(id))
+                {
+                    WriteJson(context.Response, new { error = $"plant group not found: {id}" }, 404);
+                    return;
+                }
+
+                WriteJson(context.Response, new { ok = true, id, deleted = true });
                 return;
             }
 
@@ -1615,8 +1721,13 @@ WHERE tcode=$tcode AND enabled=1;
                 context.Request.HttpMethod.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
             {
                 string tcode = SanitizeTCode(transactionRuleMatch.Groups[1].Value).ToUpperInvariant();
-                SetTransactionPlantRuleEnabled(tcode, enabled: false);
-                WriteJson(context.Response, new { ok = true, tcode, code = tcode, enabled = false });
+                if (!DeleteTransactionPlantRule(tcode))
+                {
+                    WriteJson(context.Response, new { error = $"transaction rule not found: {tcode}" }, 404);
+                    return;
+                }
+
+                WriteJson(context.Response, new { ok = true, tcode, code = tcode, deleted = true });
                 return;
             }
 
@@ -1634,8 +1745,13 @@ WHERE tcode=$tcode AND enabled=1;
                 context.Request.HttpMethod.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
             {
                 string id = SanitizeConfigId(notificationRobotMatch.Groups[1].Value, "notification robot id");
-                SetNotificationRobotEnabled(id, enabled: false);
-                WriteJson(context.Response, new { ok = true, id, enabled = false });
+                if (!DeleteNotificationRobot(id))
+                {
+                    WriteJson(context.Response, new { error = $"notification robot not found: {id}" }, 404);
+                    return;
+                }
+
+                WriteJson(context.Response, new { ok = true, id, deleted = true });
                 return;
             }
 
@@ -1643,7 +1759,7 @@ WHERE tcode=$tcode AND enabled=1;
                  path.Equals("/api/config/schedule-tasks", StringComparison.OrdinalIgnoreCase)) &&
                 context.Request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase))
             {
-                WriteJson(context.Response, LoadScheduleTasks());
+                WriteJson(context.Response, LoadScheduleTasks(context.Request));
                 return;
             }
 
@@ -1652,7 +1768,7 @@ WHERE tcode=$tcode AND enabled=1;
                 context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
             {
                 var item = ReadJson<ScheduleTaskRequest>(context.Request);
-                string id = UpsertScheduleTask(item, routeId: "");
+                string id = UpsertScheduleTask(item, routeId: "", allocateNewId: true);
                 WriteJson(context.Response, new { ok = true, id, schedule = LoadScheduleTask(id) });
                 return;
             }
@@ -1676,7 +1792,19 @@ WHERE tcode=$tcode AND enabled=1;
                 context.Request.HttpMethod.Equals("PUT", StringComparison.OrdinalIgnoreCase))
             {
                 var item = ReadJson<ScheduleTaskRequest>(context.Request);
-                string id = UpsertScheduleTask(item, scheduleMatch.Groups[1].Value);
+                string routeId = SanitizeConfigId(scheduleMatch.Groups[1].Value, "schedule id");
+                if (!string.IsNullOrWhiteSpace(item.Id) &&
+                    !item.Id.Trim().Equals(routeId, StringComparison.OrdinalIgnoreCase))
+                {
+                    throw new ApiRequestException(400, "schedule id in request body must match the update route");
+                }
+                if (LoadScheduleTask(routeId) == null)
+                {
+                    WriteJson(context.Response, new { error = $"schedule not found: {routeId}" }, 404);
+                    return;
+                }
+
+                string id = UpsertScheduleTask(item, routeId);
                 WriteJson(context.Response, new { ok = true, id, schedule = LoadScheduleTask(id) });
                 return;
             }
@@ -1685,14 +1813,14 @@ WHERE tcode=$tcode AND enabled=1;
                 context.Request.HttpMethod.Equals("DELETE", StringComparison.OrdinalIgnoreCase))
             {
                 string id = SanitizeConfigId(scheduleMatch.Groups[1].Value, "schedule id");
-                bool deleted = DeleteScheduleTask(id);
-                if (!deleted)
+                ScheduleTaskDeleteResult result = DeleteScheduleTask(id);
+                if (!result.Deleted)
                 {
                     WriteJson(context.Response, new { error = $"schedule not found: {id}" }, 404);
                     return;
                 }
 
-                WriteJson(context.Response, new { ok = true, id, deleted = true });
+                WriteJson(context.Response, new { ok = true, id, deleted = true, removedQueuedRuns = result.RemovedQueuedRuns });
                 return;
             }
 
@@ -1778,6 +1906,18 @@ WHERE tcode=$tcode AND enabled=1;
             }
 
             WriteJson(context.Response, new { error = $"not found: {path}" }, 404);
+        }
+        catch (ApiRequestException ex)
+        {
+            Log($"Bridge API request rejected ({ex.StatusCode}): {ex.Message}");
+            try
+            {
+                WriteJson(context.Response, new { error = ex.Message }, ex.StatusCode);
+            }
+            catch
+            {
+                try { context.Response.Close(); } catch { }
+            }
         }
         catch (Exception ex)
         {
@@ -2057,6 +2197,12 @@ CREATE TABLE IF NOT EXISTS notification_robot_bindings (
     UNIQUE(robot_id, event_name, tcode, plant_group_id)
 );
 CREATE INDEX IF NOT EXISTS idx_notification_robot_bindings_robot ON notification_robot_bindings(robot_id);
+CREATE TABLE IF NOT EXISTS config_delete_markers (
+    config_kind TEXT NOT NULL,
+    config_id TEXT NOT NULL,
+    deleted_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    PRIMARY KEY(config_kind, config_id)
+);
 CREATE TABLE IF NOT EXISTS schedule_tasks (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL DEFAULT '',
@@ -2066,6 +2212,7 @@ CREATE TABLE IF NOT EXISTS schedule_tasks (
     cron TEXT NOT NULL DEFAULT '',
     frequency TEXT NOT NULL DEFAULT '',
     run_time TEXT NOT NULL DEFAULT '',
+    weekday TEXT NOT NULL DEFAULT '',
     enabled INTEGER NOT NULL DEFAULT 1,
     notify_enabled INTEGER NOT NULL DEFAULT 0,
     notify_on_start INTEGER NOT NULL DEFAULT 1,
@@ -2132,6 +2279,7 @@ VALUES
             EnsureColumn(connection, "transactions", "retry_count", "INTEGER NOT NULL DEFAULT 0");
             EnsureScheduleColumns(connection);
             EnsureBasicConfigColumns(connection);
+            MigrateZfi019NaToBusinessAreaScope(connection);
 
         if (seedFromScripts)
         {
@@ -2146,6 +2294,116 @@ VALUES
             Log($"SQLite 数据库初始化完成: {DatabaseFilePath}");
             DatabaseInitialized = true;
         }
+    }
+
+    static void MigrateZfi019NaToBusinessAreaScope(SqliteConnection connection)
+    {
+        using (var applied = connection.CreateCommand())
+        {
+            applied.CommandText = "SELECT 1 FROM schema_migrations WHERE version=4 LIMIT 1;";
+            if (applied.ExecuteScalar() is not null)
+                return;
+        }
+
+        string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+        string scriptText = ReadScriptTextIfExists("ZFI019NA.vbs", "ZFI019NA");
+        string scriptHash = string.IsNullOrWhiteSpace(scriptText) ? "" : Sha256Hex(scriptText);
+        var metadata = ExtractScriptMetadata(scriptText);
+
+        using (var transaction = connection.CreateCommand())
+        {
+            transaction.CommandText = """
+UPDATE transactions
+SET params_json='["businessAreas"]',
+    factory_rule='按业务范围保存',
+    fixed_plants_json='[]',
+    script_hash=$scriptHash,
+    script_metadata_json=$metadataJson,
+    updated_at=$updatedAt
+WHERE tcode='ZFI019NA';
+""";
+            transaction.Parameters.AddWithValue("$scriptHash", scriptHash);
+            transaction.Parameters.AddWithValue("$metadataJson", JsonSerializer.Serialize(metadata, JsonOptions));
+            transaction.Parameters.AddWithValue("$updatedAt", now);
+            transaction.ExecuteNonQuery();
+        }
+
+        if (!string.IsNullOrWhiteSpace(scriptText))
+            UpsertScriptCache(connection, "ZFI019NA", "ZFI019NA.vbs", scriptHash, scriptText);
+
+        using (var rule = connection.CreateCommand())
+        {
+            rule.CommandText = """
+UPDATE transaction_plant_rules
+SET factory_rule='按业务范围保存',
+    fixed_plants_json='[]',
+    business_area_mode=CASE WHEN business_area_mode='fixed' THEN business_area_mode ELSE 'byPlant' END,
+    updated_at=$updatedAt,
+    updated_by='scope-migration'
+WHERE tcode='ZFI019NA';
+""";
+            rule.Parameters.AddWithValue("$updatedAt", now);
+            rule.ExecuteNonQuery();
+        }
+
+        var schedules = new List<(string Id, string DefaultBusinessScope, string ParamsJson)>();
+        using (var select = connection.CreateCommand())
+        {
+            select.CommandText = """
+SELECT id, default_business_scope, params_json
+FROM schedule_tasks
+WHERE UPPER(tcode)='ZFI019NA';
+""";
+            using var reader = select.ExecuteReader();
+            while (reader.Read())
+                schedules.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+        }
+
+        foreach (var schedule in schedules)
+        {
+            var values = ParseScheduleParams(schedule.ParamsJson);
+            string businessAreas = NormalizeCsv(FirstNonEmpty(
+                GetParamValue(values, "businessAreas"),
+                GetParamValue(values, "businessArea"),
+                GetParamValue(values, "businessAreaList"),
+                GetParamValue(values, "gsber")));
+            if (string.IsNullOrWhiteSpace(businessAreas))
+                businessAreas = ResolveScheduleBusinessAreas(connection, schedule.DefaultBusinessScope);
+
+            RemoveScopeParamKeys(values);
+            values["tcode"] = "ZFI019NA";
+            values["rangeKind"] = "businessArea";
+            if (!string.IsNullOrWhiteSpace(businessAreas))
+            {
+                values["businessAreas"] = businessAreas;
+                values["businessArea"] = FirstCsvValue(businessAreas);
+            }
+            else
+            {
+                values["migrationError"] = "ZFI019NA requires businessAreas; schedule was disabled during scope migration.";
+            }
+
+            using var update = connection.CreateCommand();
+            update.CommandText = """
+UPDATE schedule_tasks
+SET plants_json='[]',
+    params_json=$paramsJson,
+    enabled=CASE WHEN $hasBusinessAreas=1 THEN enabled ELSE 0 END,
+    updated_at=$updatedAt,
+    updated_by='scope-migration'
+WHERE id=$id;
+""";
+            update.Parameters.AddWithValue("$paramsJson", JsonSerializer.Serialize(values, JsonOptions));
+            update.Parameters.AddWithValue("$hasBusinessAreas", string.IsNullOrWhiteSpace(businessAreas) ? 0 : 1);
+            update.Parameters.AddWithValue("$updatedAt", now);
+            update.Parameters.AddWithValue("$id", schedule.Id);
+            update.ExecuteNonQuery();
+        }
+
+        using var mark = connection.CreateCommand();
+        mark.CommandText = "INSERT INTO schema_migrations(version, applied_at) VALUES(4, datetime('now'));";
+        mark.ExecuteNonQuery();
+        Log($"Migrated {schedules.Count} ZFI019NA schedule(s) from plant scope to business-area scope.");
     }
 
     static SqliteConnection OpenDatabaseConnection()
@@ -2232,6 +2490,39 @@ ON CONFLICT(setting_key) DO UPDATE SET
         return (long)(command.ExecuteScalar() ?? 0L);
     }
 
+    static bool HasConfigDeleteMarker(SqliteConnection connection, string configKind, string configId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT 1 FROM config_delete_markers WHERE config_kind=$kind AND config_id=$id LIMIT 1";
+        command.Parameters.AddWithValue("$kind", configKind);
+        command.Parameters.AddWithValue("$id", configId);
+        return command.ExecuteScalar() != null;
+    }
+
+    static void AddConfigDeleteMarker(SqliteConnection connection, string configKind, string configId, SqliteTransaction? transaction = null)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+INSERT INTO config_delete_markers(config_kind, config_id, deleted_at)
+VALUES($kind, $id, datetime('now', 'localtime'))
+ON CONFLICT(config_kind, config_id) DO UPDATE SET deleted_at=excluded.deleted_at;
+""";
+        command.Parameters.AddWithValue("$kind", configKind);
+        command.Parameters.AddWithValue("$id", configId);
+        command.ExecuteNonQuery();
+    }
+
+    static void RemoveConfigDeleteMarker(SqliteConnection connection, string configKind, string configId, SqliteTransaction? transaction = null)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "DELETE FROM config_delete_markers WHERE config_kind=$kind AND config_id=$id";
+        command.Parameters.AddWithValue("$kind", configKind);
+        command.Parameters.AddWithValue("$id", configId);
+        command.ExecuteNonQuery();
+    }
+
     static void EnsureScheduleColumns(SqliteConnection connection)
     {
         EnsureColumn(connection, "schedule_tasks", "name", "TEXT NOT NULL DEFAULT ''");
@@ -2241,6 +2532,7 @@ ON CONFLICT(setting_key) DO UPDATE SET
         EnsureColumn(connection, "schedule_tasks", "cron", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "schedule_tasks", "frequency", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "schedule_tasks", "run_time", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "schedule_tasks", "weekday", "TEXT NOT NULL DEFAULT ''");
         EnsureColumn(connection, "schedule_tasks", "enabled", "INTEGER NOT NULL DEFAULT 1");
         EnsureColumn(connection, "schedule_tasks", "notify_enabled", "INTEGER NOT NULL DEFAULT 0");
         EnsureColumn(connection, "schedule_tasks", "notify_on_start", "INTEGER NOT NULL DEFAULT 1");
@@ -2460,6 +2752,9 @@ WHERE code=$code
 
     static void InsertDefaultPlant(SqliteConnection connection, PlantSeed seed)
     {
+        if (HasConfigDeleteMarker(connection, "plant", seed.Code))
+            return;
+
         using var command = connection.CreateCommand();
         command.CommandText = """
 INSERT OR IGNORE INTO plants(code, name, business_area, enabled, sort_order, created_by, updated_by)
@@ -2474,6 +2769,9 @@ VALUES($code, $name, $businessArea, 1, $sortOrder, 'seed', 'seed');
 
     static void InsertDefaultGroup(SqliteConnection connection, PlantGroupSeed seed)
     {
+        if (HasConfigDeleteMarker(connection, "plant-group", seed.Id))
+            return;
+
         using var command = connection.CreateCommand();
         command.CommandText = """
 INSERT OR IGNORE INTO plant_groups(
@@ -2521,7 +2819,13 @@ INSERT OR IGNORE INTO transaction_plant_rules(
 SELECT tcode, factory_rule, default_group, fixed_plants_json, '[]',
        CASE WHEN instr(params_json, 'businessAreas') > 0 THEN 'byPlant' ELSE 'none' END,
        '[]', enabled, 'seed', 'seed'
-FROM transactions;
+FROM transactions
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM config_delete_markers marker
+    WHERE marker.config_kind='transaction-rule'
+      AND marker.config_id=transactions.tcode
+);
 """;
         command.ExecuteNonQuery();
     }
@@ -2567,6 +2871,8 @@ WHERE EXISTS (SELECT 1 FROM transactions WHERE transactions.tcode = transaction_
         {
             string tcode = GetJsonString(item, "code").ToUpperInvariant();
             if (string.IsNullOrWhiteSpace(tcode))
+                continue;
+            if (HasConfigDeleteMarker(connection, "transaction", tcode))
                 continue;
 
             string scriptFile = FirstNonEmpty(GetJsonString(item, "script"), $"{tcode}.vbs");
@@ -2992,6 +3298,7 @@ ON CONFLICT(tcode) DO UPDATE SET
         command.Parameters.AddWithValue("$enabled", item.Enabled.GetValueOrDefault(true) ? 1 : 0);
         command.Parameters.AddWithValue("$updatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
         command.ExecuteNonQuery();
+        RemoveConfigDeleteMarker(connection, "transaction", tcode);
 
         if (!string.IsNullOrWhiteSpace(scriptText))
             UpsertScriptCache(connection, tcode, scriptFile, scriptHash, scriptText);
@@ -3022,7 +3329,7 @@ ON CONFLICT(tcode) DO UPDATE SET
         tx.Commit();
     }
 
-    static object LoadBasicConfig()
+    static object LoadBasicConfig(HttpListenerRequest? request = null)
     {
         InitializeDatabase(seedFromScripts: true);
         using var connection = OpenDatabaseConnection();
@@ -3032,7 +3339,7 @@ ON CONFLICT(tcode) DO UPDATE SET
         var rules = LoadTransactionRuleConfig(connection);
         var robotBindings = LoadNotificationRobotBindingsConfig(connection);
         var robots = LoadNotificationRobotConfig(connection);
-        var schedules = LoadScheduleTaskConfig(connection);
+        var schedules = LoadScheduleTaskConfig(connection, ResolveScheduleOwnerFilter(request));
 
         return new
         {
@@ -3407,6 +3714,7 @@ VALUES($groupId, $plantCode, $sortOrder);
             }
         }
 
+        RemoveConfigDeleteMarker(connection, "plant", code, tx);
         tx.Commit();
         return code;
     }
@@ -3502,6 +3810,7 @@ VALUES($groupId, $plantCode, $sortOrder);
             memberCommand.ExecuteNonQuery();
         }
 
+        RemoveConfigDeleteMarker(connection, "plant-group", id, tx);
         tx.Commit();
         return id;
     }
@@ -3618,6 +3927,8 @@ ON CONFLICT(tcode) DO UPDATE SET
         command.Parameters.AddWithValue("$updatedAt", now);
         command.Parameters.AddWithValue("$updatedBy", FirstNonEmpty(item.UpdatedBy, "api"));
         command.ExecuteNonQuery();
+        RemoveConfigDeleteMarker(connection, "transaction", tcode, tx);
+        RemoveConfigDeleteMarker(connection, "transaction-rule", tcode, tx);
         tx.Commit();
         return tcode;
     }
@@ -3726,6 +4037,7 @@ INSERT OR IGNORE INTO notification_robot_bindings(
             }
         }
 
+        RemoveConfigDeleteMarker(connection, "notification-robot", id, tx);
         tx.Commit();
         return id;
     }
@@ -3744,6 +4056,178 @@ WHERE id=$id;
         command.Parameters.AddWithValue("$enabled", enabled ? 1 : 0);
         command.Parameters.AddWithValue("$updatedAt", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
         command.ExecuteNonQuery();
+    }
+
+    static bool ConfigRecordExists(SqliteConnection connection, SqliteTransaction transaction, string sql, string id)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("$id", id);
+        return command.ExecuteScalar() != null;
+    }
+
+    static void RejectWhenReferenced(SqliteConnection connection, SqliteTransaction transaction, string sql, string id, string message)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("$id", id);
+        using var reader = command.ExecuteReader();
+        var references = new List<string>();
+        while (reader.Read() && references.Count < 5)
+            references.Add(reader.IsDBNull(0) ? "" : reader.GetString(0));
+
+        if (references.Count > 0)
+            throw new ApiRequestException(409, $"{message}：{string.Join("、", references)}。请先清理引用后再删除。");
+    }
+
+    static void ExecuteDelete(SqliteConnection connection, SqliteTransaction transaction, string sql, string id)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        command.Parameters.AddWithValue("$id", id);
+        command.ExecuteNonQuery();
+    }
+
+    static bool DeleteTransaction(string tcode)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+        if (!ConfigRecordExists(connection, tx, "SELECT 1 FROM transactions WHERE tcode=$id", tcode))
+            return false;
+
+        RejectWhenReferenced(
+            connection,
+            tx,
+            "SELECT id FROM schedule_tasks WHERE tcode=$id ORDER BY id",
+            tcode,
+            $"事务码 {tcode} 仍被定时任务引用");
+        RejectWhenReferenced(
+            connection,
+            tx,
+            "SELECT run_id FROM runs WHERE transaction_code=$id AND status IN ('queued', 'running') ORDER BY queued_at",
+            tcode,
+            $"事务码 {tcode} 存在排队或执行中的任务");
+
+        AddConfigDeleteMarker(connection, "transaction", tcode, tx);
+        AddConfigDeleteMarker(connection, "transaction-rule", tcode, tx);
+        ExecuteDelete(connection, tx, "DELETE FROM notification_robot_bindings WHERE tcode=$id", tcode);
+        ExecuteDelete(connection, tx, "DELETE FROM script_cache WHERE tcode=$id", tcode);
+        ExecuteDelete(connection, tx, "DELETE FROM transaction_plant_rules WHERE tcode=$id", tcode);
+        ExecuteDelete(connection, tx, "DELETE FROM transactions WHERE tcode=$id", tcode);
+        tx.Commit();
+        return true;
+    }
+
+    static bool DeletePlant(string code)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+        if (!ConfigRecordExists(connection, tx, "SELECT 1 FROM plants WHERE code=$id", code))
+            return false;
+
+        RejectWhenReferenced(
+            connection,
+            tx,
+            "SELECT group_id FROM plant_group_members WHERE plant_code=$id ORDER BY group_id",
+            code,
+            $"工厂 {code} 仍属于业务范围");
+        RejectWhenReferenced(
+            connection,
+            tx,
+            "SELECT tcode FROM transactions WHERE fixed_plants_json LIKE '%\"' || $id || '\"%' ORDER BY tcode",
+            code,
+            $"工厂 {code} 仍被事务码配置使用");
+        RejectWhenReferenced(
+            connection,
+            tx,
+            "SELECT tcode FROM transaction_plant_rules WHERE fixed_plants_json LIKE '%\"' || $id || '\"%' ORDER BY tcode",
+            code,
+            $"工厂 {code} 仍被事务码规则使用");
+        RejectWhenReferenced(
+            connection,
+            tx,
+            "SELECT id FROM schedule_tasks WHERE plants_json LIKE '%\"' || $id || '\"%' OR params_json LIKE '%\"' || $id || '\"%' ORDER BY id",
+            code,
+            $"工厂 {code} 仍被定时任务使用");
+
+        AddConfigDeleteMarker(connection, "plant", code, tx);
+        ExecuteDelete(connection, tx, "DELETE FROM plants WHERE code=$id", code);
+        tx.Commit();
+        return true;
+    }
+
+    static bool DeletePlantGroup(string id)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+        if (!ConfigRecordExists(connection, tx, "SELECT 1 FROM plant_groups WHERE id=$id", id))
+            return false;
+
+        RejectWhenReferenced(
+            connection,
+            tx,
+            "SELECT tcode FROM transactions WHERE default_group=$id ORDER BY tcode",
+            id,
+            $"业务范围 {id} 仍被事务码配置使用");
+        RejectWhenReferenced(
+            connection,
+            tx,
+            "SELECT tcode FROM transaction_plant_rules WHERE default_group=$id OR selectable_group_ids_json LIKE '%\"' || $id || '\"%' ORDER BY tcode",
+            id,
+            $"业务范围 {id} 仍被事务码规则使用");
+        RejectWhenReferenced(
+            connection,
+            tx,
+            "SELECT id FROM schedule_tasks WHERE default_business_scope=$id OR params_json LIKE '%\"' || $id || '\"%' ORDER BY id",
+            id,
+            $"业务范围 {id} 仍被定时任务使用");
+        RejectWhenReferenced(
+            connection,
+            tx,
+            "SELECT robot_id FROM notification_robot_bindings WHERE plant_group_id=$id ORDER BY robot_id",
+            id,
+            $"业务范围 {id} 仍被通知机器人绑定使用");
+
+        AddConfigDeleteMarker(connection, "plant-group", id, tx);
+        ExecuteDelete(connection, tx, "DELETE FROM plant_group_members WHERE group_id=$id", id);
+        ExecuteDelete(connection, tx, "DELETE FROM plant_groups WHERE id=$id", id);
+        tx.Commit();
+        return true;
+    }
+
+    static bool DeleteTransactionPlantRule(string tcode)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+        if (!ConfigRecordExists(connection, tx, "SELECT 1 FROM transaction_plant_rules WHERE tcode=$id", tcode))
+            return false;
+
+        AddConfigDeleteMarker(connection, "transaction-rule", tcode, tx);
+        ExecuteDelete(connection, tx, "DELETE FROM transaction_plant_rules WHERE tcode=$id", tcode);
+        tx.Commit();
+        return true;
+    }
+
+    static bool DeleteNotificationRobot(string id)
+    {
+        InitializeDatabase(seedFromScripts: true);
+        using var connection = OpenDatabaseConnection();
+        using var tx = connection.BeginTransaction();
+        if (!ConfigRecordExists(connection, tx, "SELECT 1 FROM notification_robots WHERE id=$id", id))
+            return false;
+
+        AddConfigDeleteMarker(connection, "notification-robot", id, tx);
+        ExecuteDelete(connection, tx, "DELETE FROM notification_robot_bindings WHERE robot_id=$id", id);
+        ExecuteDelete(connection, tx, "DELETE FROM notification_robots WHERE id=$id", id);
+        tx.Commit();
+        return true;
     }
 
     static object LoadExecutionReport(HttpListenerRequest request)
@@ -3954,11 +4438,11 @@ WHERE LOWER(rp.param_key) IN ('plants', 'plant', 'werks', 'werkslist', 'plantlis
         return parsed;
     }
 
-    static object LoadScheduleTasks()
+    static object LoadScheduleTasks(HttpListenerRequest? request = null)
     {
         InitializeDatabase(seedFromScripts: true);
         using var connection = OpenDatabaseConnection();
-        var items = LoadScheduleTaskConfig(connection);
+        var items = LoadScheduleTaskConfig(connection, ResolveScheduleOwnerFilter(request));
 
         return new
         {
@@ -3970,22 +4454,77 @@ WHERE LOWER(rp.param_key) IN ('plants', 'plant', 'werks', 'werkslist', 'plantlis
         };
     }
 
-    static List<object> LoadScheduleTaskConfig(SqliteConnection connection)
+    static List<object> LoadScheduleTaskConfig(SqliteConnection connection, string ownerFilter = "")
     {
         var items = new List<object>();
         using var command = connection.CreateCommand();
-        command.CommandText = """
-SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time,
+        string owner = NormalizeScheduleOwnerFilter(ownerFilter);
+        command.CommandText = string.IsNullOrWhiteSpace(owner) ? """
+SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time, weekday,
        enabled, notify_enabled, notify_on_start, notify_on_success, notify_on_failure, notify_target,
        params_json, created_at, updated_at, created_by, updated_by
 FROM schedule_tasks
 ORDER BY enabled DESC, updated_at DESC, id;
+""" : """
+SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time, weekday,
+       enabled, notify_enabled, notify_on_start, notify_on_success, notify_on_failure, notify_target,
+       params_json, created_at, updated_at, created_by, updated_by
+FROM schedule_tasks
+WHERE lower(trim(created_by))=$owner
+   OR lower(trim(updated_by))=$owner
+   OR (trim(created_by)='' AND trim(updated_by)='')
+ORDER BY enabled DESC, updated_at DESC, id;
 """;
+        if (!string.IsNullOrWhiteSpace(owner))
+            command.Parameters.AddWithValue("$owner", owner);
         using var reader = command.ExecuteReader();
         while (reader.Read())
             items.Add(ReadScheduleTask(reader));
 
         return items;
+    }
+
+    static string ResolveScheduleOwnerFilter(HttpListenerRequest? request)
+    {
+        if (request?.Url == null)
+            return "";
+
+        string query = request.Url.Query ?? "";
+        if (query.StartsWith("?", StringComparison.Ordinal))
+            query = query[1..];
+
+        foreach (string part in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            string[] pieces = part.Split('=', 2);
+            string key = Uri.UnescapeDataString((pieces[0] ?? "").Replace("+", " ")).Trim();
+            if (!key.Equals("scheduleOwner", StringComparison.OrdinalIgnoreCase) &&
+                !key.Equals("owner", StringComparison.OrdinalIgnoreCase) &&
+                !key.Equals("currentUser", StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string value = pieces.Length > 1 ? Uri.UnescapeDataString((pieces[1] ?? "").Replace("+", " ")) : "";
+            return NormalizeScheduleOwnerFilter(value);
+        }
+
+        return "";
+    }
+
+    static string NormalizeScheduleOwnerFilter(string value)
+    {
+        value = FirstNonEmpty(value, "").Trim();
+        if (value.Length == 0)
+            return "";
+        if (value.Equals("api", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("seed", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("seed-migration", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("portal", StringComparison.OrdinalIgnoreCase))
+        {
+            return "";
+        }
+
+        return value.ToLowerInvariant();
     }
 
     static object? LoadScheduleTask(string id)
@@ -3995,7 +4534,7 @@ ORDER BY enabled DESC, updated_at DESC, id;
         using var connection = OpenDatabaseConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time,
+SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time, weekday,
        enabled, notify_enabled, notify_on_start, notify_on_success, notify_on_failure, notify_target,
        params_json, created_at, updated_at, created_by, updated_by
 FROM schedule_tasks
@@ -4006,43 +4545,76 @@ WHERE id=$id;
         return reader.Read() ? ReadScheduleTask(reader) : null;
     }
 
-    static string UpsertScheduleTask(ScheduleTaskRequest item, string routeId)
+    static string UpsertScheduleTask(ScheduleTaskRequest item, string routeId, bool allocateNewId = false)
     {
         InitializeDatabase(seedFromScripts: true);
         string tcode = SanitizeTCode(FirstNonEmpty(item.TCode, item.Code, item.TransactionCode)).ToUpperInvariant();
         if (string.IsNullOrWhiteSpace(tcode))
             throw new InvalidOperationException("schedule tcode is required");
 
-        string id = SanitizeConfigId(FirstNonEmpty(routeId, item.Id, $"sched-{tcode.ToLowerInvariant()}-{DateTime.Now:yyyyMMddHHmmss}"), "schedule id");
-        string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
-        string defaultBusinessScope = FirstNonEmpty(item.DefaultBusinessScope, item.FactoryGroup, item.PlantGroupId, item.GroupId, item.DefaultPlantGroup);
-        string plantsCsv = ResolveSchedulePlantsCsvFromRequest(item);
-        if (UsesDateRangeOnlyInputs(tcode))
-            plantsCsv = "";
-        else if (!item.HasExplicitPlantSelection)
-            plantsCsv = ResolveSchedulePlants(tcode, defaultBusinessScope);
-        plantsCsv = NormalizePlantCodesCsv(plantsCsv);
-        string plantsJson = PlantCodesToJsonArray(plantsCsv);
-        string paramsJson = BuildScheduleParamsJson(item, tcode, defaultBusinessScope, plantsCsv);
-        string rawFrequency = FirstNonEmpty(item.Frequency, item.ScheduleType, item.FrequencyCode);
-        string frequency = string.IsNullOrWhiteSpace(rawFrequency) && !string.IsNullOrWhiteSpace(item.Cron)
-            ? ""
-            : NormalizeScheduleFrequency(FirstNonEmpty(rawFrequency, "daily"));
-        string runTime = NormalizeScheduleRunTime(FirstNonEmpty(item.Time, item.RunTime, item.ExecTime, item.RunAt, item.StartTime));
-        bool notifyOnStart = item.NotifyStart ?? false;
-        bool notifyOnSuccess = item.NotifyOnSuccess ?? item.NotifySuccess ?? false;
-        bool notifyOnFailure = item.NotifyOnFailure ?? item.NotifyFail ?? true;
-        bool notifyEnabled = item.NotifyEnabled ?? item.Notify ?? (notifyOnStart || notifyOnSuccess || notifyOnFailure);
-
         using var connection = OpenDatabaseConnection();
-        using var command = connection.CreateCommand();
-        command.CommandText = """
+        bool immediateTransactionStarted = false;
+        if (allocateNewId)
+        {
+            BeginImmediateTransaction(connection);
+            immediateTransactionStarted = true;
+        }
+
+        try
+        {
+            string requestedId = allocateNewId ? "" : FirstNonEmpty(routeId, item.Id);
+            string id = string.IsNullOrWhiteSpace(requestedId)
+                ? AllocateScheduleTaskId(connection)
+                : SanitizeConfigId(requestedId, "schedule id");
+            ScheduleTaskScopeSnapshot? existingSnapshot = LoadScheduleTaskScopeSnapshot(connection, id);
+            bool isExistingSchedule = existingSnapshot != null;
+            if (!allocateNewId)
+                EnsureScheduleTaskUpdateOwner(connection, id, item);
+            string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            string defaultBusinessScope = FirstNonEmpty(item.DefaultBusinessScope, item.FactoryGroup, item.PlantGroupId, item.GroupId, item.DefaultPlantGroup);
+            string plantsCsv = ResolveSchedulePlantsCsvFromRequest(item);
+            string businessAreasCsv = NormalizeCsv(FirstNonEmpty(
+                JsonElementArrayToCsv(item.BusinessAreas),
+                item.BusinessAreasCsv,
+                GetJsonStringIgnoreCase(item.Params, "businessAreas", "businessArea", "businessAreaList", "gsber")));
+            if (isExistingSchedule && !item.HasExplicitPlantSelection)
+                plantsCsv = FirstNonEmpty(plantsCsv, existingSnapshot!.PlantsCsv);
+            if (isExistingSchedule && !item.HasExplicitBusinessAreaSelection && string.IsNullOrWhiteSpace(businessAreasCsv))
+                businessAreasCsv = existingSnapshot!.BusinessAreasCsv;
+            if (UsesBusinessAreaBatchItems(tcode))
+            {
+                plantsCsv = "";
+                if (string.IsNullOrWhiteSpace(businessAreasCsv) && !isExistingSchedule)
+                    businessAreasCsv = ResolveScheduleBusinessAreas(connection, defaultBusinessScope);
+            }
+            else if (!AllowsCustomBusinessAreaScope(tcode) && !string.IsNullOrWhiteSpace(LoadConfiguredFixedBusinessAreas(tcode)))
+                plantsCsv = "";
+            else if (UsesDateRangeOnlyInputs(tcode))
+                plantsCsv = "";
+            else if (!item.HasExplicitPlantSelection)
+                plantsCsv = ResolveSchedulePlants(tcode, defaultBusinessScope);
+            plantsCsv = NormalizePlantCodesCsv(plantsCsv);
+            string plantsJson = PlantCodesToJsonArray(plantsCsv);
+            string paramsJson = BuildScheduleParamsJson(item, tcode, defaultBusinessScope, plantsCsv, businessAreasCsv, applyConfiguredScope: !isExistingSchedule);
+            string rawFrequency = FirstNonEmpty(item.Frequency, item.ScheduleType, item.FrequencyCode);
+            string frequency = string.IsNullOrWhiteSpace(rawFrequency) && !string.IsNullOrWhiteSpace(item.Cron)
+                ? ""
+                : NormalizeScheduleFrequency(FirstNonEmpty(rawFrequency, "daily"));
+            string runTime = NormalizeScheduleRunTime(FirstNonEmpty(item.Time, item.RunTime, item.ExecTime, item.RunAt, item.StartTime));
+            bool notifyOnStart = item.NotifyStart ?? false;
+            bool notifyOnSuccess = item.NotifyOnSuccess ?? item.NotifySuccess ?? false;
+            bool notifyOnFailure = item.NotifyOnFailure ?? item.NotifyFail ?? true;
+            bool notifyEnabled = item.NotifyEnabled ?? item.Notify ?? (notifyOnStart || notifyOnSuccess || notifyOnFailure);
+
+            string weekday = ResolveScheduleWeekday(item, frequency, id, connection);
+            using var command = connection.CreateCommand();
+            command.CommandText = """
 INSERT INTO schedule_tasks(
-    id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time,
+    id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time, weekday,
     enabled, notify_enabled, notify_on_start, notify_on_success, notify_on_failure, notify_target,
     params_json, created_at, updated_at, created_by, updated_by
 ) VALUES(
-    $id, $name, $tcode, $plantsJson, $defaultBusinessScope, $cron, $frequency, $runTime,
+    $id, $name, $tcode, $plantsJson, $defaultBusinessScope, $cron, $frequency, $runTime, $weekday,
     $enabled, $notifyEnabled, $notifyOnStart, $notifyOnSuccess, $notifyOnFailure, $notifyTarget,
     $paramsJson, $createdAt, $updatedAt, $createdBy, $updatedBy
 )
@@ -4054,6 +4626,7 @@ ON CONFLICT(id) DO UPDATE SET
     cron=excluded.cron,
     frequency=excluded.frequency,
     run_time=excluded.run_time,
+    weekday=excluded.weekday,
     enabled=excluded.enabled,
     notify_enabled=excluded.notify_enabled,
     notify_on_start=excluded.notify_on_start,
@@ -4064,27 +4637,139 @@ ON CONFLICT(id) DO UPDATE SET
     updated_at=excluded.updated_at,
     updated_by=excluded.updated_by;
 """;
+            command.Parameters.AddWithValue("$id", id);
+            command.Parameters.AddWithValue("$name", FirstNonEmpty(item.Name, tcode));
+            command.Parameters.AddWithValue("$tcode", tcode);
+            command.Parameters.AddWithValue("$plantsJson", plantsJson);
+            command.Parameters.AddWithValue("$defaultBusinessScope", defaultBusinessScope);
+            command.Parameters.AddWithValue("$cron", item.Cron ?? "");
+            command.Parameters.AddWithValue("$frequency", frequency);
+            command.Parameters.AddWithValue("$runTime", runTime);
+            command.Parameters.AddWithValue("$weekday", weekday);
+            command.Parameters.AddWithValue("$enabled", item.Enabled.GetValueOrDefault(true) ? 1 : 0);
+            command.Parameters.AddWithValue("$notifyEnabled", notifyEnabled ? 1 : 0);
+            command.Parameters.AddWithValue("$notifyOnStart", notifyOnStart ? 1 : 0);
+            command.Parameters.AddWithValue("$notifyOnSuccess", notifyOnSuccess ? 1 : 0);
+            command.Parameters.AddWithValue("$notifyOnFailure", notifyOnFailure ? 1 : 0);
+            command.Parameters.AddWithValue("$notifyTarget", item.NotifyTarget ?? "");
+            command.Parameters.AddWithValue("$paramsJson", paramsJson);
+            command.Parameters.AddWithValue("$createdAt", now);
+            command.Parameters.AddWithValue("$updatedAt", now);
+            command.Parameters.AddWithValue("$createdBy", FirstNonEmpty(item.CreatedBy, item.UpdatedBy, "api"));
+            command.Parameters.AddWithValue("$updatedBy", FirstNonEmpty(item.UpdatedBy, item.CreatedBy, "api"));
+            command.ExecuteNonQuery();
+
+            if (immediateTransactionStarted)
+                CommitImmediateTransaction(connection);
+            return id;
+        }
+        catch
+        {
+            if (immediateTransactionStarted)
+                RollbackImmediateTransaction(connection);
+            throw;
+        }
+    }
+
+    static void EnsureScheduleTaskUpdateOwner(SqliteConnection connection, string id, ScheduleTaskRequest item)
+    {
+        string existingOwner = "";
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT created_by FROM schedule_tasks WHERE id=$id";
+            command.Parameters.AddWithValue("$id", id);
+            existingOwner = command.ExecuteScalar() as string ?? "";
+        }
+
+        string claimedOwner = FirstNonEmpty(item.CreatedBy, item.UpdatedBy).Trim();
+        if (string.IsNullOrWhiteSpace(existingOwner))
+            return;
+
+        if (string.IsNullOrWhiteSpace(claimedOwner))
+            throw new ApiRequestException(409, $"schedule {id} belongs to {existingOwner}; an owner is required to update it");
+
+        if (!existingOwner.Trim().Equals(claimedOwner, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new ApiRequestException(409,
+                $"schedule {id} belongs to {existingOwner}; it cannot be updated by {claimedOwner}");
+        }
+    }
+
+    static ScheduleTaskScopeSnapshot? LoadScheduleTaskScopeSnapshot(SqliteConnection connection, string id)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT plants_json, params_json FROM schedule_tasks WHERE id=$id LIMIT 1;";
         command.Parameters.AddWithValue("$id", id);
-        command.Parameters.AddWithValue("$name", FirstNonEmpty(item.Name, tcode));
-        command.Parameters.AddWithValue("$tcode", tcode);
-        command.Parameters.AddWithValue("$plantsJson", plantsJson);
-        command.Parameters.AddWithValue("$defaultBusinessScope", defaultBusinessScope);
-        command.Parameters.AddWithValue("$cron", item.Cron ?? "");
-        command.Parameters.AddWithValue("$frequency", frequency);
-        command.Parameters.AddWithValue("$runTime", runTime);
-        command.Parameters.AddWithValue("$enabled", item.Enabled.GetValueOrDefault(true) ? 1 : 0);
-        command.Parameters.AddWithValue("$notifyEnabled", notifyEnabled ? 1 : 0);
-        command.Parameters.AddWithValue("$notifyOnStart", notifyOnStart ? 1 : 0);
-        command.Parameters.AddWithValue("$notifyOnSuccess", notifyOnSuccess ? 1 : 0);
-        command.Parameters.AddWithValue("$notifyOnFailure", notifyOnFailure ? 1 : 0);
-        command.Parameters.AddWithValue("$notifyTarget", item.NotifyTarget ?? "");
-        command.Parameters.AddWithValue("$paramsJson", paramsJson);
-        command.Parameters.AddWithValue("$createdAt", now);
-        command.Parameters.AddWithValue("$updatedAt", now);
-        command.Parameters.AddWithValue("$createdBy", FirstNonEmpty(item.CreatedBy, item.UpdatedBy, "api"));
-        command.Parameters.AddWithValue("$updatedBy", FirstNonEmpty(item.UpdatedBy, item.CreatedBy, "api"));
+        using var reader = command.ExecuteReader();
+        if (!reader.Read())
+            return null;
+
+        var values = ParseScheduleParams(reader.GetString(1));
+        string businessAreas = NormalizeCsv(FirstNonEmpty(
+            GetParamValue(values, "businessAreas"),
+            GetParamValue(values, "businessArea"),
+            GetParamValue(values, "businessAreaList"),
+            GetParamValue(values, "gsberlist"),
+            GetParamValue(values, "gsber")));
+        return new ScheduleTaskScopeSnapshot(
+            NormalizePlantCodesCsv(string.Join(",", SafeJsonArray(reader.GetString(0)))),
+            businessAreas);
+    }
+
+    static void BeginImmediateTransaction(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "BEGIN IMMEDIATE;";
         command.ExecuteNonQuery();
-        return id;
+    }
+
+    static void CommitImmediateTransaction(SqliteConnection connection)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = "COMMIT;";
+        command.ExecuteNonQuery();
+    }
+
+    static void RollbackImmediateTransaction(SqliteConnection connection)
+    {
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = "ROLLBACK;";
+            command.ExecuteNonQuery();
+        }
+        catch
+        {
+            // Best effort rollback after a failed schedule save.
+        }
+    }
+
+    static string AllocateScheduleTaskId(SqliteConnection connection)
+    {
+        int maxNumber = 0;
+        var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT id FROM schedule_tasks WHERE id LIKE 'SCH-%'";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+            {
+                string id = reader.GetString(0);
+                used.Add(id);
+                Match match = Regex.Match(id, @"^SCH-(\d+)$", RegexOptions.IgnoreCase);
+                if (match.Success && int.TryParse(match.Groups[1].Value, out int number))
+                    maxNumber = Math.Max(maxNumber, number);
+            }
+        }
+
+        for (int number = maxNumber + 1; number < maxNumber + 10000; number++)
+        {
+            string candidate = $"SCH-{number:000}";
+            if (!used.Contains(candidate))
+                return candidate;
+        }
+
+        return $"SCH-{DateTime.Now:yyyyMMddHHmmss}";
     }
 
     static string ResolveSchedulePlantsCsvFromRequest(ScheduleTaskRequest item)
@@ -4123,39 +4808,144 @@ WHERE id=$id;
         command.ExecuteNonQuery();
     }
 
-    static bool DeleteScheduleTask(string id)
+    static ScheduleTaskDeleteResult DeleteScheduleTask(string id)
     {
         InitializeDatabase(seedFromScripts: true);
         using var connection = OpenDatabaseConnection();
-        using var tx = connection.BeginTransaction();
-
-        using (var exists = connection.CreateCommand())
+        bool transactionStarted = false;
+        try
         {
-            exists.Transaction = tx;
-            exists.CommandText = "SELECT COUNT(*) FROM schedule_tasks WHERE id=$id";
-            exists.Parameters.AddWithValue("$id", id);
-            if (Convert.ToInt64(exists.ExecuteScalar() ?? 0L) == 0)
+            // Prevent the queue worker from claiming a scheduled run between selection and deletion.
+            BeginImmediateTransaction(connection);
+            transactionStarted = true;
+
+            using (var exists = connection.CreateCommand())
             {
-                tx.Rollback();
-                return false;
+                exists.CommandText = "SELECT COUNT(*) FROM schedule_tasks WHERE id=$id";
+                exists.Parameters.AddWithValue("$id", id);
+                if (Convert.ToInt64(exists.ExecuteScalar() ?? 0L) == 0)
+                {
+                    RollbackImmediateTransaction(connection);
+                    transactionStarted = false;
+                    return new ScheduleTaskDeleteResult();
+                }
             }
-        }
 
-        using (var deleteRuns = connection.CreateCommand())
+            int removedQueuedRuns = DeleteQueuedRunsForSchedule(connection, id);
+            DeletePendingScheduleTaskRuns(connection, id);
+
+            using var command = connection.CreateCommand();
+            command.CommandText = "DELETE FROM schedule_tasks WHERE id=$id";
+            command.Parameters.AddWithValue("$id", id);
+            int affected = command.ExecuteNonQuery();
+            CommitImmediateTransaction(connection);
+            transactionStarted = false;
+            return new ScheduleTaskDeleteResult
+            {
+                Deleted = affected > 0,
+                RemovedQueuedRuns = removedQueuedRuns
+            };
+        }
+        catch
         {
-            deleteRuns.Transaction = tx;
-            deleteRuns.CommandText = "DELETE FROM schedule_task_runs WHERE task_id=$id";
-            deleteRuns.Parameters.AddWithValue("$id", id);
-            deleteRuns.ExecuteNonQuery();
+            if (transactionStarted)
+                RollbackImmediateTransaction(connection);
+            throw;
+        }
+    }
+
+    static int DeletePendingScheduleTaskRuns(SqliteConnection connection, string taskId)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+DELETE FROM schedule_task_runs
+WHERE task_id=$taskId
+  AND lower(status) NOT IN ('success', 'no_data', 'failed', 'partial_failed', 'canceled');
+""";
+        command.Parameters.AddWithValue("$taskId", taskId);
+        return command.ExecuteNonQuery();
+    }
+
+    static int DeleteQueuedRunsForSchedule(SqliteConnection connection, string scheduleId)
+    {
+        const string tempTableName = "queued_schedule_delete_runs";
+        using (var create = connection.CreateCommand())
+        {
+            create.CommandText = $"CREATE TEMP TABLE {tempTableName} (run_id TEXT PRIMARY KEY);";
+            create.ExecuteNonQuery();
         }
 
-        using var command = connection.CreateCommand();
-        command.Transaction = tx;
-        command.CommandText = "DELETE FROM schedule_tasks WHERE id=$id";
-        command.Parameters.AddWithValue("$id", id);
-        int affected = command.ExecuteNonQuery();
-        tx.Commit();
-        return affected > 0;
+        try
+        {
+            using (var select = connection.CreateCommand())
+            {
+                select.CommandText = $"""
+WITH RECURSIVE related_runs(run_id) AS (
+    SELECT run_id
+    FROM runs
+    WHERE source=$source
+    UNION
+    SELECT child.run_id
+    FROM runs child
+    INNER JOIN related_runs parent ON child.parent_run_id=parent.run_id
+)
+INSERT OR IGNORE INTO {tempTableName}(run_id)
+SELECT current.run_id
+FROM runs current
+INNER JOIN related_runs related ON related.run_id=current.run_id
+WHERE current.status='queued'
+  AND NOT EXISTS (
+      SELECT 1
+      FROM runs active_child
+      WHERE active_child.parent_run_id=current.run_id
+        AND active_child.status='running'
+  );
+""";
+                select.Parameters.AddWithValue("$source", "schedule:" + scheduleId);
+                select.ExecuteNonQuery();
+            }
+
+            int removedCount;
+            using (var count = connection.CreateCommand())
+            {
+                count.CommandText = $"SELECT COUNT(*) FROM {tempTableName};";
+                removedCount = Convert.ToInt32(count.ExecuteScalar() ?? 0, CultureInfo.InvariantCulture);
+            }
+
+            if (removedCount == 0)
+                return 0;
+
+            foreach (string table in new[] { "run_params", "run_result_logs", "run_files", "run_logs" })
+            {
+                using var deleteDetails = connection.CreateCommand();
+                deleteDetails.CommandText = $"DELETE FROM {table} WHERE run_id IN (SELECT run_id FROM {tempTableName});";
+                deleteDetails.ExecuteNonQuery();
+            }
+
+            using (var deleteBatchItems = connection.CreateCommand())
+            {
+                deleteBatchItems.CommandText = $"""
+DELETE FROM run_batch_items
+WHERE child_run_id IN (SELECT run_id FROM {tempTableName})
+   OR parent_run_id IN (SELECT run_id FROM {tempTableName});
+""";
+                deleteBatchItems.ExecuteNonQuery();
+            }
+
+            using (var deleteRuns = connection.CreateCommand())
+            {
+                deleteRuns.CommandText = $"DELETE FROM runs WHERE run_id IN (SELECT run_id FROM {tempTableName}) AND status='queued';";
+                deleteRuns.ExecuteNonQuery();
+            }
+
+            return removedCount;
+        }
+        finally
+        {
+            using var drop = connection.CreateCommand();
+            drop.CommandText = $"DROP TABLE IF EXISTS {tempTableName};";
+            drop.ExecuteNonQuery();
+        }
     }
 
     static object ReadScheduleTask(SqliteDataReader reader)
@@ -4165,10 +4955,18 @@ WHERE id=$id;
         string defaultBusinessScope = reader.GetString(4);
         string frequency = reader.GetString(6);
         string runTime = reader.GetString(7);
-        bool enabled = reader.GetInt32(8) == 1;
-        string createdAt = reader.GetString(15);
-        string updatedAt = reader.GetString(16);
-        string nextRunAt = enabled ? CalculateNextScheduleRunAt(frequency, runTime, createdAt) : "";
+        string weekday = ResolveEffectiveScheduleWeekday(frequency, reader.GetString(8), reader.GetString(16));
+        bool enabled = reader.GetInt32(9) == 1;
+        string createdAt = reader.GetString(16);
+        string updatedAt = reader.GetString(17);
+        string paramsJson = reader.GetString(15);
+        var scheduleParams = ParseScheduleParams(paramsJson);
+        string businessAreas = NormalizeCsv(FirstNonEmpty(
+            GetParamValue(scheduleParams, "businessAreas"),
+            GetParamValue(scheduleParams, "businessArea"),
+            GetParamValue(scheduleParams, "businessAreaList"),
+            GetParamValue(scheduleParams, "gsber")));
+        string nextRunAt = enabled ? CalculateNextScheduleRunAt(frequency, runTime, createdAt, weekday) : "";
         return new
         {
             id,
@@ -4178,6 +4976,7 @@ WHERE id=$id;
             transactionCode = tcode,
             code = tcode,
             plants = SafeJsonArray(reader.GetString(3)),
+            businessAreas = string.IsNullOrWhiteSpace(businessAreas) ? Array.Empty<string>() : businessAreas.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             defaultBusinessScope,
             factoryGroup = defaultBusinessScope,
             plantGroupId = defaultBusinessScope,
@@ -4185,6 +4984,10 @@ WHERE id=$id;
             cron = reader.GetString(5),
             frequency,
             scheduleType = frequency,
+            weekday,
+            dayOfWeek = weekday,
+            scheduleWeekday = weekday,
+            weekdayLabel = FormatScheduleWeekday(weekday),
             time = runTime,
             execTime = runTime,
             runTime,
@@ -4194,17 +4997,17 @@ WHERE id=$id;
             nextExecutionTime = nextRunAt,
             notify = new
             {
-                enabled = reader.GetInt32(9) == 1,
-                onStart = reader.GetInt32(10) == 1,
-                onSuccess = reader.GetInt32(11) == 1,
-                onFailure = reader.GetInt32(12) == 1,
-                target = reader.GetString(13)
+                enabled = reader.GetInt32(10) == 1,
+                onStart = reader.GetInt32(11) == 1,
+                onSuccess = reader.GetInt32(12) == 1,
+                onFailure = reader.GetInt32(13) == 1,
+                target = reader.GetString(14)
             },
-            paramsJson = reader.GetString(14),
+            paramsJson,
             createdAt,
             updatedAt,
-            createdBy = reader.GetString(17),
-            updatedBy = reader.GetString(18)
+            createdBy = reader.GetString(18),
+            updatedBy = reader.GetString(19)
         };
     }
 
@@ -4245,7 +5048,22 @@ ORDER BY sort_order, plant_code;
         return string.Join(",", plants);
     }
 
-    static string BuildScheduleParamsJson(ScheduleTaskRequest item, string tcode, string defaultBusinessScope, string plantsCsv)
+    static string ResolveScheduleBusinessAreas(SqliteConnection connection, string plantGroupId)
+    {
+        if (string.IsNullOrWhiteSpace(plantGroupId))
+            return "";
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT zfi019nl_areas_json
+FROM plant_groups
+WHERE id=$id AND enabled=1;
+""";
+        command.Parameters.AddWithValue("$id", plantGroupId);
+        return NormalizeCsv(string.Join(",", SafeJsonArray(command.ExecuteScalar() as string ?? "")));
+    }
+
+    static string BuildScheduleParamsJson(ScheduleTaskRequest item, string tcode, string defaultBusinessScope, string plantsCsv, string businessAreasCsv = "", bool applyConfiguredScope = true)
     {
         var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         if (item.Params.ValueKind == JsonValueKind.Object)
@@ -4262,7 +5080,8 @@ ORDER BY sort_order, plant_code;
             plantsCsv,
             !item.HasExplicitPlantSelection && values.TryGetValue("plants", out string? existingPlants) ? existingPlants ?? "" : ""));
         bool dateRangeOnly = UsesDateRangeOnlyInputs(tcode);
-        if (!dateRangeOnly && !string.IsNullOrWhiteSpace(plants))
+        bool businessAreaScope = UsesBusinessAreaBatchItems(tcode);
+        if (!dateRangeOnly && !businessAreaScope && !string.IsNullOrWhiteSpace(plants))
         {
             values["plants"] = plants;
             values["plant"] = FirstCsvValue(plants);
@@ -4277,6 +5096,7 @@ ORDER BY sort_order, plant_code;
             values["factoryGroup"] = defaultBusinessScope;
 
         string businessAreas = FirstNonEmpty(
+            businessAreasCsv,
             JsonElementArrayToCsv(item.BusinessAreas),
             item.BusinessAreasCsv,
             values.TryGetValue("businessAreas", out string? existingAreas) ? existingAreas ?? "" : "");
@@ -4292,19 +5112,174 @@ ORDER BY sort_order, plant_code;
         }
 
         values["tcode"] = tcode;
+        if (applyConfiguredScope)
+            ApplyConfiguredTransactionScope(tcode, values);
+        NormalizeZco019RunStrategy(tcode, values);
         NormalizeScheduleStoredDateParams(tcode, values);
         return JsonSerializer.Serialize(values, JsonOptions);
     }
 
+    static string ResolveScheduleWeekday(ScheduleTaskRequest item, string frequency, string id, SqliteConnection connection)
+    {
+        string normalizedFrequency = NormalizeScheduleFrequency(frequency);
+        bool supportsWeekday = normalizedFrequency.Equals("weekly", StringComparison.OrdinalIgnoreCase) ||
+                               normalizedFrequency.Equals("monthly", StringComparison.OrdinalIgnoreCase);
+        if (!supportsWeekday)
+            return "";
+
+        string requested = NormalizeScheduleWeekday(FirstNonEmpty(
+            item.Weekday,
+            item.DayOfWeek,
+            item.ScheduleWeekday,
+            GetJsonStringIgnoreCase(item.Params, "weekday", "weekDay", "dayOfWeek", "scheduleWeekday")));
+        if (!string.IsNullOrWhiteSpace(requested))
+            return requested;
+
+        if (item.HasExplicitWeekdaySelection)
+            return normalizedFrequency.Equals("weekly", StringComparison.OrdinalIgnoreCase) ? "monday" : "";
+
+        string requestedFromFrequencyText = NormalizeScheduleWeekday(FirstNonEmpty(
+            item.Frequency,
+            item.ScheduleType,
+            item.FrequencyCode));
+        if (!string.IsNullOrWhiteSpace(requestedFromFrequencyText))
+            return requestedFromFrequencyText;
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT weekday, created_at
+FROM schedule_tasks
+WHERE id=$id
+LIMIT 1;
+""";
+        command.Parameters.AddWithValue("$id", id);
+        using var reader = command.ExecuteReader();
+        if (reader.Read())
+        {
+            string existingWeekday = NormalizeScheduleWeekday(reader.GetString(0));
+            if (!string.IsNullOrWhiteSpace(existingWeekday))
+                return existingWeekday;
+
+            if (normalizedFrequency.Equals("weekly", StringComparison.OrdinalIgnoreCase))
+            {
+                string legacyWeekday = ResolveLegacyScheduleWeekday(reader.GetString(1));
+                if (!string.IsNullOrWhiteSpace(legacyWeekday))
+                    return legacyWeekday;
+            }
+        }
+
+        return normalizedFrequency.Equals("weekly", StringComparison.OrdinalIgnoreCase) ? "monday" : "";
+    }
+
     static string NormalizeScheduleFrequency(string value)
     {
-        value = (value ?? "").Trim().ToLowerInvariant();
-        return value switch
+        string normalized = Regex.Replace((value ?? "").Trim().ToLowerInvariant(), @"[\s_\-]+", "");
+        return normalized switch
         {
-            "day" or "daily" or "everyday" => "daily",
-            "week" or "weekly" => "weekly",
-            "month" or "monthly" => "monthly",
-            _ => string.IsNullOrWhiteSpace(value) ? "daily" : value
+            "day" or "daily" or "everyday" or "\u6BCF\u5929" => "daily",
+            "week" or "weekly" or "everyweek" or "\u6BCF\u5468" or "\u6BCF\u661F\u671F" or "\u6BCF\u793C\u62DC" => "weekly",
+            "\u6BCF\u5468\u4E00" or "\u6BCF\u5468\u4E8C" or "\u6BCF\u5468\u4E09" or "\u6BCF\u5468\u56DB" or "\u6BCF\u5468\u4E94" or "\u6BCF\u5468\u516D" or "\u6BCF\u5468\u65E5" or "\u6BCF\u5468\u5929" => "weekly",
+            "\u6BCF\u661F\u671F\u4E00" or "\u6BCF\u661F\u671F\u4E8C" or "\u6BCF\u661F\u671F\u4E09" or "\u6BCF\u661F\u671F\u56DB" or "\u6BCF\u661F\u671F\u4E94" or "\u6BCF\u661F\u671F\u516D" or "\u6BCF\u661F\u671F\u65E5" or "\u6BCF\u661F\u671F\u5929" => "weekly",
+            "month" or "monthly" or "everymonth" or "\u6BCF\u6708" => "monthly",
+            _ => string.IsNullOrWhiteSpace(normalized) ? "daily" : normalized
+        };
+    }
+
+    static string NormalizeScheduleWeekday(string value)
+    {
+        string normalized = Regex.Replace((value ?? "").Trim().ToLowerInvariant(), @"[\s_\-]+", "");
+        return normalized switch
+        {
+            "1" or "01" or "mon" or "monday" or "\u5468\u4E00" or "\u661F\u671F\u4E00" or "\u793C\u62DC\u4E00" or "\u6BCF\u5468\u4E00" or "\u6BCF\u661F\u671F\u4E00" => "monday",
+            "2" or "02" or "tue" or "tues" or "tuesday" or "\u5468\u4E8C" or "\u661F\u671F\u4E8C" or "\u793C\u62DC\u4E8C" or "\u6BCF\u5468\u4E8C" or "\u6BCF\u661F\u671F\u4E8C" => "tuesday",
+            "3" or "03" or "wed" or "wednesday" or "\u5468\u4E09" or "\u661F\u671F\u4E09" or "\u793C\u62DC\u4E09" or "\u6BCF\u5468\u4E09" or "\u6BCF\u661F\u671F\u4E09" => "wednesday",
+            "4" or "04" or "thu" or "thur" or "thurs" or "thursday" or "\u5468\u56DB" or "\u661F\u671F\u56DB" or "\u793C\u62DC\u56DB" or "\u6BCF\u5468\u56DB" or "\u6BCF\u661F\u671F\u56DB" => "thursday",
+            "5" or "05" or "fri" or "friday" or "\u5468\u4E94" or "\u661F\u671F\u4E94" or "\u793C\u62DC\u4E94" or "\u6BCF\u5468\u4E94" or "\u6BCF\u661F\u671F\u4E94" => "friday",
+            "6" or "06" or "sat" or "saturday" or "\u5468\u516D" or "\u661F\u671F\u516D" or "\u793C\u62DC\u516D" or "\u6BCF\u5468\u516D" or "\u6BCF\u661F\u671F\u516D" => "saturday",
+            "0" or "7" or "00" or "07" or "sun" or "sunday" or "\u5468\u65E5" or "\u5468\u5929" or "\u661F\u671F\u65E5" or "\u661F\u671F\u5929" or "\u793C\u62DC\u65E5" or "\u793C\u62DC\u5929" or "\u6BCF\u5468\u65E5" or "\u6BCF\u5468\u5929" or "\u6BCF\u661F\u671F\u65E5" or "\u6BCF\u661F\u671F\u5929" => "sunday",
+            _ => ""
+        };
+    }
+
+    static string FormatScheduleWeekday(string weekday)
+    {
+        return NormalizeScheduleWeekday(weekday) switch
+        {
+            "monday" => "\u5468\u4E00",
+            "tuesday" => "\u5468\u4E8C",
+            "wednesday" => "\u5468\u4E09",
+            "thursday" => "\u5468\u56DB",
+            "friday" => "\u5468\u4E94",
+            "saturday" => "\u5468\u516D",
+            "sunday" => "\u5468\u65E5",
+            _ => ""
+        };
+    }
+
+    static string GetJsonStringIgnoreCase(JsonElement item, params string[] properties)
+    {
+        if (item.ValueKind != JsonValueKind.Object)
+            return "";
+
+        foreach (var prop in item.EnumerateObject())
+        {
+            if (properties.Any(name => prop.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+                return JsonValueToString(prop.Value);
+        }
+
+        return "";
+    }
+
+    static string ResolveLegacyScheduleWeekday(string anchorText)
+    {
+        return DateTime.TryParse(anchorText, out DateTime anchor)
+            ? DayOfWeekToScheduleWeekday(anchor.DayOfWeek)
+            : "";
+    }
+
+    static string ResolveEffectiveScheduleWeekday(string frequency, string weekday, string anchorText)
+    {
+        string normalizedFrequency = NormalizeScheduleFrequency(frequency);
+        if (!normalizedFrequency.Equals("weekly", StringComparison.OrdinalIgnoreCase) &&
+            !normalizedFrequency.Equals("monthly", StringComparison.OrdinalIgnoreCase))
+            return "";
+
+        string normalized = NormalizeScheduleWeekday(weekday);
+        if (!string.IsNullOrWhiteSpace(normalized))
+            return normalized;
+
+        return normalizedFrequency.Equals("weekly", StringComparison.OrdinalIgnoreCase)
+            ? FirstNonEmpty(ResolveLegacyScheduleWeekday(anchorText), "monday")
+            : "";
+    }
+
+    static DayOfWeek ScheduleWeekdayToDayOfWeek(string weekday, DayOfWeek fallback)
+    {
+        return NormalizeScheduleWeekday(weekday) switch
+        {
+            "monday" => DayOfWeek.Monday,
+            "tuesday" => DayOfWeek.Tuesday,
+            "wednesday" => DayOfWeek.Wednesday,
+            "thursday" => DayOfWeek.Thursday,
+            "friday" => DayOfWeek.Friday,
+            "saturday" => DayOfWeek.Saturday,
+            "sunday" => DayOfWeek.Sunday,
+            _ => fallback
+        };
+    }
+
+    static string DayOfWeekToScheduleWeekday(DayOfWeek day)
+    {
+        return day switch
+        {
+            DayOfWeek.Monday => "monday",
+            DayOfWeek.Tuesday => "tuesday",
+            DayOfWeek.Wednesday => "wednesday",
+            DayOfWeek.Thursday => "thursday",
+            DayOfWeek.Friday => "friday",
+            DayOfWeek.Saturday => "saturday",
+            DayOfWeek.Sunday => "sunday",
+            _ => ""
         };
     }
 
@@ -4323,22 +5298,22 @@ ORDER BY sort_order, plant_code;
         return value;
     }
 
-    static string CalculateNextScheduleRunAt(string frequency, string runTime, string anchorText)
+    static string CalculateNextScheduleRunAt(string frequency, string runTime, string anchorText, string weekday = "", DateTime? nowOverride = null)
     {
         if (string.IsNullOrWhiteSpace(frequency))
             return "";
 
-        if (!TryResolveScheduleSlot(frequency, runTime, anchorText, DateTime.Now, out DateTime slot))
+        DateTime now = nowOverride ?? DateTime.Now;
+        if (!TryResolveScheduleSlot(frequency, runTime, anchorText, now, out DateTime slot, weekday))
             return "";
 
-        DateTime now = DateTime.Now;
         if (slot <= now)
         {
             string normalized = NormalizeScheduleFrequency(frequency);
             slot = normalized switch
             {
                 "weekly" => slot.AddDays(7),
-                "monthly" => AddOneScheduleMonth(slot, anchorText),
+                "monthly" => AddOneScheduleMonth(slot, anchorText, weekday),
                 _ => slot.AddDays(1)
             };
         }
@@ -4378,7 +5353,7 @@ ORDER BY sort_order, plant_code;
         using var connection = OpenDatabaseConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time,
+SELECT id, name, tcode, plants_json, default_business_scope, cron, frequency, run_time, weekday,
        notify_enabled, notify_on_start, notify_on_success, notify_on_failure, notify_target, params_json, created_at, created_by, updated_by
 FROM schedule_tasks
 WHERE enabled=1
@@ -4390,10 +5365,11 @@ ORDER BY run_time, id;
             string cron = reader.GetString(5);
             string frequency = reader.GetString(6);
             string runTime = reader.GetString(7);
-            string createdAt = reader.GetString(14);
+            string weekday = reader.GetString(8);
+            string createdAt = reader.GetString(15);
             if (!string.IsNullOrWhiteSpace(cron) && string.IsNullOrWhiteSpace(frequency))
                 continue;
-            if (!TryResolveScheduleSlot(frequency, runTime, createdAt, now, out DateTime scheduledAt))
+            if (!TryResolveScheduleSlot(frequency, runTime, createdAt, now, out DateTime scheduledAt, weekday))
                 continue;
 
             DateTime lowerBound = now.AddMinutes(-ScheduleTriggerLookbackMinutes);
@@ -4415,15 +5391,16 @@ ORDER BY run_time, id;
                 Cron = cron,
                 Frequency = frequency,
                 RunTime = runTime,
-                NotifyEnabled = reader.GetInt32(8) == 1,
-                NotifyOnStart = reader.GetInt32(9) == 1,
-                NotifyOnSuccess = reader.GetInt32(10) == 1,
-                NotifyOnFailure = reader.GetInt32(11) == 1,
-                NotifyTarget = reader.GetString(12),
-                ParamsJson = reader.GetString(13),
+                Weekday = ResolveEffectiveScheduleWeekday(frequency, weekday, createdAt),
+                NotifyEnabled = reader.GetInt32(9) == 1,
+                NotifyOnStart = reader.GetInt32(10) == 1,
+                NotifyOnSuccess = reader.GetInt32(11) == 1,
+                NotifyOnFailure = reader.GetInt32(12) == 1,
+                NotifyTarget = reader.GetString(13),
+                ParamsJson = reader.GetString(14),
                 ScheduledAt = scheduledAtText,
-                CreatedBy = reader.GetString(15),
-                UpdatedBy = reader.GetString(16)
+                CreatedBy = reader.GetString(16),
+                UpdatedBy = reader.GetString(17)
             });
         }
 
@@ -4487,7 +5464,7 @@ WHERE task_id=$taskId
         };
 
         string plants = NormalizePlantCodesCsv(FirstNonEmpty(task.Plants, GetParamValue(request.Params, "plants")));
-        if (!UsesDateRangeOnlyInputs(request.TransactionCode ?? request.TCode ?? request.Code ?? "") && !string.IsNullOrWhiteSpace(plants))
+        if (!UsesBusinessAreaBatchItems(task.TCode) && !UsesDateRangeOnlyInputs(request.TransactionCode ?? request.TCode ?? request.Code ?? "") && !string.IsNullOrWhiteSpace(plants))
         {
             request.Params["plants"] = plants;
             request.Params["plant"] = FirstCsvValue(plants);
@@ -4496,6 +5473,8 @@ WHERE task_id=$taskId
         if (!string.IsNullOrWhiteSpace(task.DefaultBusinessScope))
             request.Params["factoryGroup"] = task.DefaultBusinessScope;
 
+        // Normalize saved values without applying the current Basic Configuration scope.
+        NormalizeCreateRunParams(request);
         return request;
     }
 
@@ -4581,7 +5560,7 @@ WHERE run_id=$runId;
         command.ExecuteNonQuery();
     }
 
-    static bool TryResolveScheduleSlot(string frequency, string runTime, string anchorText, DateTime now, out DateTime slot)
+    static bool TryResolveScheduleSlot(string frequency, string runTime, string anchorText, DateTime now, out DateTime slot, string weekday = "")
     {
         slot = default;
         if (!TimeSpan.TryParse(NormalizeScheduleRunTime(runTime), out TimeSpan timeOfDay))
@@ -4589,9 +5568,12 @@ WHERE run_id=$runId;
 
         string normalized = NormalizeScheduleFrequency(frequency);
         DateTime anchor = ParseDateOrDefault(anchorText, now);
+        string normalizedWeekday = NormalizeScheduleWeekday(weekday);
+        DayOfWeek weeklyDay = ScheduleWeekdayToDayOfWeek(normalizedWeekday, anchor.DayOfWeek);
         slot = normalized switch
         {
-            "weekly" => ResolveWeeklyScheduleSlot(anchor, now, timeOfDay),
+            "weekly" => ResolveWeeklyScheduleSlot(weeklyDay, now, timeOfDay),
+            "monthly" when !string.IsNullOrWhiteSpace(normalizedWeekday) => ResolveMonthlyWeekdayScheduleSlot(weeklyDay, now, timeOfDay),
             "monthly" => ResolveMonthlyScheduleSlot(anchor, now, timeOfDay),
             "daily" => now.Date.Add(timeOfDay),
             _ => default
@@ -4600,9 +5582,9 @@ WHERE run_id=$runId;
         return slot != default;
     }
 
-    static DateTime ResolveWeeklyScheduleSlot(DateTime anchor, DateTime now, TimeSpan timeOfDay)
+    static DateTime ResolveWeeklyScheduleSlot(DayOfWeek weekday, DateTime now, TimeSpan timeOfDay)
     {
-        int diff = ((int)anchor.DayOfWeek - (int)now.DayOfWeek + 7) % 7;
+        int diff = ((int)weekday - (int)now.DayOfWeek + 7) % 7;
         DateTime slot = now.Date.AddDays(diff).Add(timeOfDay);
         if (slot > now.AddDays(1))
             slot = slot.AddDays(-7);
@@ -4622,8 +5604,36 @@ WHERE run_id=$runId;
         return slot;
     }
 
-    static DateTime AddOneScheduleMonth(DateTime slot, string anchorText)
+    static DateTime ResolveMonthlyWeekdayScheduleSlot(DayOfWeek weekday, DateTime now, TimeSpan timeOfDay)
     {
+        DateTime slot = FirstWeekdayOfMonth(now.Year, now.Month, weekday).Add(timeOfDay);
+        if (slot > now)
+        {
+            DateTime previous = now.AddMonths(-1);
+            slot = FirstWeekdayOfMonth(previous.Year, previous.Month, weekday).Add(timeOfDay);
+        }
+
+        return slot;
+    }
+
+    static DateTime FirstWeekdayOfMonth(int year, int month, DayOfWeek weekday)
+    {
+        DateTime firstDay = new(year, month, 1);
+        int diff = ((int)weekday - (int)firstDay.DayOfWeek + 7) % 7;
+        return firstDay.AddDays(diff);
+    }
+
+    static DateTime AddOneScheduleMonth(DateTime slot, string anchorText, string weekday = "")
+    {
+        string normalizedWeekday = NormalizeScheduleWeekday(weekday);
+        if (!string.IsNullOrWhiteSpace(normalizedWeekday))
+        {
+            DateTime nextMonth = slot.AddMonths(1);
+            DayOfWeek dayOfWeek = ScheduleWeekdayToDayOfWeek(normalizedWeekday, slot.DayOfWeek);
+            DateTime nextWeekday = FirstWeekdayOfMonth(nextMonth.Year, nextMonth.Month, dayOfWeek);
+            return new DateTime(nextWeekday.Year, nextWeekday.Month, nextWeekday.Day, slot.Hour, slot.Minute, slot.Second);
+        }
+
         DateTime anchor = ParseDateOrDefault(anchorText, slot);
         DateTime next = slot.AddMonths(1);
         int day = Math.Max(1, Math.Min(anchor.Day, DateTime.DaysInMonth(next.Year, next.Month)));
@@ -4685,6 +5695,8 @@ WHERE run_id=$runId;
     static void NormalizeCreateRunParams(CreateRunRequest request)
     {
         request.Params ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        string tcode = request.TransactionCode ?? request.TCode ?? request.Code ?? "";
+        bool businessAreaScope = UsesBusinessAreaBatchItems(tcode);
         string plants = FirstNonEmpty(
             GetParamValue(request.Params, "plants"),
             GetParamValue(request.Params, "werkslist"),
@@ -4692,11 +5704,13 @@ WHERE run_id=$runId;
             GetParamValue(request.Params, "plant"),
             GetParamValue(request.Params, "werks"));
         plants = NormalizePlantCodesCsv(plants);
-        if (!UsesDateRangeOnlyInputs(request.TransactionCode ?? request.TCode ?? request.Code ?? "") && !string.IsNullOrWhiteSpace(plants))
+        if (!businessAreaScope && !UsesDateRangeOnlyInputs(request.TransactionCode ?? request.TCode ?? request.Code ?? "") && !string.IsNullOrWhiteSpace(plants))
         {
             request.Params["plants"] = plants;
             request.Params["plant"] = FirstCsvValue(plants);
         }
+
+        RemoveLegacyZfi057PlantFilter(request.Params);
 
         string businessAreas = FirstNonEmpty(
             GetParamValue(request.Params, "businessAreas"),
@@ -4719,7 +5733,161 @@ WHERE run_id=$runId;
             RemoveScopeParamKeys(request.Params);
         }
 
-        NormalizeExecutionDateParams(request.TransactionCode ?? request.TCode ?? request.Code ?? "", request.Params);
+        if (businessAreaScope)
+            ApplyBusinessAreaScope(values: request.Params, configuredDefaultBusinessAreas: "");
+        if (!IsScheduleSnapshotSource(request.Source))
+            ApplyConfiguredTransactionScope(tcode, request.Params);
+        NormalizeZco019RunStrategy(tcode, request.Params);
+        NormalizeExecutionDateParams(tcode, request.Params);
+    }
+
+    static bool IsScheduleSnapshotSource(string source)
+    {
+        return FirstNonEmpty(source, "").StartsWith("schedule:", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void ApplyConfiguredTransactionScope(string tcode, Dictionary<string, string> values)
+    {
+        string fixedBusinessAreas = LoadConfiguredFixedBusinessAreas(tcode);
+        if (AllowsCustomBusinessAreaScope(tcode) || tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase))
+            ApplyBusinessAreaScope(values, fixedBusinessAreas);
+        else
+            ApplyFixedBusinessAreaScope(values, fixedBusinessAreas);
+    }
+
+    static bool AllowsCustomBusinessAreaScope(string tcode)
+    {
+        string normalizedTcode = FirstNonEmpty(tcode, "").Trim();
+        return normalizedTcode.Equals("ZFI057", StringComparison.OrdinalIgnoreCase) ||
+               normalizedTcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
+               normalizedTcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static void RemoveLegacyZfi057PlantFilter(Dictionary<string, string> values)
+    {
+        const string canonicalKey = "zfi057PlantFilter";
+        string[] keys = { canonicalKey, "zfi057PlantFilterCsv", "zfi057_plant_filter", "zfi057_plant_filter_csv" };
+        RemoveParamKeys(values, keys);
+    }
+
+    static void ApplyZfi057BusinessAreaScope(Dictionary<string, string> values, string configuredDefaultBusinessAreas)
+    {
+        ApplyBusinessAreaScope(values, configuredDefaultBusinessAreas, removeZfi057PlantFilter: true);
+    }
+
+    static void ApplyBusinessAreaScope(Dictionary<string, string> values, string configuredDefaultBusinessAreas, bool removeZfi057PlantFilter = false)
+    {
+        string businessAreas = NormalizeCsv(FirstNonEmpty(
+            GetParamValue(values, "businessAreas"),
+            GetParamValue(values, "businessArea"),
+            GetParamValue(values, "businessAreaList"),
+            GetParamValue(values, "gsberlist"),
+            GetParamValue(values, "gsber")));
+        if (string.IsNullOrWhiteSpace(businessAreas))
+            businessAreas = NormalizeCsv(configuredDefaultBusinessAreas);
+
+        RemoveParamKeys(values,
+            "plants", "plant", "plantCodes", "factoryCodes", "werkslist", "plantlist", "werks");
+        if (removeZfi057PlantFilter)
+            RemoveLegacyZfi057PlantFilter(values);
+        if (string.IsNullOrWhiteSpace(businessAreas))
+        {
+            RemoveParamKeys(values, "businessAreas", "businessareas", "businessArea", "businessarea", "businessAreaList", "businessareaslist", "gsberlist", "gsber");
+            return;
+        }
+
+        values["businessAreas"] = businessAreas;
+        values["businessArea"] = FirstCsvValue(businessAreas);
+    }
+
+    static void ApplyZfi057BusinessAreaScope(SapRunParams p, string configuredDefaultBusinessAreas)
+    {
+        ApplyCustomBusinessAreaScope(p, configuredDefaultBusinessAreas);
+        p.Zfi057PlantFilter = "";
+    }
+
+    static void ApplyCustomBusinessAreaScope(SapRunParams p, string configuredDefaultBusinessAreas)
+    {
+        p.Plants = "";
+        p.Plant = "";
+        p.BusinessAreas = NormalizeCsv(FirstNonEmpty(p.BusinessAreas, p.BusinessArea, configuredDefaultBusinessAreas));
+        p.BusinessArea = FirstCsvValue(p.BusinessAreas);
+    }
+
+    static string LoadConfiguredFixedBusinessAreas(string tcode)
+    {
+        string normalizedTcode = SanitizeTCode(tcode).ToUpperInvariant();
+        if (string.IsNullOrWhiteSpace(normalizedTcode))
+            return "";
+
+        InitializeDatabase(seedFromScripts: true);
+        using var connection = OpenDatabaseConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+SELECT business_area_mode, business_areas_json
+FROM transaction_plant_rules
+WHERE tcode=$tcode AND enabled=1;
+""";
+        command.Parameters.AddWithValue("$tcode", normalizedTcode);
+        using var reader = command.ExecuteReader();
+        return reader.Read()
+            ? GetFixedBusinessAreasCsv(reader.GetString(0), reader.GetString(1))
+            : "";
+    }
+
+    static string GetFixedBusinessAreasCsv(string businessAreaMode, string businessAreasJson)
+    {
+        if (!businessAreaMode.Equals("fixed", StringComparison.OrdinalIgnoreCase))
+            return "";
+
+        return NormalizeCsv(string.Join(",", SafeJsonArray(businessAreasJson)));
+    }
+
+    static void ApplyFixedBusinessAreaScope(Dictionary<string, string> values, string fixedBusinessAreas)
+    {
+        fixedBusinessAreas = NormalizeCsv(fixedBusinessAreas);
+        if (string.IsNullOrWhiteSpace(fixedBusinessAreas))
+            return;
+
+        RemoveParamKeys(values,
+            "plants", "plant", "plantCodes", "factoryCodes", "werkslist", "plantlist", "werks",
+            "factoryGroup", "factorygroup", "defaultGroup", "defaultgroup", "defaultBusinessScope", "defaultbusinessscope",
+            "businessScope", "businessscope", "plantGroup", "plantgroup", "plantGroupId", "plantgroupid", "groupId", "groupid",
+            "defaultPlantGroup", "defaultplantgroup",
+            "businessAreas", "businessareas", "businessArea", "businessarea", "businessAreaList", "businessareaslist", "gsberlist", "gsber");
+        values["businessAreas"] = fixedBusinessAreas;
+        values["businessArea"] = FirstCsvValue(fixedBusinessAreas);
+    }
+
+    static void ApplyFixedBusinessAreaScope(SapRunParams p, string fixedBusinessAreas)
+    {
+        fixedBusinessAreas = NormalizeCsv(fixedBusinessAreas);
+        if (string.IsNullOrWhiteSpace(fixedBusinessAreas))
+            return;
+
+        p.Plants = "";
+        p.Plant = "";
+        p.FactoryGroup = "";
+        p.BusinessAreas = fixedBusinessAreas;
+        p.BusinessArea = FirstCsvValue(fixedBusinessAreas);
+    }
+
+    static void NormalizeZco019RunStrategy(string tcode, Dictionary<string, string> values)
+    {
+        if (!FirstNonEmpty(tcode, "").Trim().Equals("ZCO019", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        string strategy = GetParamValue(values, "runStrategy").Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(strategy))
+            return;
+
+        if (strategy is "detail" or "summary" or "both")
+        {
+            values["runStrategy"] = strategy;
+            return;
+        }
+
+        throw new ApiRequestException(400, "ZCO019 执行方式仅支持 detail（明细）、summary（汇总）或 both（明细加汇总）。");
     }
 
     static void RemoveScopeParamKeys(Dictionary<string, string> values)
@@ -5118,13 +6286,13 @@ ON CONFLICT(run_id, param_key) DO UPDATE SET param_value=excluded.param_value;
                tcode.Equals("ZFI080B", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI148", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZCO019", StringComparison.OrdinalIgnoreCase) ||
-               tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI080", StringComparison.OrdinalIgnoreCase);
     }
 
     static bool UsesBusinessAreaBatchItems(string tcode)
     {
-        return tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase);
+        return tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase);
     }
 
     static RunRecordView CreateBatchRun(CreateRunRequest request, TransactionScriptInfo script, BatchRunPlan plan, string dingTalkUserId, string now)
@@ -5601,10 +6769,15 @@ WHERE run_id=$parentRunId
         SapRunParams p,
         string effectivePlants,
         List<RunFile> files,
-        List<RunLogLine> logs)
+        List<RunLogLine> logs,
+        string outputRoot)
     {
         if (files.Count == 0 || !SupportsAlvExport(p.TCode))
             return files;
+
+        outputRoot = Path.GetFullPath(string.IsNullOrWhiteSpace(outputRoot)
+            ? AlvExportStagingDirectory
+            : outputRoot);
 
         AlvOrganizationMappingKind mappingKind = GetAlvOrganizationMappingKind(p.TCode);
         SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
@@ -5612,7 +6785,9 @@ WHERE run_id=$parentRunId
             throw new InvalidOperationException($"ALV organization mapping cannot start: {configError}");
 
         string transactionName = ResolveTransactionDisplayName(p.TCode);
-        string plantIdentity = FirstNonEmpty(FirstCsvValue(effectivePlants), p.Plant, "scope");
+        string plantIdentity = FirstNonEmpty(FirstCsvValue(effectivePlants), p.Plant);
+        string plantRoutingIdentity = FirstNonEmpty(plantIdentity, "scope");
+        string businessAreaIdentity = FirstNonEmpty(FirstCsvValue(p.BusinessAreas), p.BusinessArea, "scope");
         DateTime archiveDate = ResolveAlvArchiveDate(p);
         var mappingFetcher = new AlvOrganizationMappingFetcher();
         var routed = new Dictionary<string, RunFile>(StringComparer.OrdinalIgnoreCase);
@@ -5640,15 +6815,24 @@ WHERE run_id=$parentRunId
             IReadOnlyList<RunFile> outputs = mappingKind == AlvOrganizationMappingKind.Plant
                 ? AlvOrganizationExport.RoutePlantWorkbook(
                     sourcePath,
-                    AlvExportDataDirectory,
+                    outputRoot,
                     p.TCode,
                     outputTransactionName,
-                    plantIdentity,
+                    plantRoutingIdentity,
                     archiveDate,
                     Lookup)
-                : AlvOrganizationExport.RouteBusinessAreaWorkbook(
+                : UsesBusinessAreaRequestAlvOutput(p.TCode)
+                    ? AlvOrganizationExport.RouteBusinessAreaRequestWorkbook(
+                        sourcePath,
+                        outputRoot,
+                        p.TCode,
+                        outputTransactionName,
+                        archiveDate,
+                        businessAreaIdentity,
+                        Lookup)
+                    : AlvOrganizationExport.RouteBusinessAreaWorkbook(
                     sourcePath,
-                    AlvExportDataDirectory,
+                     outputRoot,
                     p.TCode,
                     outputTransactionName,
                     archiveDate,
@@ -6016,6 +7200,9 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
         string rerunParentRunId = NewRunId(parent.TransactionCode);
         string[] rerunValues = failedItems.Select(i => i.Plant).ToArray();
+        string fixedBusinessAreas = LoadConfiguredFixedBusinessAreas(parent.TransactionCode);
+        if (UsesBusinessAreaBatchItems(parent.TransactionCode) && !AllowsCustomBusinessAreaScope(parent.TransactionCode) && !string.IsNullOrWhiteSpace(fixedBusinessAreas))
+            rerunValues = NormalizeStringArray(fixedBusinessAreas);
         var plan = ResolveBatchPlanForParent(parent, rerunValues);
         string summaryJson = BuildBatchSummaryJson(rerunParentRunId, rerunValues, plan.ItemLabel, Array.Empty<BatchItemStatus>(), "queued");
         var newChildRunIds = new List<string>();
@@ -6024,6 +7211,7 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
         using var tx = connection.BeginTransaction();
         request.Params[plan.ParamKey] = string.Join(",", rerunValues);
         request.Params[plan.SingleParamKey] = rerunValues.FirstOrDefault() ?? "";
+        NormalizeCreateRunParams(request);
         InsertRunRow(connection, tx, rerunParentRunId, request, script, dingTalkUserId, now, "parent", "", "", 0, rerunValues.Length, 1, "running", summaryJson, parentRunId, parentRunId);
         InsertRunParams(connection, tx, rerunParentRunId, request.Params);
 
@@ -6067,6 +7255,9 @@ WHERE run_id=$runId AND COALESCE(run_type, 'single')='parent';
         int limit = DefaultRunListLimit;
         if (int.TryParse(request.QueryString["limit"], out int parsedLimit))
             limit = Math.Clamp(parsedLimit, 1, 200);
+        int offset = 0;
+        if (int.TryParse(request.QueryString["offset"], out int parsedOffset))
+            offset = Math.Max(parsedOffset, 0);
 
         string status = request.QueryString["status"] ?? "";
         string fromRaw = request.QueryString["from"] ?? "";
@@ -6103,7 +7294,7 @@ FROM runs r
 LEFT JOIN transactions t ON t.tcode = r.transaction_code
 {whereSql}
 {orderSql}
-LIMIT $limit;
+LIMIT $limit OFFSET $offset;
 """;
 
         if (!string.IsNullOrWhiteSpace(status))
@@ -6115,6 +7306,7 @@ LIMIT $limit;
         }
 
         command.Parameters.AddWithValue("$limit", limit);
+        command.Parameters.AddWithValue("$offset", offset);
         using var reader = command.ExecuteReader();
         while (reader.Read())
             runs.Add(ReadRunRecord(reader));
@@ -6702,6 +7894,16 @@ WHERE run_id=$runId;
                 continue;
             }
 
+            if (!scope.PlantMappingSuccess || plants.Length == 0)
+            {
+                string message = scope.PlantMappingSuccess
+                    ? $"业务范围 {area} 未在 SAP 表 ZFIT_RPA_BUKRS 中维护可执行工厂，无法执行 ZFI057 与 ZCO020 后续步骤。请维护 ZFIT_RPA_BUKRS-GSBER/WERKS 映射，或从任务范围中移除该业务范围。"
+                    : $"业务范围 {area} 的工厂映射读取失败：{FirstNonEmpty(scope.PlantMappingMessage, "未知错误")}。已在步骤一前停止执行；请检查 SAP 表 ZFIT_RPA_BUKRS 的 GSBER/WERKS 字段权限和数据。";
+                aggregate.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"ZFI057 workflow scope failed; businessArea={area}; {message}" });
+                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "failed", message));
+                continue;
+            }
+
             AddWorkflowLog(aggregate, "step 1", $"query: method=NCo REPORT_SUBMIT/MEMORY_EXPORT; report=ZFI019NL; businessArea={area}; period={p.Period}; weekEnd={p.WeekEnd}; plants=not_applicable");
             var step1Fetch = ExecuteZfi057Step1Memory(p, area, Array.Empty<string>());
             AddStepResult(aggregate, "step 1 ZFI019NL memory", step1Fetch.Result);
@@ -6719,6 +7921,13 @@ WHERE run_id=$runId;
             string[] materialItems = upstreamMaterialItems;
             AddWorkflowLog(aggregate, "step 1", $"materials: selectedSource={materialSource}; selectedCount={materialItems.Length}; selectedSample={FormatSample(materialItems, 8)}; selectedHash={HashForLog(string.Join(",", materialItems))}; requestCount={requestMaterialItems.Length}; requestMaterialsIgnored=true; upstreamCount={upstreamMaterialItems.Length}; upstreamSample={FormatSample(upstreamMaterialItems, 8)}; upstreamHash={HashForLog(string.Join(",", upstreamMaterialItems))}");
             AddZfi057MaterialAuditFile(aggregate, p, scopeIndex, area, plants, materialSource, requestMaterialItems, upstreamMaterialItems, materialItems, step1Fetch.FetchResult.SplitRows);
+            if (!ExportZfi057MaterialWorkbook(aggregate, p, scopeIndex, area, plants, upstreamMaterialItems, step1Fetch.FetchResult.SplitRows))
+            {
+                string message = "step1 material workbook export failed";
+                aggregate.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"ZFI057 workflow scope failed; businessArea={area}; {message}" });
+                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "failed", message));
+                continue;
+            }
             if (materialItems.Length == 0)
             {
                 string message = "step1 no material list returned";
@@ -6731,78 +7940,65 @@ WHERE run_id=$runId;
                 continue;
             }
 
-            if (plants.Length == 0)
-            {
-                string message = $"业务范围 {area} 的上游物料已获取，但 SAP 集 Z31 未维护该业务范围对应的可执行工厂，无法执行 ZFI057 与 ZCO020 后续步骤。请维护“业务范围-工厂”映射，或从任务范围中移除该业务范围。";
-                aggregate.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"ZFI057 workflow scope failed; businessArea={area}; {message}" });
-                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "failed", message));
-                continue;
-            }
-
             int scopeStep2Success = 0;
             int scopeStep2NoDataSkipped = 0;
-            bool scopeFailed = false;
-            string scopeFailureMessage = "";
-            string step2Plants = string.Join(",", plants);
-            var step2 = CloneSapRunParams(p);
-            step2.TCode = "ZFI057";
-            step2.Script = "ZFI057.vbs";
-            step2.BusinessAreas = area;
-            step2.BusinessArea = area;
-            step2.Plants = step2Plants;
-            step2.Plant = "";
-            step2.Materials = string.Join(",", materialItems);
-            step2.RunStrategy = "workflow-step";
-            step2.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 1800);
-
-            AddWorkflowLog(aggregate, "step 2", $"query: {BuildZfi057Step2InputSummary(step2, area, step2Plants, 1, 1, materialItems.Length)}");
-            var step2Result = LaunchSapGuiAndExecute(step2);
-            if (!IsSuccessResult(step2Result) && IsZfi057Step2NoDataResult(step2Result))
+            var step2Failures = new List<string>();
+            var step2StartedUtc = DateTime.UtcNow;
+            for (int plantIndex = 0; plantIndex < plants.Length; plantIndex++)
             {
-                scopeStep2NoDataSkipped++;
-                totalStep2NoDataSkipped++;
-                aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 2] skip no-data scope; businessArea={area}; plants={step2Plants}; message={Truncate(FirstNonEmpty(step2Result.Message, step2Result.SapStatusText), 240)}" });
-                AddSkippedStepResult(aggregate, "step 2 ZFI057 skipped(no-data)", step2Result);
-            }
-            else
-            {
-                AddStepResult(aggregate, "step 2 ZFI057", step2Result);
+                string plant = plants[plantIndex];
+                var step2 = CloneSapRunParams(p);
+                step2.TCode = "ZFI057";
+                step2.Script = "ZFI057.vbs";
+                step2.BusinessAreas = area;
+                step2.BusinessArea = area;
+                step2.Plants = plant;
+                step2.Plant = plant;
+                step2.Materials = string.Join(",", materialItems);
+                step2.RunStrategy = "workflow-step";
+                step2.TimeoutSeconds = Math.Max(p.TimeoutSeconds.GetValueOrDefault(0), 1800);
 
+                AddWorkflowLog(aggregate, "step 2", $"query: {BuildZfi057Step2InputSummary(step2, area, plant, plantIndex + 1, plants.Length, materialItems.Length)}");
+                var step2Result = LaunchSapGuiAndExecute(step2);
+                if (!IsSuccessResult(step2Result) && IsZfi057Step2NoDataResult(step2Result))
+                {
+                    scopeStep2NoDataSkipped++;
+                    totalStep2NoDataSkipped++;
+                    aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 2] no data; businessArea={area}; plant={plant}; message={Truncate(FirstNonEmpty(step2Result.Message, step2Result.SapStatusText), 240)}" });
+                    AddSkippedStepResult(aggregate, $"step 2 ZFI057 skipped(no-data) plant={plant}", step2Result);
+                    continue;
+                }
+
+                AddStepResult(aggregate, $"step 2 ZFI057 plant={plant}", step2Result);
                 if (!IsSuccessResult(step2Result))
                 {
-                    scopeFailed = true;
-                    scopeFailureMessage = $"step2 failed plants={step2Plants}: {FirstNonEmpty(step2Result.Message, step2Result.SapStatusText, "ZFI057 failed")}";
-                    aggregate.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"ZFI057 workflow scope failed; businessArea={area}; {scopeFailureMessage}" });
+                    string failure = $"factory {plant} failed: {FirstNonEmpty(step2Result.Message, step2Result.SapStatusText, "ZFI057 failed")}";
+                    step2Failures.Add(failure);
+                    aggregate.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"ZFI057 workflow step2 failed; businessArea={area}; {failure}" });
+                    continue;
                 }
-                else
-                {
-                    scopeStep2Success++;
-                    totalStep2Success++;
-                }
-            }
 
-            if (scopeFailed)
-            {
-                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "failed", scopeFailureMessage));
-                continue;
-            }
-
-            if (scopeStep2Success == 0 && scopeStep2NoDataSkipped > 0)
-            {
-                aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 3] skip ZCO020 because ZFI057 returned no data for all selected plants; businessArea={area}; plants={step2Plants}" });
-                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_data", "all selected plants returned no data"));
-                continue;
+                scopeStep2Success++;
+                totalStep2Success++;
             }
 
             if (scopeStep2Success == 0)
             {
-                string message = "no ZFI057 step2 execution succeeded";
-                aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 3] skip ZCO020 because {message}; businessArea={area}" });
-                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_data", message));
+                if (step2Failures.Count > 0)
+                {
+                    string message = string.Join("; ", step2Failures);
+                    aggregate.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"[step 3] skip ZCO020 because no factory completed step2; businessArea={area}; {message}" });
+                    scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "failed", message));
+                }
+                else
+                {
+                    aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 3] skip ZCO020 because ZFI057 returned no data for all mapped plants; businessArea={area}; plants={string.Join(",", plants)}" });
+                    scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_data", "all mapped plants returned no data"));
+                }
                 continue;
             }
 
-            var step3Closure = ExecuteZfi057Step3ScopeClosure(aggregate, p, area, plants);
+            var step3Closure = ExecuteZfi057Step3ScopeClosure(aggregate, p, area, plants, scopeStep2Success, step2StartedUtc);
             if (!step3Closure.Success)
             {
                 string message = FirstNonEmpty(step3Closure.Message, "step3 closure failed");
@@ -6811,7 +8007,29 @@ WHERE run_id=$runId;
                 continue;
             }
 
-            scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "success", $"step2Success={scopeStep2Success}; step2NoData={scopeStep2NoDataSkipped}; {step3Closure.Message}"));
+            if (step3Closure.NoData)
+            {
+                string message = FirstNonEmpty(step3Closure.Message, BuildZfi057Zco020NoDataMessage(area));
+                aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 3] no data; businessArea={area}; {message}" });
+                if (step2Failures.Count > 0)
+                {
+                    scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "failed", $"step2Success={scopeStep2Success}; step2NoData={scopeStep2NoDataSkipped}; {string.Join("; ", step2Failures)}; {message}"));
+                }
+                else
+                {
+                    scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_data", message));
+                }
+                continue;
+            }
+
+            if (step2Failures.Count > 0)
+            {
+                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "failed", $"step2Success={scopeStep2Success}; step2NoData={scopeStep2NoDataSkipped}; {string.Join("; ", step2Failures)}; {step3Closure.Message}"));
+            }
+            else
+            {
+                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "success", $"step2Success={scopeStep2Success}; step2NoData={scopeStep2NoDataSkipped}; {step3Closure.Message}"));
+            }
         }
 
         if (scopeResults.Count == 0)
@@ -6951,6 +8169,17 @@ WHERE run_id=$runId;
         return candidates.Any(IsZfi057NoDataText);
     }
 
+    static bool IsZco020FilteredNoDataResult(RunResultRequest result)
+    {
+        return result.Logs.Any(line =>
+            (line.Message ?? "").Contains("ZCO020_FILTERED_NO_DATA=1", StringComparison.OrdinalIgnoreCase));
+    }
+
+    static string BuildZfi057Zco020NoDataMessage(string businessArea)
+    {
+        return $"业务范围 {FirstNonEmpty(businessArea, "-")} 的 ZCO020 在 ZBZ1=zpp063 过滤后无数据，已跳过全选、保存、后台作业和第二次 ZCO020。";
+    }
+
     static bool IsZfi057NoDataText(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -7017,26 +8246,37 @@ WHERE run_id=$runId;
             aggregate.Files.Add(file);
     }
 
-    static Zfi057Step3ScopeResult ExecuteZfi057Step3ScopeClosure(RunResultRequest aggregate, SapRunParams p, string area, string[] plants)
+    static Zfi057Step3ScopeResult ExecuteZfi057Step3ScopeClosure(RunResultRequest aggregate, SapRunParams p, string area, string[] plants, int successfulPlantCount, DateTime step2StartedUtc)
     {
         var step3 = BuildZfi057Step3Params(p, area, plants);
+        // First ZCO020 is executed once per business-area scope, so it should
+        // start one follow-up job regardless of how many plants succeeded in step 2.
+        int expectedJobCount = ResolveZfi057Step3ExpectedJobCount(successfulPlantCount);
+        AddWorkflowLog(aggregate, "step 3", $"TBTCO expectation follows the executed action: first ZCO020 runs once for businessArea={area}; step2SuccessfulPlants={successfulPlantCount}; expectedJobs={expectedJobCount}; followUpJob={Zfi057TbtcoJobName}");
 
         var firstStep3 = ExecuteZfi057Step3Attempt(aggregate, step3, area, 1, 2);
+        if (IsZco020FilteredNoDataResult(firstStep3))
+            return new Zfi057Step3ScopeResult(true, BuildZfi057Zco020NoDataMessage(area), "", "", false, true);
+
         if (!IsSuccessResult(firstStep3))
             return new Zfi057Step3ScopeResult(false, $"step3 first run failed: {FirstNonEmpty(firstStep3.Message, firstStep3.SapStatusText, "ZCO020 failed")}", "", "", false);
 
-        var firstStep3CompletedUtc = DateTime.UtcNow;
-        var firstCheck = RunZfi057TbtcoJobCheck(step3, area, 1, firstStep3CompletedUtc);
+        var firstCheck = RunZfi057TbtcoJobCheck(step3, area, 1, expectedJobCount, step2StartedUtc);
         AddZfi057TbtcoJobCheckResult(aggregate, firstCheck, 1);
         if (!ShouldRepeatZfi057Step3AfterTbtcoCheck(firstCheck))
-            return new Zfi057Step3ScopeResult(false, $"TBTCO job check did not reach terminal status after first ZCO020: {firstCheck.Message}", firstCheck.Status, "", false);
+            return new Zfi057Step3ScopeResult(false, firstCheck.Message, firstCheck.Status, "", false);
 
-        AddWorkflowLog(aggregate, "step 3", $"TBTCO job {Zfi057TbtcoJobName} reached terminal status after first ZCO020; status={firstCheck.Status}; rerun ZCO020 for scope closure");
+        AddWorkflowLog(aggregate, "step 3", $"all {expectedJobCount} expected TBTCO job(s) for {Zfi057TbtcoJobName} reached terminal success after first ZCO020; status={firstCheck.Status}; rerun ZCO020 for scope closure");
         var secondStep3 = ExecuteZfi057Step3Attempt(aggregate, step3, area, 2, 2);
         if (!IsSuccessResult(secondStep3))
             return new Zfi057Step3ScopeResult(false, $"step3 repeat failed: {FirstNonEmpty(secondStep3.Message, secondStep3.SapStatusText, "ZCO020 repeat failed")}", firstCheck.Status, "", true);
 
         return new Zfi057Step3ScopeResult(true, $"step3=success; tbtcoFirst={firstCheck.Status}; step3Repeat=success", firstCheck.Status, "", true);
+    }
+
+    static int ResolveZfi057Step3ExpectedJobCount(int successfulPlantCount)
+    {
+        return 1;
     }
 
     static SapRunParams BuildZfi057Step3Params(SapRunParams p, string area, string[] plants)
@@ -7072,7 +8312,7 @@ WHERE run_id=$runId;
         });
     }
 
-    static Zfi057TbtcoJobCheckResult RunZfi057TbtcoJobCheck(SapRunParams p, string businessArea, int attempt, DateTime firstZco020CompletedUtc)
+    static Zfi057TbtcoJobCheckResult RunZfi057TbtcoJobCheck(SapRunParams p, string businessArea, int attempt, int expectedJobCount, DateTime step2StartedUtc)
     {
         var started = DateTime.UtcNow;
         var raw = new RunResultRequest
@@ -7083,7 +8323,8 @@ WHERE run_id=$runId;
 
         SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
         string jobUser = ResolveZfi057TbtcoJobUser(p, connectionConfig);
-        var lowerUtc = firstZco020CompletedUtc.AddMinutes(-1);
+        int expected = Math.Max(1, expectedJobCount);
+        var lowerUtc = step2StartedUtc.AddMinutes(-1);
         var deadlineUtc = started.AddSeconds(Zfi057TbtcoPollTimeoutSeconds);
         var poller = new SapJobStatusFetcher();
         string lastStatus = "";
@@ -7092,7 +8333,7 @@ WHERE run_id=$runId;
         int poll = 0;
 
         raw.Logs.Add(new RunLogLine { Level = "INFO", Message = $"TBTCO job check destination: {connectionConfig.SafeSummary()}" });
-        raw.Logs.Add(new RunLogLine { Level = "INFO", Message = $"TBTCO job check scope: jobName={Zfi057TbtcoJobName}; user={MaskForLog(jobUser)}; businessArea={businessArea}; lower={lowerUtc.ToLocalTime():yyyyMMdd HHmmss}; timeoutSeconds={Zfi057TbtcoPollTimeoutSeconds}; intervalSeconds={Zfi057TbtcoPollIntervalSeconds}" });
+        raw.Logs.Add(new RunLogLine { Level = "INFO", Message = $"TBTCO job check scope: jobName={Zfi057TbtcoJobName}; user={MaskForLog(jobUser)}; businessArea={businessArea}; expectedJobs={expected}; lower=step2Start-1m:{lowerUtc.ToLocalTime():yyyyMMdd HHmmss}; timeoutSeconds={Zfi057TbtcoPollTimeoutSeconds}; intervalSeconds={Zfi057TbtcoPollIntervalSeconds}" });
         if (!string.IsNullOrWhiteSpace(p.User) &&
             !string.IsNullOrWhiteSpace(connectionConfig.User) &&
             !p.User.Trim().Equals(connectionConfig.User.Trim(), StringComparison.OrdinalIgnoreCase))
@@ -7111,9 +8352,9 @@ WHERE run_id=$runId;
                 LowerUtc = lowerUtc,
                 UpperUtc = upperUtc
             };
-            var result = poller.FetchLatest(connectionConfig, query);
+            var result = poller.Fetch(connectionConfig, query);
             raw.Logs.Add(new RunLogLine { Level = "INFO", Message = $"TBTCO poll #{poll}: sql={result.SqlSummary}" });
-            raw.Logs.Add(new RunLogLine { Level = "INFO", Message = $"TBTCO poll #{poll}: options={string.Join(" | ", result.Options)}; rawRows={result.Rows.Count}; message={Truncate(result.Message, 360)}" });
+            raw.Logs.Add(new RunLogLine { Level = "INFO", Message = $"TBTCO poll #{poll}: options={string.Join(" | ", result.Options)}; rawRows={result.RawRowCount}; matchedRows={result.Rows.Count}; message={Truncate(result.Message, 360)}" });
 
             if (!result.Success)
             {
@@ -7124,33 +8365,29 @@ WHERE run_id=$runId;
                 return new Zfi057TbtcoJobCheckResult(false, false, false, "query_failed", "unknown", result.Message, raw);
             }
 
-            if (result.Latest != null)
+            var evaluation = EvaluateZfi057TbtcoJobs(result.Rows, expected);
+            lastStatus = evaluation.StatusSummary;
+            lastCategory = evaluation.AllTerminal
+                ? evaluation.HasFailure ? "terminal_failed" : "terminal_success"
+                : "running";
+            lastMessage = result.Message;
+            raw.Logs.Add(new RunLogLine
             {
-                lastStatus = SapJobStatusFetcher.DescribeTbtcoStatus(result.Latest.Status);
-                lastCategory = SapJobStatusFetcher.NormalizeTbtcoStatusCategory(result.Latest.Status);
-                lastMessage = result.Message;
-                raw.Logs.Add(new RunLogLine
-                {
-                    Level = "INFO",
-                    Message = $"TBTCO latest: job={result.Latest.JobName}/{result.Latest.JobCount}; user={MaskForLog(result.Latest.User)}; status={lastStatus}; category={lastCategory}; start={FormatNullableSapJobTime(result.Latest.EffectiveStartLocal)}; end={FormatNullableSapJobTime(result.Latest.EndLocal)}"
-                });
+                Level = evaluation.HasExpectedJobs && evaluation.AllTerminal ? (evaluation.HasFailure ? "ERROR" : "INFO") : "INFO",
+                Message = $"TBTCO jobs: expected={evaluation.ExpectedJobs}; matched={evaluation.Jobs.Count}; allExpectedFound={evaluation.HasExpectedJobs}; allTerminal={evaluation.AllTerminal}; failed={evaluation.HasFailure}; states={evaluation.StatusSummary}"
+            });
 
-                if (SapJobStatusFetcher.IsTbtcoTerminalStatus(result.Latest.Status))
-                {
-                    bool failed = SapJobStatusFetcher.IsTbtcoFailureStatus(result.Latest.Status);
-                    raw.Status = "success";
-                    raw.Message = $"TBTCO job ended after first ZCO020: {lastMessage}";
-                    raw.SapStatusType = failed ? "W" : "S";
-                    raw.SapStatusText = raw.Message;
-                    raw.DurationMs = EnsureDuration(0, started);
-                    return new Zfi057TbtcoJobCheckResult(true, true, failed, lastStatus, lastCategory, raw.Message, raw);
-                }
-            }
-            else
+            if (evaluation.HasExpectedJobs && evaluation.AllTerminal)
             {
-                lastStatus = "not_found";
-                lastCategory = "not_found";
-                lastMessage = result.Message;
+                bool failed = evaluation.HasFailure;
+                raw.Status = failed ? "failed" : "success";
+                raw.Message = failed
+                    ? BuildZfi057TbtcoFailureMessage(businessArea, evaluation.StatusSummary)
+                    : $"All expected TBTCO jobs ended successfully after first ZCO020: {evaluation.StatusSummary}";
+                raw.SapStatusType = failed ? "E" : "S";
+                raw.SapStatusText = raw.Message;
+                raw.DurationMs = EnsureDuration(0, started);
+                return new Zfi057TbtcoJobCheckResult(!failed, true, failed, lastStatus, lastCategory, raw.Message, raw);
             }
 
             if (DateTime.UtcNow.AddSeconds(Zfi057TbtcoPollIntervalSeconds) > deadlineUtc)
@@ -7159,7 +8396,7 @@ WHERE run_id=$runId;
             Thread.Sleep(TimeSpan.FromSeconds(Zfi057TbtcoPollIntervalSeconds));
         }
 
-        string timeoutMessage = $"TBTCO job {Zfi057TbtcoJobName} did not reach terminal status within {Zfi057TbtcoPollTimeoutSeconds}s after first ZCO020; lastStatus={lastStatus}; lastMessage={lastMessage}";
+        string timeoutMessage = $"TBTCO job {Zfi057TbtcoJobName} did not find {expected} matching terminal job(s) within {Zfi057TbtcoPollTimeoutSeconds}s after first ZCO020; lastStatus={lastStatus}; lastMessage={lastMessage}";
         raw.Status = "failed";
         raw.Message = timeoutMessage;
         raw.SapStatusType = "E";
@@ -7170,7 +8407,35 @@ WHERE run_id=$runId;
 
     static bool ShouldRepeatZfi057Step3AfterTbtcoCheck(Zfi057TbtcoJobCheckResult check)
     {
-        return check.Success && check.IsTerminal;
+        return check.Success && check.IsTerminal && !check.IsFailure;
+    }
+
+    static string BuildZfi057TbtcoFailureMessage(string businessArea, string statusSummary)
+    {
+        string area = FirstNonEmpty(businessArea, "-");
+        string status = FirstNonEmpty(statusSummary, "未返回作业状态");
+        return $"业务范围 {area} 的 ZFI057 后台作业未全部成功，已停止第二次 ZCO020，避免在结果不完整时重复核算。作业状态：{status}。其中 A(cancelled) 表示作业已取消，F(finished) 表示作业正常完成。请在 SAP 事务 SM37 中查看已取消或异常作业的作业日志及假脱机请求，排查原因后重新发起该业务范围。";
+    }
+
+    static Zfi057TbtcoJobEvaluation EvaluateZfi057TbtcoJobs(IEnumerable<SapJobStatusRow> rows, int expectedJobCount)
+    {
+        int expected = Math.Max(1, expectedJobCount);
+        SapJobStatusRow[] jobs = rows
+            .Where(row => !string.IsNullOrWhiteSpace(row.JobName) && !string.IsNullOrWhiteSpace(row.JobCount))
+            .GroupBy(row => $"{row.JobName}\u001f{row.JobCount}", StringComparer.OrdinalIgnoreCase)
+            .Select(group => group
+                .OrderByDescending(row => row.EffectiveStartLocal ?? DateTime.MinValue)
+                .ThenByDescending(row => row.EndLocal ?? DateTime.MinValue)
+                .First())
+            .OrderBy(row => row.EffectiveStartLocal ?? DateTime.MinValue)
+            .ThenBy(row => row.JobCount, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        bool allTerminal = jobs.Length > 0 && jobs.All(job => SapJobStatusFetcher.IsTbtcoTerminalStatus(job.Status));
+        bool hasFailure = jobs.Any(job => SapJobStatusFetcher.IsTbtcoFailureStatus(job.Status));
+        string statusSummary = jobs.Length == 0
+            ? "not_found"
+            : string.Join(",", jobs.Select(job => $"{job.JobName}/{job.JobCount}={SapJobStatusFetcher.DescribeTbtcoStatus(job.Status)}"));
+        return new Zfi057TbtcoJobEvaluation(expected, jobs, jobs.Length >= expected, allTerminal, hasFailure, statusSummary);
     }
 
     static string ResolveZfi057TbtcoJobUser(SapRunParams p, SapNcoConnectionConfig connectionConfig)
@@ -7214,7 +8479,6 @@ WHERE run_id=$runId;
             WaitSeconds = config.WaitSeconds > 0 ? config.WaitSeconds : 60,
             SplitTable = FirstNonEmpty(config.SplitTable, "ZFI_SPLIT"),
             SplitBukrs = FirstNonEmpty(config.SplitBukrs, "2030"),
-            DongtaiBusinessAreas = config.DongtaiBusinessAreas.ToList(),
             SplitWerks = plants
                 .Select(v => FirstNonEmpty(v, "").Trim())
                 .Where(v => !string.IsNullOrWhiteSpace(v))
@@ -7337,31 +8601,8 @@ WHERE run_id=$runId;
             SpoolDevice = GetConfigString(zfi019nl, "spoolDevice"),
             WaitSeconds = GetConfigInt(zfi019nl, "waitSeconds", 60),
             SplitTable = GetConfigString(zfi019nl, "splitTable"),
-            SplitBukrs = GetConfigString(zfi019nl, "splitBukrs"),
-            DongtaiBusinessAreas = NormalizeStringArray(FirstNonEmpty(
-                GetConfigString(zfi019nl, "dongtaiBusinessAreas"),
-                GetConfigString(zfi019nl, "specialBusinessAreas")))
+            SplitBukrs = GetConfigString(zfi019nl, "splitBukrs")
         };
-    }
-
-    static string LoadZfi057Gs03SetName()
-    {
-        try
-        {
-            using JsonDocument? document = LoadLocalConfigDocument();
-            JsonElement? root = document?.RootElement;
-            JsonElement? zfi057 = TryGetObject(root, "zfi057Workflow");
-            return FirstNonEmpty(
-                GetConfigString(zfi057, "gs03SetName"),
-                GetConfigString(zfi057, "getGs03SetName"),
-                GetConfigString(zfi057, "businessAreaSetName"),
-                GetConfigString(root, "zfi057Gs03SetName"),
-                SapGs03PlantFetcher.DefaultSetName);
-        }
-        catch
-        {
-            return SapGs03PlantFetcher.DefaultSetName;
-        }
     }
 
     static string GetSelectionSummary(Zfi019NlFetchRequest request, string selname)
@@ -7440,6 +8681,159 @@ WHERE run_id=$runId;
         }
     }
 
+    static bool ExportZfi057MaterialWorkbook(
+        RunResultRequest aggregate,
+        SapRunParams p,
+        int scopeIndex,
+        string businessArea,
+        string[] plants,
+        string[] upstreamMaterials,
+        IReadOnlyList<Dictionary<string, string>> splitRows)
+    {
+        string stagingPath = "";
+        try
+        {
+            string transactionName = "ZFI057_materials";
+            DateTime archiveDate = ResolveAlvArchiveDate(p);
+            string directory = GetAlvBusinessAreaRawOutputDirectory(archiveDate, businessArea, AlvExportStagingDirectory);
+            Directory.CreateDirectory(directory);
+            string fileName = BuildAlvBusinessAreaRawFileName("ZFI057", transactionName, businessArea, archiveDate);
+            stagingPath = Path.Combine(directory, fileName);
+
+            using (var workbook = new XLWorkbook())
+            {
+                var sheet = workbook.Worksheets.Add("materials");
+                string[] headers =
+                {
+                    "GSBER",
+                    "Material",
+                    "SourceType",
+                    "Source",
+                    "RunId",
+                    "ScopeIndex",
+                    "Period",
+                    "WeekEnd",
+                    "Plants"
+                };
+
+                for (int i = 0; i < headers.Length; i++)
+                    sheet.Cell(1, i + 1).Value = headers[i];
+
+                int row = 2;
+                foreach (string material in upstreamMaterials
+                    .Select(value => FirstNonEmpty(value, "").Trim())
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+                {
+                    WriteZfi057MaterialRow(sheet, row++, businessArea, material, "ZFI019NL_MEMORY", "ZFI019NL", p, scopeIndex, plants);
+                }
+
+                foreach (var splitRow in splitRows)
+                {
+                    splitRow.TryGetValue(Zfi019NlMemoryFetcher.FinalMaterialColumn, out string? material);
+                    splitRow.TryGetValue(Zfi019NlMemoryFetcher.FinalSourceColumn, out string? source);
+                    material = FirstNonEmpty(material ?? "", "").Trim();
+                    if (string.IsNullOrWhiteSpace(material))
+                        continue;
+
+                    WriteZfi057MaterialRow(sheet, row++, businessArea, material, "CUSTOM_TABLE", FirstNonEmpty(source ?? "", "ZFI_SPLIT"), p, scopeIndex, plants);
+                }
+
+                if (row == 2)
+                {
+                    WriteZfi057MaterialRow(sheet, row++, businessArea, "", "NO_DATA", "ZFI019NL_MEMORY", p, scopeIndex, plants);
+                }
+
+                sheet.Columns().AdjustToContents();
+                workbook.SaveAs(stagingPath);
+            }
+
+            List<RunFile> organizedFiles = RouteZfi057MaterialWorkbookToOrganization(
+                p,
+                stagingPath,
+                businessArea,
+                transactionName,
+                archiveDate,
+                aggregate.Logs);
+
+            var exportResult = new RunResultRequest { Status = "success", Files = organizedFiles };
+            if (!ArchiveStagedAlvFiles(exportResult))
+            {
+                aggregate.Logs.AddRange(exportResult.Logs);
+                AddWorkflowLog(aggregate, "step 1", $"material workbook archive failed: {exportResult.Message}");
+                return false;
+            }
+
+            aggregate.Files.AddRange(exportResult.Files);
+            aggregate.Logs.AddRange(exportResult.Logs);
+            AddWorkflowLog(aggregate, "step 1", $"material workbook exported: businessArea={businessArea}; files={exportResult.Files.Count}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            AddWorkflowLog(aggregate, "step 1", $"material workbook export failed: {ex.Message}; staging={stagingPath}");
+            return false;
+        }
+    }
+
+    static List<RunFile> RouteZfi057MaterialWorkbookToOrganization(
+        SapRunParams p,
+        string stagingPath,
+        string businessArea,
+        string transactionName,
+        DateTime archiveDate,
+        List<RunLogLine> logs)
+    {
+        string outputRoot = Path.GetFullPath(AlvExportStagingDirectory);
+        SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
+        if (!connectionConfig.IsComplete(out string configError))
+            throw new InvalidOperationException($"ZFI057 material workbook organization mapping cannot start: {configError}");
+
+        var mappingFetcher = new AlvOrganizationMappingFetcher();
+        AlvOrganizationMappingResult Lookup(string sourceCode)
+        {
+            AlvOrganizationMappingResult mapping = mappingFetcher.Fetch(connectionConfig, AlvOrganizationMappingKind.BusinessArea, sourceCode);
+            logs.Add(new RunLogLine
+            {
+                Level = mapping.Success ? "INFO" : "ERROR",
+                Message = $"ZFI057 material workbook organization mapping: source=businessArea:{sourceCode}; {mapping.Message}"
+            });
+            return mapping;
+        }
+
+        return AlvOrganizationExport.RouteBusinessAreaRequestWorkbook(
+            stagingPath,
+            outputRoot,
+            "ZFI057",
+            transactionName,
+            archiveDate,
+            businessArea,
+            Lookup).ToList();
+    }
+
+    static void WriteZfi057MaterialRow(
+        IXLWorksheet sheet,
+        int row,
+        string businessArea,
+        string material,
+        string sourceType,
+        string source,
+        SapRunParams p,
+        int scopeIndex,
+        string[] plants)
+    {
+        sheet.Cell(row, 1).Value = businessArea;
+        sheet.Cell(row, 2).Value = material;
+        sheet.Cell(row, 3).Value = sourceType;
+        sheet.Cell(row, 4).Value = source;
+        sheet.Cell(row, 5).Value = FirstNonEmpty(p.RunId, "-");
+        sheet.Cell(row, 6).Value = scopeIndex;
+        sheet.Cell(row, 7).Value = p.Period;
+        sheet.Cell(row, 8).Value = p.WeekEnd;
+        sheet.Cell(row, 9).Value = string.Join(",", plants.Where(value => !string.IsNullOrWhiteSpace(value)));
+    }
+
     static void AppendMaterialRows(List<string> lines, string source, string[] materials)
     {
         for (int i = 0; i < materials.Length; i++)
@@ -7474,6 +8868,8 @@ WHERE run_id=$runId;
                tcode.Equals("ZCO019", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI057", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFIR034", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI148", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -7525,8 +8921,9 @@ WHERE run_id=$runId;
         string stem = Path.GetFileNameWithoutExtension(sourcePath ?? "");
         if (stem.EndsWith("_detail", StringComparison.OrdinalIgnoreCase))
             return transactionName + "_\u660e\u7ec6";
-        if (stem.EndsWith("_saved", StringComparison.OrdinalIgnoreCase))
-            return transactionName + "_\u4fdd\u5b58";
+        if (stem.EndsWith("_summary", StringComparison.OrdinalIgnoreCase) ||
+            stem.EndsWith("_saved", StringComparison.OrdinalIgnoreCase))
+            return transactionName + "_\u6c47\u603b";
 
         return transactionName;
     }
@@ -7538,21 +8935,29 @@ WHERE run_id=$runId;
                tcode.Equals("ZFI080", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI080B", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZCO019", StringComparison.OrdinalIgnoreCase) ||
-               tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI057", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFIR034", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI148", StringComparison.OrdinalIgnoreCase);
     }
 
     static bool UsesBusinessAreaAlvOutput(string tcode)
     {
-        return tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase);
+        return tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase);
+    }
+
+    static bool UsesBusinessAreaRequestAlvOutput(string tcode)
+    {
+        return tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase);
     }
 
     static AlvOrganizationMappingKind GetAlvOrganizationMappingKind(string tcode)
     {
         return tcode.Equals("ZFI080", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI080B", StringComparison.OrdinalIgnoreCase) ||
-               tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI019NA", StringComparison.OrdinalIgnoreCase) ||
+               tcode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase) ||
                tcode.Equals("ZFI148", StringComparison.OrdinalIgnoreCase)
             ? AlvOrganizationMappingKind.BusinessArea
             : AlvOrganizationMappingKind.Plant;
@@ -8078,42 +9483,50 @@ WHERE run_id=$runId;
         if (requestedAreas.Length == 0)
             return new List<Zfi057WorkflowScope>();
 
-        var result = new List<Zfi057WorkflowScope>();
+        var mappedScopes = new List<Zfi057WorkflowScope>();
         foreach (string area in requestedAreas)
         {
-            result.Add(new Zfi057WorkflowScope(area, ResolveZfi057Gs03Plants(p, area)));
+            Zfi057BusinessAreaPlantFetchResult mapping = ResolveZfi057BusinessAreaPlants(p, area);
+            mappedScopes.Add(new Zfi057WorkflowScope(area, DistinctPreserveOrder(mapping.Plants), mapping.Success, mapping.Message));
         }
 
-        return result;
+        return mappedScopes;
     }
 
-    static string[] ResolveZfi057Gs03Plants(SapRunParams p, string area)
+    static Zfi057BusinessAreaPlantFetchResult ResolveZfi057BusinessAreaPlants(SapRunParams p, string area)
     {
         try
         {
             SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(p);
             if (!connectionConfig.IsComplete(out string configError))
             {
-                Log($"ZFI057 GET_GS03 mapping skipped: businessArea={area}; SAP NCo config incomplete: {configError}");
-                return Array.Empty<string>();
+                string message = $"{Zfi057BusinessAreaPlantFetcher.TableName} mapping skipped: SAP NCo config incomplete: {configError}";
+                Log($"ZFI057 {message}; businessArea={area}");
+                return new Zfi057BusinessAreaPlantFetchResult
+                {
+                    Success = false,
+                    BusinessArea = area,
+                    Message = message
+                };
             }
 
-            string setName = LoadZfi057Gs03SetName();
-            var result = new SapGs03PlantFetcher().FetchPlantsForBusinessArea(connectionConfig, area, setName);
-            if (result.Success && result.Plants.Count > 0)
-            {
-                Log($"ZFI057 GET_GS03 mapping loaded from SAP: setName={result.SetName}; businessArea={area}; plants={string.Join(",", result.Plants)}");
-                return DistinctPreserveOrder(result.Plants);
-            }
-
-            Log($"ZFI057 GET_GS03 mapping failed: setName={result.SetName}; businessArea={area}; reason={result.Message}");
+            var result = new Zfi057BusinessAreaPlantFetcher().Fetch(connectionConfig, area);
+            Log(result.Success
+                ? $"ZFI057 {Zfi057BusinessAreaPlantFetcher.TableName} mapping loaded from SAP: businessArea={area}; plants={string.Join(",", result.Plants)}"
+                : $"ZFI057 {Zfi057BusinessAreaPlantFetcher.TableName} mapping failed: businessArea={area}; reason={result.Message}");
+            return result;
         }
         catch (Exception ex)
         {
-            Log($"ZFI057 GET_GS03 mapping failed: businessArea={area}; error={ex.Message}");
+            string message = $"{Zfi057BusinessAreaPlantFetcher.TableName} mapping threw: {ex.Message}";
+            Log($"ZFI057 {message}; businessArea={area}");
+            return new Zfi057BusinessAreaPlantFetchResult
+            {
+                Success = false,
+                BusinessArea = area,
+                Message = message
+            };
         }
-
-        return Array.Empty<string>();
     }
 
     static string[] DistinctPreserveOrder(IEnumerable<string> values)
@@ -8152,6 +9565,7 @@ WHERE run_id=$runId;
             Script = p.Script,
             Plant = p.Plant,
             Plants = p.Plants,
+            Zfi057PlantFilter = p.Zfi057PlantFilter,
             Year = p.Year,
             Week = p.Week,
             Period = p.Period,
@@ -8174,6 +9588,8 @@ WHERE run_id=$runId;
             CaretPos = p.CaretPos,
             ButtonId = p.ButtonId,
             RunId = p.RunId,
+            ParentRunId = p.ParentRunId,
+            IsScheduleSnapshot = p.IsScheduleSnapshot,
             TimeoutSeconds = p.TimeoutSeconds
         };
     }
@@ -8270,6 +9686,9 @@ WHERE child_run_id=$childRunId;
 
         foreach (var pair in request.Params)
             query[pair.Key.ToLowerInvariant()] = pair.Value ?? "";
+
+        if (IsScheduleSnapshotSource(request.Source))
+            query["schedulesnapshot"] = "1";
 
         return query;
     }
@@ -8664,8 +10083,15 @@ ORDER BY batch_index, attempt_no, child_run_id;
             return;
         }
 
-        AppendRunLog(runId, "INFO", $"notify {eventName} queued: {message}");
-        ThreadPool.QueueUserWorkItem(_ => DispatchRunNotification(runId, eventName, message, skipSapDingTalk));
+        AppendRunLog(runId, "INFO", $"notify {eventName} dispatch: {message}");
+        try
+        {
+            DispatchRunNotification(runId, eventName, message, skipSapDingTalk);
+        }
+        catch (Exception ex)
+        {
+            AppendRunLog(runId, "WARN", $"notify {eventName} dispatch failed: {ex.Message}");
+        }
     }
 
     static bool IsChildRun(string runId)
@@ -9057,6 +10483,7 @@ ORDER BY 1;
         string transactionText = FormatTransactionDisplay(run);
         string title = $"{FormatDingTalkStatusIcon(run.Status)} SAP {FormatDingTalkTitleText(run.Status)}";
         string durationText = FirstNonEmpty(FormatDuration(run.DurationMs), "\u672A\u8BB0\u5F55");
+        string alvFileSummary = BuildDingTalkAlvFileSummary(run);
         var inputLines = BuildDingTalkPlainInputLines(run);
         var failedLines = BuildDingTalkPlainFailedItemLines(run);
         var lines = new List<string>
@@ -9073,6 +10500,8 @@ ORDER BY 1;
             $"\U0001F3C1 \u5B8C\u6210\u65F6\u95F4\uFF1A{FirstNonEmpty(run.FinishedAt, "\u672A\u8BB0\u5F55")}",
             $"\U0001F194 \u4EFB\u52A1\u7F16\u53F7\uFF1A{run.RunId}"
         };
+        if (!string.IsNullOrWhiteSpace(alvFileSummary))
+            lines.Insert(8, $"\U0001F4CE {alvFileSummary}");
         if (inputLines.Count > 0)
         {
             lines.Add("");
@@ -9105,6 +10534,7 @@ ORDER BY 1;
         string startedAt = FirstNonEmpty(run.StartedAt, "\u672A\u8BB0\u5F55");
         string finishedAt = FirstNonEmpty(run.FinishedAt, "\u672A\u8BB0\u5F55");
         string batchSummary = BuildDingTalkBatchSummary(run);
+        string alvFileSummary = BuildDingTalkAlvFileSummary(run);
         var inputLines = BuildDingTalkMarkdownInputLines(run);
         var failedLines = BuildDingTalkMarkdownFailedItemLines(run);
 
@@ -9126,6 +10556,8 @@ ORDER BY 1;
             "",
             $"**\U0001F9FE \u6267\u884C\u5165\u53C2**"
         };
+        if (!string.IsNullOrWhiteSpace(alvFileSummary))
+            lines.Insert(13, $"- {EscapeMarkdownForDingTalk(alvFileSummary)}");
         lines.AddRange(inputLines.Count > 0 ? inputLines : new[] { "- **\u5165\u53C2**\uFF1A\u672A\u8BB0\u5F55" });
         if (failedLines.Count > 0)
         {
@@ -9146,6 +10578,23 @@ ORDER BY 1;
         });
 
         return string.Join("\n", lines);
+    }
+
+    static string BuildDingTalkAlvFileSummary(RunRecordView run)
+    {
+        if (!SupportsAlvExport(run.TransactionCode))
+            return "";
+
+        int count = run.Files.Count(file =>
+            !string.IsNullOrWhiteSpace(file.Name) ||
+            !string.IsNullOrWhiteSpace(file.Path));
+        if (count > 0)
+            return $"ALV\u6587\u4EF6\uFF1A{count}\u4E2A\uFF08\u5B58\u50A8\u6210\u529F\uFF09";
+
+        bool archived = run.Logs.Any(log =>
+            (log.Message ?? "").Contains("ALV export archived to network storage", StringComparison.OrdinalIgnoreCase) ||
+            (log.Message ?? "").Contains("ALV export merged into existing network storage", StringComparison.OrdinalIgnoreCase));
+        return archived ? "ALV\u6587\u4EF6\u5B58\u50A8\u6210\u529F" : "";
     }
 
     static string BuildDingTalkBatchSummary(RunRecordView run)
@@ -9195,7 +10644,10 @@ ORDER BY 1;
                 return failureLog;
         }
 
-        foreach (string candidate in new[] { run.Message, run.SapStatusText, fallbackMessage })
+        string[] candidates = IsFailureRunStatus(run.Status)
+            ? new[] { run.SapStatusText, run.Message, fallbackMessage }
+            : new[] { run.Message, run.SapStatusText, fallbackMessage };
+        foreach (string candidate in candidates)
         {
             if (!string.IsNullOrWhiteSpace(candidate) && !IsTechnicalSapStatusText(candidate))
                 return candidate;
@@ -9458,7 +10910,7 @@ ORDER BY 1;
 
         return NormalizeStringArray(businessAreas)
             .Where(area => !string.IsNullOrWhiteSpace(area))
-            .Select(area => $"[{area}]->\u5DE5\u5382\uFF1A\u672A\u89E3\u6790\uFF08GET_GS03\u65E5\u5FD7\u7F3A\u5931\uFF09")
+            .Select(area => $"[{area}]->\u5DE5\u5382\uFF1A\u672A\u89E3\u6790\uFF08ZFIT_RPA_BUKRS \u6620\u5C04\u65E5\u5FD7\u7F3A\u5931\uFF09")
             .ToList();
     }
 
@@ -9973,7 +11425,20 @@ ORDER BY 1;
         if (string.IsNullOrWhiteSpace(name) || name.Equals(code, StringComparison.OrdinalIgnoreCase))
             return code;
 
-        return $"{code} - {name}";
+        string modeSuffix = "";
+        if (code.Equals("ZCO019", StringComparison.OrdinalIgnoreCase))
+        {
+            string strategy = ExtractRunParamValue(run.RequestJson, "runStrategy").Trim().ToLowerInvariant();
+            modeSuffix = strategy switch
+            {
+                "detail" => "（明细保存）",
+                "summary" => "（汇总保存）",
+                "both" => "（明细+汇总）",
+                _ => ""
+            };
+        }
+
+        return $"{code} - {name}{modeSuffix}";
     }
 
     static string ResolveSapDingTalkProvider()
@@ -10053,20 +11518,27 @@ ORDER BY 1;
     static void SendSapDingTalkNotificationByDirectOpenApi(string runId, SapDingTalkNotifyRequest request)
     {
         var config = LoadDingTalkOpenApiConfig();
-        if (!config.IsComplete)
+        if (!config.HasCredentials)
         {
-            AppendRunLog(runId, "WARN", $"sap dingtalk openapi skipped: missing {config.MissingFieldsSummary} config");
+            AppendRunLog(runId, "WARN", $"sap dingtalk openapi skipped: missing {config.MissingCredentialFieldsSummary} config");
             return;
         }
 
-        string token = FetchDingTalkOpenApiToken(config);
+        DingTalkGatewayConfigFetchResult gateway = FetchDingTalkGatewayConfig();
+        if (!gateway.Success)
+        {
+            AppendRunLog(runId, "WARN", $"sap dingtalk openapi skipped: {gateway.Message}");
+            return;
+        }
+
+        string token = FetchDingTalkOpenApiToken(gateway.BaseUrl, config);
         if (string.IsNullOrWhiteSpace(token))
         {
             AppendRunLog(runId, "WARN", "sap dingtalk openapi failed: token response did not contain token");
             return;
         }
 
-        string url = CombineUrl(config.BaseUrl, "dingtalk-oa/topapi/message/corpconversation/asyncsend_v2") +
+        string url = CombineUrl(gateway.BaseUrl, "dingtalk-oa/topapi/message/corpconversation/asyncsend_v2") +
                      "?token=" + Uri.EscapeDataString(token);
         var payload = new
         {
@@ -10088,11 +11560,61 @@ ORDER BY 1;
         var result = ParseDingTalkOpenApiSendResponse(responseText);
         if (response.IsSuccessStatusCode && DingTalkOpenApiSuccess(result))
         {
-            AppendRunLog(runId, "INFO", $"sap dingtalk openapi sent: userid={payload.userid_list}, task_id={result.TaskId}, transport={response.Transport}");
+            AppendRunLog(runId, "INFO", $"sap dingtalk openapi submitted: userid={payload.userid_list}, task_id={result.TaskId}, transport={response.Transport}");
+            VerifyDingTalkOpenApiDelivery(runId, gateway.BaseUrl, config, token, payload.userid_list, result.TaskId);
             return;
         }
 
         AppendRunLog(runId, "WARN", $"sap dingtalk openapi failed: transport={response.Transport}, status={response.StatusCode}, errcode={result.ErrCode}, errmsg={Truncate(FirstNonEmpty(result.ErrMsg, responseText), 200)}");
+    }
+
+    static void VerifyDingTalkOpenApiDelivery(
+        string runId,
+        string baseUrl,
+        DingTalkOpenApiConfig config,
+        string token,
+        string userId,
+        string taskId)
+    {
+        if (string.IsNullOrWhiteSpace(taskId))
+        {
+            AppendRunLog(runId, "WARN", $"sap dingtalk delivery is unverified: userid={userId}; openapi returned no task_id");
+            return;
+        }
+
+        try
+        {
+            string url = CombineUrl(baseUrl, "dingtalk-oa/topapi/message/corpconversation/getsendresult") +
+                         "?token=" + Uri.EscapeDataString(token);
+            string payload = JsonSerializer.Serialize(new
+            {
+                agent_id = config.AgentId,
+                task_id = taskId
+            }, JsonOptions);
+            NotificationHttpResult? lastResponse = null;
+            DingTalkOpenApiSendResult? lastResult = null;
+            for (int attempt = 1; attempt <= 3; attempt++)
+            {
+                lastResponse = PostNotificationJson(url, payload);
+                lastResult = ParseDingTalkOpenApiSendResponse(lastResponse.Body);
+                if (lastResponse.IsSuccessStatusCode && DingTalkOpenApiSuccess(lastResult))
+                {
+                    AppendRunLog(runId, "INFO", $"sap dingtalk delivery status confirmed by platform: userid={userId}, task_id={taskId}, attempt={attempt}, transport={lastResponse.Transport}");
+                    return;
+                }
+
+                if (attempt < 3)
+                    Thread.Sleep(TimeSpan.FromSeconds(1));
+            }
+
+            // The asynchronous API can accept a task before the provider has generated a result.
+            // Keep this visible as unverified rather than falsely reporting a delivered notification.
+            AppendRunLog(runId, "WARN", $"sap dingtalk delivery is unverified: userid={userId}, task_id={taskId}, attempts=3, transport={lastResponse?.Transport}, status={lastResponse?.StatusCode}, errcode={lastResult?.ErrCode}, errmsg={Truncate(FirstNonEmpty(lastResult?.ErrMsg ?? "", lastResponse?.Body ?? ""), 200)}");
+        }
+        catch (Exception ex)
+        {
+            AppendRunLog(runId, "WARN", $"sap dingtalk delivery is unverified: userid={userId}, task_id={taskId}, {Truncate(ex.Message, 200)}");
+        }
     }
 
     static DingTalkOpenApiConfig LoadDingTalkOpenApiConfig()
@@ -10103,14 +11625,6 @@ ORDER BY 1;
         dingTalk ??= TryGetObject(config?.RootElement, "dingTalk");
         dingTalk ??= TryGetObject(config?.RootElement, "dingtalk");
 
-        string baseUrl = FirstNonEmpty(
-            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_OPENAPI_BASE_URL") ?? "",
-            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_OPENAPI_BASE") ?? "",
-            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_BASE_URL") ?? "",
-            GetConfigString(dingTalk, "baseUrl"),
-            GetConfigString(dingTalk, "openApiBaseUrl"),
-            GetConfigString(dingTalk, "openapiBaseUrl"),
-            GetConfigString(dingTalk, "base_url"));
         string appKey = FirstNonEmpty(
             Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_OPENAPI_APP_KEY") ?? "",
             Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_APP_KEY") ?? "",
@@ -10131,16 +11645,25 @@ ORDER BY 1;
 
         return new DingTalkOpenApiConfig
         {
-            BaseUrl = EnsureTrailingSlash(baseUrl),
             AppKey = appKey,
             AppSecret = appSecret,
             AgentId = agentId
         };
     }
 
-    static string FetchDingTalkOpenApiToken(DingTalkOpenApiConfig config)
+    static DingTalkGatewayConfigFetchResult FetchDingTalkGatewayConfig()
     {
-        string url = CombineUrl(config.BaseUrl, "token");
+        var parameters = ApplyLocalConfig(new SapRunParams
+        {
+            Script = "notification-config"
+        });
+        SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(parameters);
+        return new DingTalkGatewayConfigFetcher().Fetch(connectionConfig);
+    }
+
+    static string FetchDingTalkOpenApiToken(string baseUrl, DingTalkOpenApiConfig config)
+    {
+        string url = CombineUrl(baseUrl, "token");
         string payload = JsonSerializer.Serialize(new
         {
             appKey = config.AppKey,
@@ -12210,12 +13733,7 @@ WScript.Quit 0
             }
 
             var parsed = BuildRunResultFromVbs(stdOut, stdErr, proc?.ExitCode ?? 0, started);
-            if (SupportsAlvExport(p.TCode) &&
-                parsed.Status.Equals("success", StringComparison.OrdinalIgnoreCase) &&
-                !ArchiveStagedAlvFiles(parsed))
-            {
-                keepTempFile = true;
-            }
+            RecoverReportedAlvFiles(p.TCode, stdOut, parsed);
 
             if (UsesDirectPlantAlvOutput(p.TCode) && parsed.Files.Count > 0)
             {
@@ -12235,7 +13753,13 @@ WScript.Quit 0
             {
                 try
                 {
-                    parsed.Files = RouteAlvFilesToOrganization(p, effectivePlants, parsed.Files, parsed.Logs);
+                    // Complete organization routing in local staging before copying to the network archive.
+                    parsed.Files = RouteAlvFilesToOrganization(
+                        p,
+                        effectivePlants,
+                        parsed.Files,
+                        parsed.Logs,
+                        AlvExportStagingDirectory);
                 }
                 catch (Exception ex)
                 {
@@ -12243,6 +13767,14 @@ WScript.Quit 0
                     parsed.Message = $"ALV export was created but SAP hierarchy organization failed: {ex.Message}";
                     parsed.Logs.Add(new RunLogLine { Level = "ERROR", Message = parsed.Message });
                 }
+            }
+
+            if (SupportsAlvExport(p.TCode) &&
+                parsed.Status.Equals("success", StringComparison.OrdinalIgnoreCase) &&
+                parsed.Files.Count > 0 &&
+                !ArchiveStagedAlvFiles(parsed))
+            {
+                keepTempFile = true;
             }
 
             if (SupportsAlvExport(p.TCode) && IsFailureRunStatus(parsed.Status))
@@ -12302,21 +13834,47 @@ WScript.Quit 0
                 }
 
                 string archivePath = Path.Combine(archiveRoot, relativePath);
-                Directory.CreateDirectory(Path.GetDirectoryName(archivePath) ?? archiveRoot);
-                string temporaryArchivePath = archivePath + ".copy-" + Guid.NewGuid().ToString("N") + ".tmp";
+                string archiveDirectory = Path.GetDirectoryName(archivePath) ?? archiveRoot;
+                Directory.CreateDirectory(archiveDirectory);
+                string temporaryArchivePath = Path.Combine(
+                    archiveDirectory,
+                    $"{Path.GetFileNameWithoutExtension(archivePath)}.copy-{Guid.NewGuid():N}{Path.GetExtension(archivePath)}");
                 try
                 {
-                    File.Copy(sourcePath, temporaryArchivePath, overwrite: true);
                     long sourceSize = new FileInfo(sourcePath).Length;
-                    long copiedSize = new FileInfo(temporaryArchivePath).Length;
-                    if (sourceSize <= 0 || sourceSize != copiedSize)
-                        throw new IOException($"ALV archive copy size check failed: source={sourceSize}, copied={copiedSize}");
+                    if (sourceSize <= 0)
+                        throw new IOException($"ALV archive source size check failed: source={sourceSize}");
+
+                    bool merged = AlvOrganizationExport.TryMergeAggregateWorkbookForArchive(
+                        archivePath,
+                        sourcePath,
+                        temporaryArchivePath,
+                        out long archivedSize,
+                        out string mergeMessage);
+
+                    if (!merged)
+                    {
+                        File.Copy(sourcePath, temporaryArchivePath, overwrite: true);
+                        archivedSize = new FileInfo(temporaryArchivePath).Length;
+                        if (sourceSize != archivedSize)
+                            throw new IOException($"ALV archive copy size check failed: source={sourceSize}, copied={archivedSize}");
+                    }
+                    else if (archivedSize <= 0)
+                    {
+                        throw new IOException($"ALV archive merge size check failed: merged={archivedSize}");
+                    }
 
                     File.Move(temporaryArchivePath, archivePath, overwrite: true);
                     file.Path = archivePath;
                     file.Name = Path.GetFileName(archivePath);
-                    file.Size = copiedSize;
-                    result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ALV export archived to network storage: {archivePath}" });
+                    file.Size = new FileInfo(archivePath).Length;
+                    result.Logs.Add(new RunLogLine
+                    {
+                        Level = "INFO",
+                        Message = merged
+                            ? $"ALV export merged into existing network storage: {archivePath}; {mergeMessage}"
+                            : $"ALV export archived to network storage: {archivePath}"
+                    });
 
                     try
                     {
@@ -12728,6 +14286,21 @@ WScript.Quit 0
         }
 
         {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["businessAreas"] = "5100,2790",
+                ["plants"] = "1022,103C",
+                ["zfi057PlantFilter"] = "1022"
+            };
+            ApplyZfi057BusinessAreaScope(values, "2790,2800");
+            bool ok = GetParamValue(values, "businessAreas").Equals("5100,2790", StringComparison.Ordinal) &&
+                      GetParamValue(values, "businessArea").Equals("5100", StringComparison.Ordinal) &&
+                      string.IsNullOrWhiteSpace(GetParamValue(values, "plants")) &&
+                      string.IsNullOrWhiteSpace(GetParamValue(values, "zfi057PlantFilter"));
+            Check("ZFI057 keeps task business areas and ignores plant filters", ok, string.Join(",", values.Select(pair => pair.Key + "=" + pair.Value)));
+        }
+
+        {
             bool apiRejected = false;
             bool protocolRejected = false;
             try
@@ -12772,12 +14345,235 @@ WScript.Quit 0
             Check("ALV direct plant file name", plantFileNameOk, plantFileName);
 
             string zco019DetailName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", "ZCO019_plant1022_detail.xlsx");
-            string zco019SavedName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", "ZCO019_plant1022_saved.xlsx");
+            string zco019SummaryName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", "ZCO019_plant1022_summary.xlsx");
             string nonZco019Name = ResolveAlvOutputTransactionName("ZFI080", "\u5b9e\u9645\u6750\u6599\u4fdd\u5b58", "ZFI080_plant1022_detail.xlsx");
             bool zco019NameOk = zco019DetailName.Equals("\u6807\u51c6\u6750\u6599\u6210\u672c_\u660e\u7ec6", StringComparison.Ordinal) &&
-                                zco019SavedName.Equals("\u6807\u51c6\u6750\u6599\u6210\u672c_\u4fdd\u5b58", StringComparison.Ordinal) &&
+                                zco019SummaryName.Equals("\u6807\u51c6\u6750\u6599\u6210\u672c_\u6c47\u603b", StringComparison.Ordinal) &&
                                 nonZco019Name.Equals("\u5b9e\u9645\u6750\u6599\u4fdd\u5b58", StringComparison.Ordinal);
-            Check("ZCO019 detail and saved outputs stay distinct", zco019NameOk, $"detail={zco019DetailName}, saved={zco019SavedName}, other={nonZco019Name}");
+            Check("ZCO019 detail and summary outputs stay distinct", zco019NameOk, $"detail={zco019DetailName}, summary={zco019SummaryName}, other={nonZco019Name}");
+
+            var detailRequest = new CreateRunRequest
+            {
+                TransactionCode = "ZCO019",
+                Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["plants"] = "103C",
+                    ["runStrategy"] = "DETAIL"
+                }
+            };
+            NormalizeCreateRunParams(detailRequest);
+            var summaryRequest = new CreateRunRequest
+            {
+                TransactionCode = "ZCO019",
+                Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["plants"] = "103C",
+                    ["runStrategy"] = "summary"
+                }
+            };
+            NormalizeCreateRunParams(summaryRequest);
+            bool invalidStrategyRejected = false;
+            try
+            {
+                NormalizeCreateRunParams(new CreateRunRequest
+                {
+                    TransactionCode = "ZCO019",
+                    Params = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        ["plants"] = "103C",
+                        ["runStrategy"] = "everything"
+                    }
+                });
+            }
+            catch (ApiRequestException ex) when (ex.StatusCode == 400)
+            {
+                invalidStrategyRejected = true;
+            }
+            bool zco019StrategyOk =
+                GetParamValue(detailRequest.Params, "runStrategy").Equals("detail", StringComparison.Ordinal) &&
+                GetParamValue(summaryRequest.Params, "runStrategy").Equals("summary", StringComparison.Ordinal) &&
+                invalidStrategyRejected;
+            Check("ZCO019 scheduled detail and summary strategies", zco019StrategyOk,
+                $"detail={GetParamValue(detailRequest.Params, "runStrategy")}, summary={GetParamValue(summaryRequest.Params, "runStrategy")}, invalidRejected={invalidStrategyRejected}");
+
+            using (JsonDocument scheduleParamsDocument = JsonDocument.Parse("{\"runStrategy\":\"detail\"}"))
+            {
+                var scheduleItem = new ScheduleTaskRequest
+                {
+                    Params = scheduleParamsDocument.RootElement.Clone()
+                };
+                Dictionary<string, string> storedScheduleParams = ParseScheduleParams(
+                    BuildScheduleParamsJson(scheduleItem, "ZCO019", "PINGHU_ALL", "103C"));
+                bool scheduleModeStored = GetParamValue(storedScheduleParams, "runStrategy").Equals("detail", StringComparison.Ordinal);
+            Check("ZCO019 schedule stores selected mode", scheduleModeStored,
+                $"runStrategy={GetParamValue(storedScheduleParams, "runStrategy")}");
+        }
+
+            using (JsonDocument scheduleParamsDocument = JsonDocument.Parse("{\"runStrategy\":\"summary\"}"))
+            {
+                var scheduleItem = new ScheduleTaskRequest
+                {
+                    Params = scheduleParamsDocument.RootElement.Clone()
+                };
+                Dictionary<string, string> storedScheduleParams = ParseScheduleParams(
+                    BuildScheduleParamsJson(scheduleItem, "ZCO019", "PINGHU_ALL", "103C"));
+                bool scheduleSummaryModeStored =
+                    GetParamValue(storedScheduleParams, "tcode").Equals("ZCO019", StringComparison.Ordinal) &&
+                    GetParamValue(storedScheduleParams, "runStrategy").Equals("summary", StringComparison.Ordinal);
+                Check("ZCO019 summary schedule keeps tcode and stores mode", scheduleSummaryModeStored,
+                    $"tcode={GetParamValue(storedScheduleParams, "tcode")}; runStrategy={GetParamValue(storedScheduleParams, "runStrategy")}");
+            }
+
+        {
+            var createRequest = new ScheduleTaskRequest
+            {
+                Id = "SCH-777",
+                Name = "ZFI148 - 推送大数据平台",
+                TCode = "ZFI148",
+                PlantsCsv = "1022",
+                FactoryGroup = "PINGHU_ALL",
+                Frequency = "weekly",
+                Weekday = "tuesday",
+                Time = "08:00",
+                CreatedBy = "selftest",
+                UpdatedBy = "selftest",
+                NotifyStart = false,
+                NotifySuccess = false,
+                NotifyFail = false,
+                Enabled = true
+            };
+            string firstId = UpsertScheduleTask(createRequest, routeId: "", allocateNewId: true);
+            string secondId = UpsertScheduleTask(createRequest, routeId: "", allocateNewId: true);
+            var updateRequest = new ScheduleTaskRequest
+            {
+                Id = firstId,
+                Name = "ZFI148 - 推送大数据平台",
+                TCode = "ZFI148",
+                PlantsCsv = "1022",
+                FactoryGroup = "PINGHU_ALL",
+                Frequency = "weekly",
+                Weekday = "wednesday",
+                Time = "20:00",
+                CreatedBy = "selftest",
+                UpdatedBy = "selftest",
+                NotifyStart = false,
+                NotifySuccess = false,
+                NotifyFail = false,
+                Enabled = true
+            };
+            _ = UpsertScheduleTask(updateRequest, routeId: firstId);
+            using var scheduleIdConnection = OpenDatabaseConnection();
+            using var command = scheduleIdConnection.CreateCommand();
+            command.CommandText = "SELECT run_time, weekday FROM schedule_tasks WHERE id=$id";
+            command.Parameters.AddWithValue("$id", firstId);
+            using var reader = command.ExecuteReader();
+            string storedRunTime = "";
+            string storedWeekday = "";
+            if (reader.Read())
+            {
+                storedRunTime = reader.GetString(0);
+                storedWeekday = reader.GetString(1);
+            }
+            using var countCommand = scheduleIdConnection.CreateCommand();
+            countCommand.CommandText = "SELECT COUNT(*) FROM schedule_tasks WHERE id IN ($first, $second, 'SCH-777')";
+            countCommand.Parameters.AddWithValue("$first", firstId);
+            countCommand.Parameters.AddWithValue("$second", secondId);
+            long storedScheduleRows = Convert.ToInt64(countCommand.ExecuteScalar() ?? 0L);
+
+            bool ok = Regex.IsMatch(firstId, @"^SCH-\d{3,}$", RegexOptions.IgnoreCase) &&
+                      Regex.IsMatch(secondId, @"^SCH-\d{3,}$", RegexOptions.IgnoreCase) &&
+                      !firstId.Equals(secondId, StringComparison.OrdinalIgnoreCase) &&
+                      !firstId.Equals("SCH-777", StringComparison.OrdinalIgnoreCase) &&
+                      !secondId.Equals("SCH-777", StringComparison.OrdinalIgnoreCase) &&
+                      storedScheduleRows == 2 &&
+                      storedRunTime.Equals("20:00", StringComparison.Ordinal) &&
+                      storedWeekday.Equals("wednesday", StringComparison.OrdinalIgnoreCase);
+            Check("schedule create allocates unique ids and edit updates run time", ok,
+                $"first={firstId}; second={secondId}; rows={storedScheduleRows}; runTime={storedRunTime}; weekday={storedWeekday}");
+        }
+
+        DateTime scheduleNow = new(2026, 8, 14, 9, 0, 0);
+            DateTime mondaySlot = default;
+            DateTime fridayFutureSlot = default;
+            bool weeklyScheduleOk =
+                TryResolveScheduleSlot("weekly", "08:00", "2026-08-01", scheduleNow, out mondaySlot, "monday") &&
+                mondaySlot == new DateTime(2026, 8, 10, 8, 0, 0) &&
+                TryResolveScheduleSlot("weekly", "16:30", "2026-08-01", scheduleNow, out fridayFutureSlot, "friday") &&
+                fridayFutureSlot == new DateTime(2026, 8, 14, 16, 30, 0) &&
+                CalculateNextScheduleRunAt("weekly", "08:00", "2026-08-01", "monday", scheduleNow) == "2026-08-17 08:00:00" &&
+                CalculateNextScheduleRunAt("weekly", "08:00", "2026-08-12", "", scheduleNow) == "2026-08-19 08:00:00" &&
+                CalculateNextScheduleRunAt("weekly", "16:30", "2026-08-01", "friday", scheduleNow) == "2026-08-14 16:30:00" &&
+                NormalizeScheduleWeekday("5").Equals("friday", StringComparison.Ordinal) &&
+                NormalizeScheduleWeekday("\u6BCF\u5468\u4E94").Equals("friday", StringComparison.Ordinal);
+            Check("weekly schedule explicit weekday", weeklyScheduleOk,
+                $"mondaySlot={mondaySlot:yyyy-MM-dd HH:mm:ss}, fridaySlot={fridayFutureSlot:yyyy-MM-dd HH:mm:ss}");
+
+            DateTime monthlyFridaySlot = default;
+            DateTime monthlyLegacySlot = default;
+            bool monthlyScheduleOk =
+                TryResolveScheduleSlot("monthly", "08:00", "2026-08-12", scheduleNow, out monthlyFridaySlot, "friday") &&
+                monthlyFridaySlot == new DateTime(2026, 8, 7, 8, 0, 0) &&
+                CalculateNextScheduleRunAt("monthly", "08:00", "2026-08-12", "friday", scheduleNow) == "2026-09-04 08:00:00" &&
+                TryResolveScheduleSlot("monthly", "08:00", "2026-08-12", scheduleNow, out monthlyLegacySlot, "") &&
+                monthlyLegacySlot == new DateTime(2026, 8, 12, 8, 0, 0) &&
+                CalculateNextScheduleRunAt("monthly", "08:00", "2026-08-12", "", scheduleNow) == "2026-09-12 08:00:00";
+            Check("monthly schedule explicit weekday keeps legacy day-of-month fallback", monthlyScheduleOk,
+                $"monthlyFridaySlot={monthlyFridaySlot:yyyy-MM-dd HH:mm:ss}, monthlyLegacySlot={monthlyLegacySlot:yyyy-MM-dd HH:mm:ss}");
+
+            using (var scheduleConnection = new SqliteConnection("Data Source=:memory:"))
+            {
+                scheduleConnection.Open();
+                using (var command = scheduleConnection.CreateCommand())
+                {
+                    command.CommandText = """
+CREATE TABLE schedule_tasks(
+    id TEXT PRIMARY KEY,
+    weekday TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL DEFAULT ''
+);
+INSERT INTO schedule_tasks(id, weekday, created_at) VALUES('legacy-wed', '', '2026-08-12 07:00:00');
+INSERT INTO schedule_tasks(id, weekday, created_at) VALUES('stored-fri', 'friday', '2026-08-10 07:00:00');
+""";
+                    command.ExecuteNonQuery();
+                }
+
+                string explicitWeekday = ResolveScheduleWeekday(new ScheduleTaskRequest { Weekday = "thursday" }, "weekly", "new-task", scheduleConnection);
+                string legacyWeekday = ResolveScheduleWeekday(new ScheduleTaskRequest(), "weekly", "legacy-wed", scheduleConnection);
+                string storedWeekday = ResolveScheduleWeekday(new ScheduleTaskRequest(), "weekly", "stored-fri", scheduleConnection);
+                string defaultWeekday = ResolveScheduleWeekday(new ScheduleTaskRequest(), "weekly", "missing", scheduleConnection);
+                string dailyWeekday = ResolveScheduleWeekday(new ScheduleTaskRequest { Weekday = "thursday" }, "daily", "daily-task", scheduleConnection);
+                string explicitMonthlyWeekday = ResolveScheduleWeekday(new ScheduleTaskRequest { Weekday = "thursday" }, "monthly", "new-monthly", scheduleConnection);
+                string legacyMonthlyWeekday = ResolveScheduleWeekday(new ScheduleTaskRequest(), "monthly", "legacy-wed", scheduleConnection);
+                string storedMonthlyWeekday = ResolveScheduleWeekday(new ScheduleTaskRequest(), "monthly", "stored-fri", scheduleConnection);
+                var clearMonthlyRequest = new ScheduleTaskRequest();
+                clearMonthlyRequest.CaptureRawJson("{\"weekday\":\"\"}");
+                string clearedMonthlyWeekday = ResolveScheduleWeekday(clearMonthlyRequest, "monthly", "stored-fri", scheduleConnection);
+                bool schedulePersistenceOk =
+                    explicitWeekday.Equals("thursday", StringComparison.Ordinal) &&
+                    legacyWeekday.Equals("wednesday", StringComparison.Ordinal) &&
+                    storedWeekday.Equals("friday", StringComparison.Ordinal) &&
+                    defaultWeekday.Equals("monday", StringComparison.Ordinal) &&
+                    string.IsNullOrWhiteSpace(dailyWeekday) &&
+                    explicitMonthlyWeekday.Equals("thursday", StringComparison.Ordinal) &&
+                    string.IsNullOrWhiteSpace(legacyMonthlyWeekday) &&
+                    storedMonthlyWeekday.Equals("friday", StringComparison.Ordinal) &&
+                    string.IsNullOrWhiteSpace(clearedMonthlyWeekday);
+                Check("schedule weekday sqlite fallback", schedulePersistenceOk,
+                    $"explicit={explicitWeekday}, legacy={legacyWeekday}, stored={storedWeekday}, default={defaultWeekday}, daily={dailyWeekday}, monthlyExplicit={explicitMonthlyWeekday}, monthlyLegacy={legacyMonthlyWeekday}, monthlyStored={storedMonthlyWeekday}, monthlyCleared={clearedMonthlyWeekday}");
+            }
+
+            InitializeDatabase(seedFromScripts: true);
+            bool seedTransactionDeleted = DeleteTransaction("ZFI085");
+            InitializeDatabase(seedFromScripts: true);
+            bool seedTransactionStayedDeleted;
+            using (var connection = OpenDatabaseConnection())
+            using (var command = connection.CreateCommand())
+            {
+                command.CommandText = "SELECT 1 FROM transactions WHERE tcode='ZFI085' LIMIT 1";
+                seedTransactionStayedDeleted = command.ExecuteScalar() == null;
+            }
+            Check("config transaction delete persists across reseed", seedTransactionDeleted && seedTransactionStayedDeleted,
+                $"deleted={seedTransactionDeleted}, absentAfterReseed={seedTransactionStayedDeleted}");
 
             bool factoryHeaderAliasesOk =
                 IsAlvFactoryHeader("WERKS") &&
@@ -13120,7 +14916,7 @@ WScript.Quit 0
             };
             var scopes = ResolveZfi057WorkflowScopes(p);
             bool ok = scopes.Count == 0;
-            Check("ZFI057 workflow requires businessAreas before GET_GS03", ok, $"scopeCount={scopes.Count}, scopes={string.Join(";", scopes.Select(s => $"{s.BusinessArea}:{string.Join(",", s.Plants)}"))}");
+            Check("ZFI057 workflow requires businessAreas before ZFIT_RPA_BUKRS lookup", ok, $"scopeCount={scopes.Count}, scopes={string.Join(";", scopes.Select(s => $"{s.BusinessArea}:{string.Join(",", s.Plants)}"))}");
         }
 
         {
@@ -13138,10 +14934,26 @@ WScript.Quit 0
         }
 
         {
-            string json = "{\"EV_SUBRC\":0,\"RT_SET_VALUES\":[{\"FROM\":\"1011\",\"TITLE\":\"2800\"},{\"FROM\":\"1021\",\"TITLE\":\"2900\"},{\"FROM\":\"103C\",\"TITLE\":\"2800\"}]}";
-            var plants = SapGs03PlantFetcher.ExtractPlantsForBusinessAreaForTest(json, "2800");
+            var plants = Zfi057BusinessAreaPlantFetcher.ExtractPlantsForBusinessAreaForTest(
+                new[] { "2800|1011", "2900|1021", "2800|103C", "2800|1011", "2800|" },
+                "2800");
             bool ok = plants.SequenceEqual(new[] { "1011", "103C" }, StringComparer.OrdinalIgnoreCase);
-            Check("ZFI057 GET_GS03 filters FROM by TITLE", ok, $"plants={string.Join(",", plants)}");
+            Check("ZFI057 ZFIT_RPA_BUKRS filters WERKS by GSBER and preserves order", ok, $"plants={string.Join(",", plants)}");
+        }
+
+        {
+            bool east = Zfi019NlMemoryFetcher.IsDongtaiZsbuDescription("东台一厂");
+            bool normal = !Zfi019NlMemoryFetcher.IsDongtaiZsbuDescription("平湖一厂");
+            bool blank = !Zfi019NlMemoryFetcher.IsDongtaiZsbuDescription(null);
+            Check("ZFI057 Dongtai classification uses ZTFI48A-ZSBU", east && normal && blank,
+                $"east={east}, normal={normal}, blank={blank}");
+        }
+
+        {
+            bool ok = AlvOrganizationExport.NormalizeSubOrganizationDirectoryName("\u4E1C\u53F0\u6A21\u5207").Equals("\u4E1C\u53F0", StringComparison.Ordinal) &&
+                      AlvOrganizationExport.NormalizeSubOrganizationDirectoryName("\u4E1C\u53F0\u4E09\u5382").Equals("\u4E1C\u53F0", StringComparison.Ordinal) &&
+                      AlvOrganizationExport.NormalizeSubOrganizationDirectoryName("\u5E73\u6E56\u4E09\u5382").Equals("\u5E73\u6E56\u4E09\u5382", StringComparison.Ordinal);
+            Check("ALV Dongtai sub-organization directory normalization", ok, "dongtai variants share the \u4E1C\u53F0 directory");
         }
 
         {
@@ -13302,6 +15114,20 @@ WScript.Quit 0
         }
 
         {
+            var filteredNoData = BuildRunResultFromVbs(
+                "STATUS_TYPE=W\nSTATUS_TEXT=ZCO020 filtered result has no data; save/background job skipped\nZCO020_FILTERED_NO_DATA=1\nINFO: transaction script executed",
+                "",
+                0,
+                DateTime.UtcNow);
+            string message = BuildZfi057Zco020NoDataMessage("2800");
+            bool ok = IsSuccessResult(filteredNoData) &&
+                      IsZco020FilteredNoDataResult(filteredNoData) &&
+                      message.Contains("业务范围 2800", StringComparison.Ordinal) &&
+                      message.Contains("跳过全选、保存、后台作业和第二次 ZCO020", StringComparison.Ordinal);
+            Check("ZFI057 ZCO020 filtered no-data skips job polling and repeat", ok, $"status={filteredNoData.Status}; sap={filteredNoData.SapStatusType}; message={message}");
+        }
+
+        {
             var completed = new Zfi057TbtcoJobCheckResult(
                 true,
                 SapJobStatusFetcher.IsTbtcoTerminalStatus("F"),
@@ -13330,9 +15156,44 @@ WScript.Quit 0
                       failedCheck.Category.Equals("terminal_failed", StringComparison.OrdinalIgnoreCase) &&
                       running.Category.Equals("running", StringComparison.OrdinalIgnoreCase) &&
                       ShouldRepeatZfi057Step3AfterTbtcoCheck(completed) &&
-                      ShouldRepeatZfi057Step3AfterTbtcoCheck(failedCheck) &&
+                      !ShouldRepeatZfi057Step3AfterTbtcoCheck(failedCheck) &&
                       !ShouldRepeatZfi057Step3AfterTbtcoCheck(running);
-            Check("ZFI057 TBTCO status drives step3 repeat", ok, $"completed={completed.Category}, failed={failedCheck.Category}, running={running.Category}");
+            Check("ZFI057 TBTCO status only repeats after terminal success", ok, $"completed={completed.Category}, failed={failedCheck.Category}, running={running.Category}");
+        }
+
+        {
+            string status = "ZFI057/14592800=A(cancelled),ZFI057/15001800=F(finished)";
+            string message = BuildZfi057TbtcoFailureMessage("2800", status);
+            bool ok = message.Contains("业务范围 2800", StringComparison.Ordinal) &&
+                      message.Contains("已停止第二次 ZCO020", StringComparison.Ordinal) &&
+                      message.Contains("SM37", StringComparison.Ordinal) &&
+                      message.Contains("14592800", StringComparison.Ordinal) &&
+                      message.Contains("15001800", StringComparison.Ordinal);
+            Check("ZFI057 TBTCO cancelled job message is actionable Chinese", ok, message);
+        }
+
+        {
+            var jobs = new[]
+            {
+                new SapJobStatusRow { JobName = "ZFI057", JobCount = "000001", Status = "F", EffectiveStartLocal = new DateTime(2026, 7, 15, 10, 0, 0) },
+                new SapJobStatusRow { JobName = "ZFI057", JobCount = "000002", Status = "R", EffectiveStartLocal = new DateTime(2026, 7, 15, 10, 1, 0) }
+            };
+            var singleActionCompleted = EvaluateZfi057TbtcoJobs(new[] { jobs[0] }, ResolveZfi057Step3ExpectedJobCount(2));
+            var waiting = EvaluateZfi057TbtcoJobs(jobs, 2);
+            var failedEvaluation = EvaluateZfi057TbtcoJobs(new[]
+            {
+                jobs[0],
+                new SapJobStatusRow { JobName = "ZFI057", JobCount = "000002", Status = "A", EffectiveStartLocal = new DateTime(2026, 7, 15, 10, 1, 0) }
+            }, 2);
+            bool ok = ResolveZfi057Step3ExpectedJobCount(1) == 1 &&
+                      ResolveZfi057Step3ExpectedJobCount(2) == 1 &&
+                      ResolveZfi057Step3ExpectedJobCount(10) == 1 &&
+                      singleActionCompleted.HasExpectedJobs && singleActionCompleted.AllTerminal && !singleActionCompleted.HasFailure &&
+                      waiting.HasExpectedJobs && !waiting.AllTerminal && !waiting.HasFailure &&
+                      failedEvaluation.HasExpectedJobs && failedEvaluation.AllTerminal && failedEvaluation.HasFailure &&
+                      failedEvaluation.StatusSummary.Contains("000001", StringComparison.Ordinal) &&
+                      failedEvaluation.StatusSummary.Contains("000002", StringComparison.Ordinal);
+            Check("ZFI057 TBTCO follows executed ZCO020 job count and rejects failures", ok, $"singleAction={singleActionCompleted.StatusSummary}; waiting={waiting.StatusSummary}; failed={failedEvaluation.StatusSummary}");
         }
 
         {
@@ -13372,28 +15233,33 @@ WScript.Quit 0
             {
                 TCode = "ZFI057",
                 Script = "ZFI057.vbs",
-                Period = "2026.04.27",
-                WeekEnd = "2026.05.03",
+                Period = "2026.06.29",
+                WeekEnd = "2026.07.05",
                 Materials = "MAT001,MAT002",
                 TimeoutSeconds = 1800
             };
-            string summary = BuildZfi057Step2InputSummary(step2, "2800", "1011,1022", 1, 1, 536);
-            bool ok = summary.Contains("plantCount=2", StringComparison.OrdinalIgnoreCase) &&
-                      summary.Contains("plants=1011,1022", StringComparison.OrdinalIgnoreCase) &&
-                      summary.Contains("S_WERKS.mode=LOW seed + multiSelection", StringComparison.OrdinalIgnoreCase) &&
+            string summary = BuildZfi057Step2InputSummary(step2, "2800", "1011", 1, 3, 536);
+            bool ok = summary.Contains("step2Input attempt=1/3", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("plantCount=1", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("plants=1011", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("ZFIT_RPA_BUKRS.GSBER=2800", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("ZFIT_RPA_BUKRS.WERKS=1011", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("S_WERKS.mode=LOW only", StringComparison.OrdinalIgnoreCase) &&
                       summary.Contains("S_WERKS-LOW.seed=1011", StringComparison.OrdinalIgnoreCase) &&
-                      summary.Contains("S_WERKS.items=1011,1022", StringComparison.OrdinalIgnoreCase) &&
-                      summary.Contains("S_KADKY-LOW=2026.03.01", StringComparison.OrdinalIgnoreCase) &&
-                      summary.Contains("S_KADKY-HIGH=2026.04.30", StringComparison.OrdinalIgnoreCase) &&
-                      summary.Contains("S_KADAT-LOW=2026.03.02", StringComparison.OrdinalIgnoreCase) &&
-                      summary.Contains("S_KADAT-HIGH=2026.04.30", StringComparison.OrdinalIgnoreCase) &&
-                      summary.Contains("window2.S_KADKY-LOW=2026.05.01", StringComparison.OrdinalIgnoreCase) &&
-                      summary.Contains("window2.S_KADAT-LOW=2026.05.02", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("S_WERKS.items=1011", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("runCount=3", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("windowCount=3", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("window1.S_KADKY-LOW=2026.05.01", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("window1.S_KADAT-LOW=2026.05.02", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("window2.S_KADKY-LOW=2026.06.01", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("window2.S_KADAT-LOW=2026.06.02", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("window3.S_KADKY-LOW=2026.07.01", StringComparison.OrdinalIgnoreCase) &&
+                      summary.Contains("window3.S_KADAT-LOW=2026.07.02", StringComparison.OrdinalIgnoreCase) &&
                       summary.Contains("materialCount=536", StringComparison.OrdinalIgnoreCase) &&
                       summary.Contains("materials=omitted", StringComparison.OrdinalIgnoreCase) &&
                       !summary.Contains("MAT001", StringComparison.OrdinalIgnoreCase) &&
                       !summary.Contains("MAT002", StringComparison.OrdinalIgnoreCase);
-            Check("ZFI057 step2 input summary uses multi-select and omits materials", ok, summary);
+            Check("ZFI057 step2 input summary uses one mapped plant and omits materials", ok, summary);
         }
 
         {
@@ -13402,6 +15268,16 @@ WScript.Quit 0
                       sameMonthWindows[0].KadkyLow.Equals("2026.05.01", StringComparison.OrdinalIgnoreCase) &&
                       sameMonthWindows[0].KadatLow.Equals("2026.05.02", StringComparison.OrdinalIgnoreCase);
             Check("ZFI057 S_KADAT low starts from day 2", ok, string.Join(" | ", sameMonthWindows.Select(w => $"{w.Index}:{w.KadkyLow}~{w.KadkyHigh}/{w.KadatLow}~{w.KadatHigh}")));
+        }
+
+        {
+            var crossYearWindows = ResolveZfi057Step2DateWindows("2026.12.30", "2027.01.05");
+            bool ok = crossYearWindows.Count == 3 &&
+                      crossYearWindows[0].KadkyLow.Equals("2026.11.01", StringComparison.OrdinalIgnoreCase) &&
+                      crossYearWindows[1].KadkyLow.Equals("2026.12.01", StringComparison.OrdinalIgnoreCase) &&
+                      crossYearWindows[2].KadkyLow.Equals("2027.01.01", StringComparison.OrdinalIgnoreCase) &&
+                      crossYearWindows[2].KadatLow.Equals("2027.01.02", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 release-month split crosses year from previous November", ok, string.Join(" | ", crossYearWindows.Select(w => $"{w.Index}:{w.KadkyLow}~{w.KadkyHigh}/{w.KadatLow}~{w.KadatHigh}")));
         }
 
         {
@@ -13591,6 +15467,23 @@ Item1=test888
         }
 
         {
+            var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["businessAreas"] = "2800,2900,9200,2910,3400,2920,5100,2790",
+                ["businessArea"] = "2800",
+                ["plants"] = "1022,1032",
+                ["plant"] = "1022",
+                ["factoryGroup"] = "PINGHU_ALL"
+            };
+            ApplyFixedBusinessAreaScope(values, GetFixedBusinessAreasCsv("fixed", "[\"2790\",\"2800\"]"));
+            bool ok = GetParamValue(values, "businessAreas").Equals("2790,2800", StringComparison.OrdinalIgnoreCase) &&
+                      GetParamValue(values, "businessArea").Equals("2790", StringComparison.OrdinalIgnoreCase) &&
+                      string.IsNullOrWhiteSpace(GetParamValue(values, "plants")) &&
+                      string.IsNullOrWhiteSpace(GetParamValue(values, "factoryGroup"));
+            Check("fixed business area rule overrides stale request scope", ok, string.Join(",", values.Select(pair => pair.Key + "=" + pair.Value)));
+        }
+
+        {
             bool ok =
                 IsTestDateOverrideAllowed(new SapNcoLocalConfig { ConnectionName = "test888" }) &&
                 IsTestDateOverrideAllowed(new SapNcoLocalConfig { ConnectionName = "prod", Name = "test888" }) &&
@@ -13729,12 +15622,12 @@ Item1=test888
                 "2790",
                 Array.Empty<string>(),
                 "failed",
-                "业务范围 2790 的上游物料已获取，但 SAP 集 Z31 未维护该业务范围对应的可执行工厂，无法执行 ZFI057 与 ZCO020 后续步骤。请维护“业务范围-工厂”映射，或从任务范围中移除该业务范围。");
+                "业务范围 2790 未在 SAP 表 ZFIT_RPA_BUKRS 中维护可执行工厂，已在步骤一前停止执行 ZFI057 与 ZCO020 后续步骤。请维护 ZFIT_RPA_BUKRS-GSBER/WERKS 映射，或从任务范围中移除该业务范围。");
             string summary = BuildZfi057WorkflowScopeResultMessage("failed", new[] { missingPlantMapping });
-            bool ok = summary.Contains("SAP 集 Z31", StringComparison.Ordinal) &&
-                      summary.Contains("业务范围-工厂", StringComparison.Ordinal) &&
+            bool ok = summary.Contains("ZFIT_RPA_BUKRS", StringComparison.Ordinal) &&
+                      summary.Contains("GSBER/WERKS", StringComparison.Ordinal) &&
                       summary.Contains("ZFI057 与 ZCO020 后续步骤", StringComparison.Ordinal) &&
-                      !summary.Contains("GET_GS03 returned no step2 plants", StringComparison.OrdinalIgnoreCase);
+                      !summary.Contains("SAP 集", StringComparison.OrdinalIgnoreCase);
             Check("ZFI057 missing plant mapping is explained in Chinese", ok, summary);
         }
 
@@ -13933,6 +15826,37 @@ Item1=test888
         {
             var run = new RunRecordView
             {
+                RunId = "RUN-SELFTEST-DINGTALK-ALV-FILES",
+                TransactionCode = "ZFI072N",
+                TransactionName = "\u7EF4\u62A4\u91C7\u8D2D\u4EF7\uFF08\u4FDD\u5B58\uFF09",
+                Status = "success",
+                RequestJson = "{\"transactionCode\":\"ZFI072N\",\"params\":{\"plants\":\"1022\",\"period\":\"2026.06.22\",\"weekEnd\":\"2026.06.28\"}}",
+                SapStatusType = "S",
+                SapStatusText = "\u81EA\u52A8\u5316\u5DF2\u8DD1\u5B8C",
+                StartedAt = "2026-07-02 10:00:00",
+                FinishedAt = "2026-07-02 10:02:00",
+                DurationMs = 120000
+            };
+            for (int i = 1; i <= 8; i++)
+            {
+                run.Files.Add(new RunFile
+                {
+                    Name = $"alv-{i}.xlsx",
+                    Path = $@"D:\RPA\outputs\alv-{i}.xlsx",
+                    Size = 1024
+                });
+            }
+
+            string markdown = BuildSapDingTalkMarkdownContent(run, run.SapStatusText);
+            string plain = BuildSapDingTalkContent(run, run.SapStatusText);
+            bool ok = markdown.Contains("ALV\u6587\u4EF6\uFF1A8\u4E2A\uFF08\u5B58\u50A8\u6210\u529F\uFF09", StringComparison.Ordinal) &&
+                      plain.Contains("ALV\u6587\u4EF6\uFF1A8\u4E2A\uFF08\u5B58\u50A8\u6210\u529F\uFF09", StringComparison.Ordinal);
+            Check("DingTalk shows ALV file count for save cards", ok, Truncate(markdown.Replace("\n", " | "), 240));
+        }
+
+        {
+            var run = new RunRecordView
+            {
                 RunId = "RUN-SELFTEST-ZFI057-DINGTALK",
                 TransactionCode = "ZFI057",
                 TransactionName = "\u4EA7\u503C\u62C6\u5206",
@@ -14012,18 +15936,23 @@ Item1=test888
                 DurationMs = 122903
             };
             run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[scope] #1 businessArea=2800; plants=1011,1022" });
-            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[step 2 ZFI057] INFO: date input group #1; S_KADKY=[2026.03.01~2026.04.30]; S_KADAT=[2026.03.02~2026.04.30]" });
-            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[step 2 ZFI057] INFO: date input group #2; S_KADKY=[2026.05.01~2026.05.03]; S_KADAT=[2026.05.02~2026.05.03]" });
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[step 2 ZFI057] INFO: date input group #1; S_KADKY=[2026.05.01~2026.05.31]; S_KADAT=[2026.05.02~2026.05.31]" });
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[step 2 ZFI057] INFO: date input group #2; S_KADKY=[2026.06.01~2026.06.30]; S_KADAT=[2026.06.02~2026.06.30]" });
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[step 2 ZFI057] INFO: date input group #3; S_KADKY=[2026.07.01~2026.07.05]; S_KADAT=[2026.07.02~2026.07.05]" });
             string markdown = BuildSapDingTalkMarkdownContent(run, run.SapStatusText);
             string plain = BuildSapDingTalkContent(run, run.SapStatusText);
             bool ok = markdown.Contains("ZFI057\u65E5\u671F\u5165\u53C2", StringComparison.OrdinalIgnoreCase) &&
-                      markdown.Contains("\u7B2C1\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
-                      markdown.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.03.02~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
-                      markdown.Contains("\u7B2C2\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.05.01~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
-                      markdown.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.05.02~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u7B2C1\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.05.01~2026.05.31]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.05.02~2026.05.31]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u7B2C2\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.06.01~2026.06.30]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.06.02~2026.06.30]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u7B2C3\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.07.01~2026.07.05]", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.07.02~2026.07.05]", StringComparison.OrdinalIgnoreCase) &&
                       plain.Contains("ZFI057\u65E5\u671F\u5165\u53C2", StringComparison.OrdinalIgnoreCase) &&
-                      plain.Contains("\u7B2C1\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.03.01~2026.04.30]", StringComparison.OrdinalIgnoreCase) &&
-                      plain.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.05.02~2026.05.03]", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("\u7B2C1\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.05.01~2026.05.31]", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.05.02~2026.05.31]", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("\u7B2C3\u6B21\uFF1A\u6210\u672C\u6838\u7B97\u65E5\u671F=[2026.07.01~2026.07.05]", StringComparison.OrdinalIgnoreCase) &&
+                      plain.Contains("\u6210\u672C\u6838\u7B97\u65E5\u671F\u8D77\u4E8E=[2026.07.02~2026.07.05]", StringComparison.OrdinalIgnoreCase) &&
                       !markdown.Contains("S_KADKY=", StringComparison.OrdinalIgnoreCase) &&
                       !markdown.Contains("S_KADAT=", StringComparison.OrdinalIgnoreCase) &&
                       !plain.Contains("S_KADKY=", StringComparison.OrdinalIgnoreCase) &&
@@ -14144,11 +16073,23 @@ Item1=test888
         }
 
         {
+            string[] urls = DingTalkGatewayConfigFetcher.ExtractBaseUrlsForTest(new[]
+            {
+                "ZPP154| https://gateway.example.test/auth-api/openapi ",
+                "OTHER|https://ignored.example.test/",
+                "ZPP154|not-a-url",
+                "ZPP154|https://gateway.example.test/auth-api/openapi/"
+            });
+            bool ok = urls.SequenceEqual(new[] { "https://gateway.example.test/auth-api/openapi/" }, StringComparer.OrdinalIgnoreCase);
+            Check("DingTalk gateway URL comes from ZTPLM_CONFIG ZPP154", ok, string.Join(",", urls));
+        }
+
+        {
             bool ok = IsSapDingTalkTarget("dingtalk") &&
                       IsSapDingTalkTarget("sap-dingtalk") &&
                       SplitNotifyTargets("dingtalk,local|robot").SequenceEqual(new[] { "dingtalk", "local", "robot" }) &&
-                      new DingTalkOpenApiConfig().MissingFieldsSummary.Equals("baseUrl/appKey/appSecret/agentId", StringComparison.OrdinalIgnoreCase);
-            Check("DingTalk notify diagnostics", ok, "notifyTarget=dingtalk is a SAP DingTalk request, not a sent robot target");
+                      new DingTalkOpenApiConfig().MissingCredentialFieldsSummary.Equals("appKey/appSecret/agentId", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk notify diagnostics", ok, "gateway URL is read from ZTPLM_CONFIG; notifyTarget=dingtalk is a SAP DingTalk request");
         }
 
         {
@@ -14393,7 +16334,7 @@ Item1=test888
             string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_zco019_outputs_{Guid.NewGuid():N}");
             Directory.CreateDirectory(tempRoot);
             string detailSource = Path.Combine(tempRoot, "ZCO019_plant1022_detail.xlsx");
-            string savedSource = Path.Combine(tempRoot, "ZCO019_plant1022_saved.xlsx");
+            string summarySource = Path.Combine(tempRoot, "ZCO019_plant1022_summary.xlsx");
             try
             {
                 void WriteZco019Workbook(string path, string material)
@@ -14417,25 +16358,25 @@ Item1=test888
 
                 DateTime archiveDate = new DateTime(2026, 8, 5);
                 WriteZco019Workbook(detailSource, "DETAIL_ROW");
-                WriteZco019Workbook(savedSource, "SAVED_ROW");
+                WriteZco019Workbook(summarySource, "SUMMARY_ROW");
                 string detailName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", detailSource);
-                string savedName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", savedSource);
+                string summaryName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", summarySource);
                 _ = AlvOrganizationExport.RoutePlantWorkbook(detailSource, tempRoot, "ZCO019", detailName, "1022", archiveDate, PlantLookup);
-                _ = AlvOrganizationExport.RoutePlantWorkbook(savedSource, tempRoot, "ZCO019", savedName, "1022", archiveDate, PlantLookup);
+                _ = AlvOrganizationExport.RoutePlantWorkbook(summarySource, tempRoot, "ZCO019", summaryName, "1022", archiveDate, PlantLookup);
 
                 string detailTarget = Path.Combine(tempRoot, "BU1", "\u5e73\u6e56\u4e00\u5382", "2026_WK32", "ZCO019_\u6807\u51c6\u6750\u6599\u6210\u672c_\u660e\u7ec6_WK32.xlsx");
-                string savedTarget = Path.Combine(tempRoot, "BU1", "\u5e73\u6e56\u4e00\u5382", "2026_WK32", "ZCO019_\u6807\u51c6\u6750\u6599\u6210\u672c_\u4fdd\u5b58_WK32.xlsx");
+                string summaryTarget = Path.Combine(tempRoot, "BU1", "\u5e73\u6e56\u4e00\u5382", "2026_WK32", "ZCO019_\u6807\u51c6\u6750\u6599\u6210\u672c_\u6c47\u603b_WK32.xlsx");
                 using var detailWorkbook = new XLWorkbook(detailTarget);
-                using var savedWorkbook = new XLWorkbook(savedTarget);
+                using var summaryWorkbook = new XLWorkbook(summaryTarget);
                 string detailMaterial = detailWorkbook.Worksheets.First().Cell(2, 1).GetString();
-                string savedMaterial = savedWorkbook.Worksheets.First().Cell(2, 1).GetString();
+                string summaryMaterial = summaryWorkbook.Worksheets.First().Cell(2, 1).GetString();
                 bool ok = File.Exists(detailTarget) &&
-                          File.Exists(savedTarget) &&
-                          !detailTarget.Equals(savedTarget, StringComparison.OrdinalIgnoreCase) &&
+                          File.Exists(summaryTarget) &&
+                          !detailTarget.Equals(summaryTarget, StringComparison.OrdinalIgnoreCase) &&
                           detailMaterial.Equals("DETAIL_ROW", StringComparison.Ordinal) &&
-                          savedMaterial.Equals("SAVED_ROW", StringComparison.Ordinal);
-                Check("ZCO019 detail and saved outputs route to separate workbooks", ok,
-                    $"detail={detailTarget}; saved={savedTarget}; detailMaterial={detailMaterial}; savedMaterial={savedMaterial}");
+                          summaryMaterial.Equals("SUMMARY_ROW", StringComparison.Ordinal);
+                Check("ZCO019 detail and summary outputs route to separate workbooks", ok,
+                    $"detail={detailTarget}; summary={summaryTarget}; detailMaterial={detailMaterial}; summaryMaterial={summaryMaterial}");
             }
             finally
             {
@@ -14531,6 +16472,262 @@ Item1=test888
             {
                 try { Directory.Delete(tempRoot, recursive: true); } catch { }
             }
+        }
+
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_business_area_request_scope_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            string source = Path.Combine(tempRoot, "ZFI019NL_2800.xlsx");
+            try
+            {
+                using (var workbook = new XLWorkbook())
+                {
+                    var sheet = workbook.Worksheets.Add("ALV");
+                    sheet.Cell(1, 1).Value = "MATNR";
+                    sheet.Cell(1, 2).Value = "AMOUNT";
+                    sheet.Cell(2, 1).Value = "M1";
+                    sheet.Cell(2, 2).Value = 10;
+                    workbook.SaveAs(source);
+                }
+
+                string requestedScope = "";
+                AlvOrganizationMappingResult Lookup(string businessArea)
+                {
+                    requestedScope = businessArea;
+                    return new AlvOrganizationMappingResult
+                    {
+                        Success = true,
+                        Targets = new[] { new AlvOrganizationTarget("BU1", "\u5E73\u6E56\u4E00\u5382") }
+                    };
+                }
+
+                var outputs = AlvOrganizationExport.RouteBusinessAreaRequestWorkbook(
+                    source,
+                    tempRoot,
+                    "ZFI019NL",
+                    "\u5468\u635F\u76CA\u4FDD\u5B58\u5BFC\u51FA",
+                    new DateTime(2026, 8, 5),
+                    "2800",
+                    Lookup);
+                string expected = Path.Combine(tempRoot, "BU1", "\u5E73\u6E56\u4E00\u5382", "2026_WK32", "ZFI019NL_\u5468\u635F\u76CA\u4FDD\u5B58\u5BFC\u51FA_WK32.xlsx");
+                bool ok = requestedScope.Equals("2800", StringComparison.OrdinalIgnoreCase) &&
+                          outputs.Count == 1 && File.Exists(expected) && !File.Exists(source);
+                Check("ZFI019NL routes by request business area without GSBER column", ok,
+                    $"scope={requestedScope}; outputs={outputs.Count}; expected={expected}");
+            }
+            finally
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_zfi057_materials_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            string source = Path.Combine(tempRoot, "ZFI057_materials_2800.xlsx");
+            try
+            {
+                using (var workbook = new XLWorkbook())
+                {
+                    var sheet = workbook.Worksheets.Add("materials");
+                    sheet.Cell(1, 1).Value = "GSBER";
+                    sheet.Cell(1, 2).Value = "Material";
+                    sheet.Cell(1, 3).Value = "SourceType";
+                    sheet.Cell(2, 1).Value = "2800";
+                    sheet.Cell(2, 2).Value = "MAT_MEMORY";
+                    sheet.Cell(2, 3).Value = "ZFI019NL_MEMORY";
+                    sheet.Cell(3, 1).Value = "2800";
+                    sheet.Cell(3, 2).Value = "MAT_SPLIT";
+                    sheet.Cell(3, 3).Value = "CUSTOM_TABLE";
+                    workbook.SaveAs(source);
+                }
+
+                string requestedScope = "";
+                AlvOrganizationMappingResult Lookup(string businessArea)
+                {
+                    requestedScope = businessArea;
+                    return new AlvOrganizationMappingResult
+                    {
+                        Success = true,
+                        Targets = new[] { new AlvOrganizationTarget("BU1", "\u5E73\u6E56\u4E00\u5382") }
+                    };
+                }
+
+                var outputs = AlvOrganizationExport.RouteBusinessAreaRequestWorkbook(
+                    source,
+                    tempRoot,
+                    "ZFI057",
+                    "ZFI057_materials",
+                    new DateTime(2026, 8, 5),
+                    "2800",
+                    Lookup);
+                string expected = Path.Combine(tempRoot, "BU1", "\u5E73\u6E56\u4E00\u5382", "2026_WK32", "ZFI057_ZFI057_materials_WK32.xlsx");
+                using var materialWorkbook = new XLWorkbook(expected);
+                var rows = materialWorkbook.Worksheets.First().RangeUsed()?.RowsUsed().ToList() ?? new List<IXLRangeRow>();
+                bool ok = requestedScope.Equals("2800", StringComparison.OrdinalIgnoreCase) &&
+                          outputs.Count == 1 &&
+                          File.Exists(expected) &&
+                          !File.Exists(source) &&
+                          rows.Count == 3 &&
+                          rows.Skip(1).Select(row => row.Cell(2).GetString()).OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                              .SequenceEqual(new[] { "MAT_MEMORY", "MAT_SPLIT" });
+                Check("ZFI057 material workbook routes by business-area scope", ok,
+                    $"scope={requestedScope}; outputs={outputs.Count}; expected={expected}; rows={rows.Count}");
+            }
+            finally
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_alv_archive_merge_{Guid.NewGuid():N}");
+            string archiveRoot = Path.Combine(tempRoot, "archive");
+            string stagingRoot = Path.Combine(tempRoot, "staging");
+            Directory.CreateDirectory(archiveRoot);
+            Directory.CreateDirectory(stagingRoot);
+            string source2800 = Path.Combine(tempRoot, "ZFI057_materials_2800.xlsx");
+            string source9200 = Path.Combine(tempRoot, "ZFI057_materials_9200.xlsx");
+            try
+            {
+                void WriteMaterialWorkbook(string path, string businessArea, string material)
+                {
+                    using var workbook = new XLWorkbook();
+                    var sheet = workbook.Worksheets.Add("materials");
+                    sheet.Cell(1, 1).Value = "GSBER";
+                    sheet.Cell(1, 2).Value = "Material";
+                    sheet.Cell(1, 3).Value = "SourceType";
+                    sheet.Cell(2, 1).Value = businessArea;
+                    sheet.Cell(2, 2).Value = material;
+                    sheet.Cell(2, 3).Value = "ZFI019NL_MEMORY";
+                    workbook.SaveAs(path);
+                }
+
+                AlvOrganizationMappingResult SameTargetLookup(string businessArea) => new()
+                {
+                    Success = true,
+                    Targets = new[] { new AlvOrganizationTarget("BU2", "PH3") }
+                };
+
+                WriteMaterialWorkbook(source2800, "2800", "MAT_2800");
+                var existingOutputs = AlvOrganizationExport.RouteBusinessAreaRequestWorkbook(
+                    source2800,
+                    archiveRoot,
+                    "ZFI057",
+                    "ZFI057_materials",
+                    new DateTime(2026, 5, 4),
+                    "2800",
+                    SameTargetLookup);
+
+                WriteMaterialWorkbook(source9200, "9200", "MAT_9200");
+                var incomingOutputs = AlvOrganizationExport.RouteBusinessAreaRequestWorkbook(
+                    source9200,
+                    stagingRoot,
+                    "ZFI057",
+                    "ZFI057_materials",
+                    new DateTime(2026, 5, 4),
+                    "9200",
+                    SameTargetLookup);
+
+                string existingPath = existingOutputs.Single().Path;
+                string incomingPath = incomingOutputs.Single().Path;
+                string mergePath = Path.Combine(Path.GetDirectoryName(existingPath)!, $"merge_{Guid.NewGuid():N}.xlsx");
+                bool merged = AlvOrganizationExport.TryMergeAggregateWorkbookForArchive(
+                    existingPath,
+                    incomingPath,
+                    mergePath,
+                    out long mergedSize,
+                    out string mergeMessage);
+                if (merged)
+                    File.Move(mergePath, existingPath, overwrite: true);
+
+                using var mergedWorkbook = new XLWorkbook(existingPath);
+                var rows = mergedWorkbook.Worksheets.First().RangeUsed()?.RowsUsed().ToList() ?? new List<IXLRangeRow>();
+                bool ok = merged &&
+                          mergedSize > 0 &&
+                          rows.Count == 3 &&
+                          rows.Skip(1).Select(row => row.Cell(2).GetString()).OrderBy(value => value, StringComparer.OrdinalIgnoreCase)
+                              .SequenceEqual(new[] { "MAT_2800", "MAT_9200" });
+                Check("ALV archive merge keeps multiple business-area sources in one network file", ok,
+                    $"merged={merged}; size={mergedSize}; rows={rows.Count}; message={mergeMessage}; file={existingPath}");
+            }
+            finally
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+
+        {
+            string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_zfir034_plant_alv_{Guid.NewGuid():N}");
+            Directory.CreateDirectory(tempRoot);
+            string source = Path.Combine(tempRoot, "ZFIR034_scope.xlsx");
+            try
+            {
+                using (var workbook = new XLWorkbook())
+                {
+                    var sheet = workbook.Worksheets.Add("ALV");
+                    sheet.Cell(1, 1).Value = "\u5339\u914D\u72B6\u6001";
+                    sheet.Cell(1, 2).Value = "\u7269\u6599";
+                    sheet.Cell(1, 3).Value = "\u5DE5\u5382";
+                    sheet.Cell(1, 4).Value = "\u4EF7\u683C\u6765\u6E90";
+                    sheet.Cell(2, 1).Value = "@08@";
+                    sheet.Cell(2, 2).Value = "600-2167W150-0042";
+                    sheet.Cell(2, 3).Value = "1039";
+                    sheet.Cell(2, 4).Value = "ZFI072A";
+                    workbook.SaveAs(source);
+                }
+
+                string requestedPlant = "";
+                AlvOrganizationMappingResult PlantLookup(string plant)
+                {
+                    requestedPlant = plant;
+                    return new AlvOrganizationMappingResult
+                    {
+                        Success = true,
+                        Targets = new[] { new AlvOrganizationTarget("BU1", "\u5E73\u6E56\u4E00\u5382") }
+                    };
+                }
+
+                var outputs = AlvOrganizationExport.RoutePlantWorkbook(
+                    source,
+                    tempRoot,
+                    "ZFIR034",
+                    "\u7EF4\u62A4\u7279\u6B8A\u4EF7\u683C\uFF08ZFI085\uFF09",
+                    "scope",
+                    new DateTime(2026, 6, 1),
+                    PlantLookup);
+                string expected = Path.Combine(tempRoot, "BU1", "\u5E73\u6E56\u4E00\u5382", "2026_WK23", "ZFIR034_\u7EF4\u62A4\u7279\u6B8A\u4EF7\u683C\uFF08ZFI085\uFF09_WK23.xlsx");
+                bool ok = requestedPlant.Equals("1039", StringComparison.OrdinalIgnoreCase) &&
+                          outputs.Count == 1 &&
+                          File.Exists(expected) &&
+                          !File.Exists(source);
+                Check("ZFIR034 routes ALV by plant column without GSBER", ok,
+                    $"plant={requestedPlant}; outputs={outputs.Count}; expected={expected}");
+            }
+            finally
+            {
+                try { Directory.Delete(tempRoot, recursive: true); } catch { }
+            }
+        }
+
+        {
+            bool ok = SupportsAlvExport("ZFI057") &&
+                      SupportsAlvExport("ZFI019NA") &&
+                      UsesDirectPlantAlvOutput("ZFI057") &&
+                      !UsesBusinessAreaAlvOutput("ZFI057") &&
+                      GetAlvOrganizationMappingKind("ZFI057") == AlvOrganizationMappingKind.Plant &&
+                      UsesBusinessAreaAlvOutput("ZFI019NA") &&
+                      UsesBusinessAreaRequestAlvOutput("ZFI019NA") &&
+                      GetAlvOrganizationMappingKind("ZFI019NA") == AlvOrganizationMappingKind.BusinessArea &&
+                      GetAlvOrganizationMappingKind("ZFI019NL") == AlvOrganizationMappingKind.BusinessArea &&
+                      SupportsAlvExport("ZFI148") &&
+                      SupportsAlvExport("ZFIR034") &&
+                      UsesDirectPlantAlvOutput("ZFIR034") &&
+                      !UsesBusinessAreaAlvOutput("ZFIR034") &&
+                      !UsesBusinessAreaRequestAlvOutput("ZFIR034") &&
+                      GetAlvOrganizationMappingKind("ZFIR034") == AlvOrganizationMappingKind.Plant;
+            Check("ALV organization mapping kinds match transaction input scope", ok,
+                $"zfi057Supports={SupportsAlvExport("ZFI057")}; zfi057Direct={UsesDirectPlantAlvOutput("ZFI057")}; zfi057BusinessArea={UsesBusinessAreaAlvOutput("ZFI057")}; zfi057Mapping={GetAlvOrganizationMappingKind("ZFI057")}; zfi148Supports={SupportsAlvExport("ZFI148")}; zfir034Supports={SupportsAlvExport("ZFIR034")}; zfir034Direct={UsesDirectPlantAlvOutput("ZFIR034")}; zfir034BusinessArea={UsesBusinessAreaAlvOutput("ZFIR034")}; zfir034Request={UsesBusinessAreaRequestAlvOutput("ZFIR034")}; zfir034Mapping={GetAlvOrganizationMappingKind("ZFIR034")}");
         }
 
         Console.WriteLine($"\n=== 总计: {passed} PASS, {failed} FAIL, {(failed == 0 ? "全部通过" : "有失败项")} ===");
@@ -14631,6 +16828,38 @@ Item1=test888
         }
 
         return result;
+    }
+
+    static void RecoverReportedAlvFiles(string tcode, string stdout, RunResultRequest result)
+    {
+        if (!SupportsAlvExport(tcode) || result.Files.Count > 0 || string.IsNullOrWhiteSpace(stdout))
+            return;
+
+        var recovered = new List<RunFile>();
+        foreach (string rawLine in SplitLines(stdout))
+        {
+            string line = rawLine.Trim();
+            if (!TryReadOutputKey(line, "OUTPUT_FILE", out string outputFile) || string.IsNullOrWhiteSpace(outputFile))
+                continue;
+
+            var file = BuildRunFile(outputFile);
+            if (file.Size <= 0)
+                continue;
+
+            recovered.Add(file);
+        }
+
+        if (recovered.Count == 0)
+            return;
+
+        result.Files.AddRange(recovered
+            .GroupBy(file => Path.GetFullPath(Environment.ExpandEnvironmentVariables(file.Path ?? "")), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First()));
+        result.Logs.Add(new RunLogLine
+        {
+            Level = "WARN",
+            Message = $"ALV output recovery used VBS OUTPUT_FILE records: {result.Files.Count} file(s)"
+        });
     }
 
     static bool IsExplicitNoDataResult(RunResultRequest result)
@@ -14940,6 +17169,7 @@ class SapRunParams
     public string Script { get; set; } = "openOnly";
     public string Plant { get; set; } = "";
     public string Plants { get; set; } = "";
+    public string Zfi057PlantFilter { get; set; } = "";
     public string Year { get; set; } = "";
     public string Week { get; set; } = "";
     public string Period { get; set; } = "";
@@ -14963,6 +17193,7 @@ class SapRunParams
     public string ButtonId { get; set; } = "";
     public string RunId { get; set; } = "";
     public string ParentRunId { get; set; } = "";
+    public bool IsScheduleSnapshot { get; set; }
     public int? TimeoutSeconds { get; set; }
 }
 
@@ -14973,7 +17204,7 @@ record AlvExportTarget(string Directory, string FileName, string FullPath)
     public static readonly AlvExportTarget Empty = new("", "", "");
 }
 
-record Zfi057WorkflowScope(string BusinessArea, string[] Plants);
+record Zfi057WorkflowScope(string BusinessArea, string[] Plants, bool PlantMappingSuccess = true, string PlantMappingMessage = "");
 
 record Zfi057WorkflowScopeResult(string BusinessArea, string[] Plants, string Status, string Message);
 
@@ -14983,11 +17214,15 @@ record Zfi057Step2DateWindow(int Index, string KadkyLow, string KadkyHigh, strin
 
 record BudatDateWindow(int Index, string Low, string High);
 
-record Zfi057Step3ScopeResult(bool Success, string Message, string FirstJobStatus, string FinalJobStatus, bool Repeated);
+record Zfi057Step3ScopeResult(bool Success, string Message, string FirstJobStatus, string FinalJobStatus, bool Repeated, bool NoData = false);
 
 record Zfi057TbtcoJobCheckResult(bool Success, bool IsTerminal, bool IsFailure, string Status, string Category, string Message, RunResultRequest RawResult);
 
+record Zfi057TbtcoJobEvaluation(int ExpectedJobs, IReadOnlyList<SapJobStatusRow> Jobs, bool HasExpectedJobs, bool AllTerminal, bool HasFailure, string StatusSummary);
+
 record DingTalkParamGroup(string Label, string[] Keys, bool SplitValues);
+
+record ScheduleTaskScopeSnapshot(string PlantsCsv, string BusinessAreasCsv);
 
 record DingTalkInputLine(string Label, List<string> Values)
 {
@@ -15035,7 +17270,6 @@ class Zfi019NlMemoryLocalConfig
     public int WaitSeconds { get; set; }
     public string SplitTable { get; set; } = "";
     public string SplitBukrs { get; set; } = "";
-    public string[] DongtaiBusinessAreas { get; set; } = Array.Empty<string>();
 }
 
 readonly record struct SapSessionProbeResult(bool Ready, bool HasSapGui, bool HasBlockingSapGui, bool HasPendingLoginDialog, string Details);
@@ -15201,6 +17435,9 @@ class ScheduleTaskRequest : IRawJsonRequest
     public string Frequency { get; set; } = "";
     public string ScheduleType { get; set; } = "";
     public string FrequencyCode { get; set; } = "";
+    public string Weekday { get; set; } = "";
+    public string DayOfWeek { get; set; } = "";
+    public string ScheduleWeekday { get; set; } = "";
     public string Time { get; set; } = "";
     public string RunTime { get; set; } = "";
     public string ExecTime { get; set; } = "";
@@ -15224,6 +17461,12 @@ class ScheduleTaskRequest : IRawJsonRequest
     [JsonIgnore]
     public bool HasExplicitPlantSelection { get; private set; }
 
+    [JsonIgnore]
+    public bool HasExplicitBusinessAreaSelection { get; private set; }
+
+    [JsonIgnore]
+    public bool HasExplicitWeekdaySelection { get; private set; }
+
     public void CaptureRawJson(string json)
     {
         try
@@ -15242,10 +17485,33 @@ class ScheduleTaskRequest : IRawJsonRequest
                 HasJsonProperty(doc.RootElement, "plantsCsv") ||
                 HasJsonProperty(doc.RootElement, "plantCodes") ||
                 HasJsonProperty(doc.RootElement, "factoryCodes");
+
+            HasExplicitBusinessAreaSelection =
+                HasJsonProperty(doc.RootElement, "businessAreas") ||
+                HasJsonProperty(doc.RootElement, "businessAreasCsv") ||
+                (TryGetJsonProperty(doc.RootElement, "params", out JsonElement scopeParamsElement) &&
+                 (HasJsonProperty(scopeParamsElement, "businessAreas") ||
+                  HasJsonProperty(scopeParamsElement, "businessArea") ||
+                  HasJsonProperty(scopeParamsElement, "businessAreaList") ||
+                  HasJsonProperty(scopeParamsElement, "gsberlist") ||
+                  HasJsonProperty(scopeParamsElement, "gsber")));
+
+            HasExplicitWeekdaySelection =
+                HasJsonProperty(doc.RootElement, "weekday") ||
+                HasJsonProperty(doc.RootElement, "weekDay") ||
+                HasJsonProperty(doc.RootElement, "dayOfWeek") ||
+                HasJsonProperty(doc.RootElement, "scheduleWeekday") ||
+                (TryGetJsonProperty(doc.RootElement, "params", out JsonElement paramsElement) &&
+                 (HasJsonProperty(paramsElement, "weekday") ||
+                  HasJsonProperty(paramsElement, "weekDay") ||
+                  HasJsonProperty(paramsElement, "dayOfWeek") ||
+                  HasJsonProperty(paramsElement, "scheduleWeekday")));
         }
         catch
         {
             HasExplicitPlantSelection = false;
+            HasExplicitBusinessAreaSelection = false;
+            HasExplicitWeekdaySelection = false;
         }
     }
 
@@ -15253,6 +17519,24 @@ class ScheduleTaskRequest : IRawJsonRequest
     {
         return element.ValueKind == JsonValueKind.Object &&
                element.EnumerateObject().Any(prop => prop.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    static bool TryGetJsonProperty(JsonElement element, string name, out JsonElement value)
+    {
+        value = default;
+        if (element.ValueKind != JsonValueKind.Object)
+            return false;
+
+        foreach (var prop in element.EnumerateObject())
+        {
+            if (prop.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+            {
+                value = prop.Value;
+                return true;
+            }
+        }
+
+        return false;
     }
 }
 
@@ -15266,6 +17550,7 @@ class ScheduleTaskDue
     public string Cron { get; set; } = "";
     public string Frequency { get; set; } = "";
     public string RunTime { get; set; } = "";
+    public string Weekday { get; set; } = "";
     public bool NotifyEnabled { get; set; }
     public bool NotifyOnStart { get; set; }
     public bool NotifyOnSuccess { get; set; }
@@ -15444,23 +17729,19 @@ class SapDingTalkNotifyRequest
 
 class DingTalkOpenApiConfig
 {
-    public string BaseUrl { get; set; } = "";
     public string AppKey { get; set; } = "";
     public string AppSecret { get; set; } = "";
     public string AgentId { get; set; } = "";
-    public bool IsComplete =>
-        !string.IsNullOrWhiteSpace(BaseUrl) &&
+    public bool HasCredentials =>
         !string.IsNullOrWhiteSpace(AppKey) &&
         !string.IsNullOrWhiteSpace(AppSecret) &&
         !string.IsNullOrWhiteSpace(AgentId);
 
-    public string MissingFieldsSummary
+    public string MissingCredentialFieldsSummary
     {
         get
         {
             var missing = new List<string>();
-            if (string.IsNullOrWhiteSpace(BaseUrl))
-                missing.Add("baseUrl");
             if (string.IsNullOrWhiteSpace(AppKey))
                 missing.Add("appKey");
             if (string.IsNullOrWhiteSpace(AppSecret))
@@ -15492,6 +17773,12 @@ class NotificationHttpResult
     public string Body { get; }
     public string Transport { get; }
     public bool IsSuccessStatusCode => StatusCode >= 200 && StatusCode <= 299;
+}
+
+class ScheduleTaskDeleteResult
+{
+    public bool Deleted { get; set; }
+    public int RemovedQueuedRuns { get; set; }
 }
 
 class SapFunctionResult

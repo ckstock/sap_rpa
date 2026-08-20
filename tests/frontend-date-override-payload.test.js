@@ -369,6 +369,7 @@ async function captureRunParams(setup) {
       tCode: "ZFI057",
       factoryGroup: "PINGHU_ALL",
       plants: ["2800"],
+      weekday: "thursday",
       useTestDateOverride: true,
       testDateKind: "range",
       testDateStart: "2026-04-27",
@@ -383,6 +384,7 @@ async function captureRunParams(setup) {
       scheduleFactoryGroup: { value: "PINGHU_ALL" },
       schedulePlants: { value: "2800" },
       scheduleFrequency: { value: "weekly" },
+      scheduleWeekday: { value: "thursday" },
       scheduleEnabled: { checked: true },
       scheduleTime: { value: "08:00" },
       scheduleName: { value: "SCH-FRONTEND-TEST" },
@@ -403,6 +405,98 @@ async function captureRunParams(setup) {
   assert.equal(schedulePayload.params.weekEnd, "2026.05.03");
   assert.equal(schedulePayload.params.year, "2026");
   assert.equal(schedulePayload.params.week, "18");
+  assert.equal(schedulePayload.weekday, "thursday");
+  assert.equal(schedulePayload.frequencyText, "每周四");
+  assert.equal(Object.prototype.hasOwnProperty.call(schedulePayload.params, "weekday"), false);
+
+  const newSchedulePayload = await runInPortal(`
+    state.bridge.allowTestDateOverride = false;
+    state.scheduleForm = {
+      id: "",
+      tCode: "ZFI148",
+      factoryGroup: "PINGHU_ALL",
+      plants: ["1022", "1024"],
+      weekday: "tuesday",
+      notifyStart: false,
+      notifySuccess: false,
+      notifyFail: false,
+      enabled: true
+    };
+    __inputs = {
+      scheduleTCode: { value: "ZFI148" },
+      scheduleFactoryGroup: { value: "PINGHU_ALL" },
+      schedulePlants: { value: "1022,1024" },
+      scheduleFrequency: { value: "weekly" },
+      scheduleWeekday: { value: "tuesday" },
+      scheduleEnabled: { checked: true },
+      scheduleTime: { value: "20:00" },
+      scheduleName: { value: "ZFI148 - 推送大数据平台" },
+      scheduleUseTestDateOverride: { checked: false },
+      scheduleNotifyStart: { checked: false },
+      scheduleNotifySuccess: { checked: false },
+      scheduleNotifyFail: { checked: false }
+    };
+    return buildScheduleConfigPayload();
+  `);
+  assert.equal(newSchedulePayload.id, "", "new schedule payload must let the API allocate a non-colliding id");
+
+  const saveNewScheduleCall = await runInPortal(`
+    let calls = [];
+    bridgeFetch = async (path, options = {}) => {
+      calls.push({ path, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+      return { ok: true, id: "SCH-012", schedule: { ...(options.body ? JSON.parse(options.body) : {}), id: "SCH-012", tcode: "ZFI148" } };
+    };
+    const saved = await saveScheduleTask({
+      id: "",
+      name: "ZFI148 - 推送大数据平台",
+      tCode: "ZFI148",
+      transactionCode: "ZFI148",
+      factoryGroup: "PINGHU_ALL",
+      plants: ["1022"],
+      time: "20:00",
+      execTime: "20:00",
+      frequency: "weekly",
+      weekday: "tuesday",
+      params: { plants: "1022", factoryGroup: "PINGHU_ALL" },
+      enabled: true
+    });
+    return { calls, saved };
+  `);
+  assert.equal(saveNewScheduleCall.calls.length, 1);
+  assert.equal(saveNewScheduleCall.calls[0].path, "/api/schedules");
+  assert.equal(saveNewScheduleCall.calls[0].method, "POST");
+  assert.equal(Object.prototype.hasOwnProperty.call(saveNewScheduleCall.calls[0].body, "id"), false);
+  assert.equal(saveNewScheduleCall.saved.id, "SCH-012");
+
+  const saveExistingScheduleCall = await runInPortal(`
+    let calls = [];
+    bridgeFetch = async (path, options = {}) => {
+      if (path === "/api/config") throw new Error("schedule save must not use full config overwrite");
+      calls.push({ path, method: options.method || "GET", body: options.body ? JSON.parse(options.body) : null });
+      return { ok: true, id: "SCH-009", schedule: { ...(options.body ? JSON.parse(options.body) : {}), id: "SCH-009", tcode: "ZCO019", params: { runStrategy: "summary" } } };
+    };
+    const saved = await saveScheduleTask({
+      id: "SCH-009",
+      name: "ZCO019 - 标准材料成本（汇总保存）",
+      tCode: "ZCO019",
+      transactionCode: "ZCO019",
+      factoryGroup: "PINGHU_ALL",
+      plants: ["1022"],
+      time: "20:00",
+      execTime: "20:00",
+      frequency: "weekly",
+      weekday: "monday",
+      params: { plants: "1022", factoryGroup: "PINGHU_ALL", runStrategy: "summary" },
+      enabled: true
+    });
+    return { calls, saved };
+  `);
+  assert.equal(saveExistingScheduleCall.calls.length, 1);
+  assert.equal(saveExistingScheduleCall.calls[0].path, "/api/schedules/SCH-009");
+  assert.equal(saveExistingScheduleCall.calls[0].method, "PUT");
+  assert.equal(saveExistingScheduleCall.calls[0].body.id, "SCH-009");
+  assert.equal(saveExistingScheduleCall.saved.id, "SCH-009");
+  assert.equal(saveExistingScheduleCall.saved.params.runStrategy, "summary");
 
   const scheduleWeekPayload = await runInPortal(`
     state.bridge.allowTestDateOverride = true;
@@ -445,7 +539,18 @@ async function captureRunParams(setup) {
   assert.equal(scheduleWeekPayload.params.weekEnd, "2026.05.03");
   assert.equal(scheduleWeekPayload.params.year, "2026");
   assert.equal(scheduleWeekPayload.params.week, "18");
+  assert.equal(scheduleWeekPayload.weekday, "monday");
+  assert.equal(scheduleWeekPayload.frequencyText, "每周一");
   assert.equal(schedulePayload.params.runStrategy, "auto3step");
+
+  const zco019ScheduleCodeLabels = await runInPortal(`
+    return [
+      formatScheduleTaskTCode({ tCode: "ZCO019", params: { runStrategy: "detail" } }),
+      formatScheduleTaskTCode({ tCode: "ZCO019", params: { runStrategy: "summary" } }),
+      formatScheduleTaskTCode({ tCode: "ZFI019NL", params: {} })
+    ];
+  `);
+  assert.deepEqual(zco019ScheduleCodeLabels, ["ZCO019-明细", "ZCO019-汇总", "ZFI019NL"]);
 
   console.log("FRONTEND_DATE_OVERRIDE_PAYLOAD_OK");
 })().catch(error => {

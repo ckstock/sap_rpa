@@ -70,6 +70,7 @@
         account: "",
         password: "",
         tCode: "ZFI019NL",
+        runStrategy: "",
         factoryGroup: "PINGHU_30",
         plants: ["1022", "1024", "1032", "6041"],
         notify: true,
@@ -95,12 +96,14 @@
         tCode: "ZFI019NL",
         factoryGroup: "PINGHU_ALL",
         plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"],
-        execTime: "08:00",
+        execTime: "20:00",
         frequency: "weekly",
+        weekday: "monday",
         notifyStart: true,
         notifySuccess: true,
         notifyFail: true,
         enabled: true,
+        runStrategy: "",
         useTestDateOverride: false,
         testDateKind: "range",
         testIsoWeek: "",
@@ -110,17 +113,25 @@
       }
     };
 
-    const DEFAULT_BRIDGE_API = "http://127.0.0.1:8080";
-    if (getLocalValue("sapRpaApiBase") === "http://127.0.0.1:17890") {
-      removeLocalValue("sapRpaApiBase");
-    }
-    const BRIDGE_API = window.SAP_RPA_API_BASE || getLocalValue("sapRpaApiBase") || DEFAULT_BRIDGE_API;
+    const SERVER_BRIDGE_API = "http://10.0.2.120:6174/rpa";
+    const gatewayHosts = new Set(["10.0.2.120", "fi_automation.srv.lstech.com"]);
+    const pageHostname = String(window.location?.hostname || "").toLowerCase();
+    const pageUsesGateway = gatewayHosts.has(pageHostname);
+    const DEFAULT_BRIDGE_API = pageUsesGateway ? window.location.origin + "/rpa" : SERVER_BRIDGE_API;
+    const configuredBridgeApi = String(window.SAP_RPA_API_BASE || "").trim().replace(/\/+$/, "");
+    const isLoopbackApi = /^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?(?:\/|$)/i.test(configuredBridgeApi);
+
+    // Runs must be submitted to the shared execution server, not a browser-local launcher.
+    removeLocalValue("sapRpaApiBase");
+    const BRIDGE_API = configuredBridgeApi && !isLoopbackApi ? configuredBridgeApi : DEFAULT_BRIDGE_API;
     const CONFIG_API_PATHS = {
       root: "/api/config",
+      transactions: tcode => "/api/transactions/" + encodeURIComponent(tcode),
       plants: code => "/api/config/plants/" + encodeURIComponent(code),
       plantGroups: id => "/api/config/plant-groups/" + encodeURIComponent(id),
       transactionRules: tcode => "/api/config/transaction-rules/" + encodeURIComponent(tcode),
       notificationRobots: id => "/api/config/notification-robots/" + encodeURIComponent(id),
+      schedulesRoot: "/api/schedules",
       schedules: id => "/api/schedules/" + encodeURIComponent(id)
     };
     let tCodes = [
@@ -128,19 +139,20 @@
       { code: "ZFI085", name: "维护特殊价格", module: "FI", stage: "并行启动", script: "ZFI085.vbs", icon: "badge-dollar-sign", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: false },
       { code: "ZFI014D", name: "维护仓领退料", module: "FI", stage: "并行启动", script: "ZFI014D.vbs", icon: "package-check", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 180, retry: 2, enabled: true },
       { code: "ZFI072N", name: "模切周结-采购价", module: "FI", stage: "顺序执行", script: "ZFI072N.vbs", icon: "receipt-text", params: ["plants", "period", "weekEnd"], factoryRule: "按选中工厂执行；过账日期按上一完整周推导，跨月时 VBS 连续执行两段过账日期窗口", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 1200, retry: 2, enabled: true },
-      { code: "ZFI057", name: "产值拆分", module: "CO", stage: "顺序执行", script: "ZFI057.vbs", icon: "trending-up", params: ["plants", "businessAreas", "period", "weekEnd"], factoryRule: "本规则仅维护默认业务范围；执行工厂运行时由 SAP 集 Z31 的 GET_GS03 按业务范围解析，不能在此配置或用本地工厂覆盖。", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 1800, retry: 1, enabled: true },
+      { code: "ZFI057", name: "产值拆分", module: "CO", stage: "顺序执行", script: "ZFI057.vbs", icon: "trending-up", params: ["plants", "businessAreas", "period", "weekEnd"], factoryRule: "本规则仅维护默认业务范围；执行工厂运行时由 SAP 表 ZFIT_RPA_BUKRS 按 GSBER 查询 WERKS，多个工厂逐个执行，不能在此配置或用本地工厂覆盖。", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 1800, retry: 1, enabled: true },
       { code: "ZCO020", name: "拆分验证", module: "CO", stage: "顺序执行", script: "ZCO020.vbs", icon: "list-checks", params: ["businessAreas", "period", "weekEnd"], factoryRule: "按业务范围和周结日期验证 ZFI057 拆分结果", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 900, retry: 1, enabled: true },
       { code: "ZPP063", name: "验证备注", module: "PP", stage: "顺序执行", script: "ZPP063.vbs", icon: "clipboard-check", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
       { code: "ZPP063X", name: "回检验证", module: "PP", stage: "顺序执行", script: "ZPP063X.vbs", icon: "rotate-ccw", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
       { code: "ZFI019NC", name: "验证修正", module: "FI", stage: "顺序执行", script: "ZFI019NC.vbs", icon: "file-pen-line", params: ["year", "week", "plants"], factoryRule: "按配置工厂执行", defaultPlantGroup: "PINGHU_ALL", automation: "openOnly", timeout: 240, retry: 2, enabled: true },
       { code: "ZFI080", name: "实际材料保存", module: "FI", stage: "核心并行", script: "ZFI080.vbs", icon: "boxes", params: ["plants"], factoryRule: "按业务范围和周结日期保存", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 1200, retry: 2, enabled: true },
       { code: "ZCO019", name: "标准材料成本", module: "CO", stage: "核心并行", script: "ZCO019.vbs", icon: "tag", params: ["plants"], factoryRule: "明细保存与汇总保存", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 600, retry: 2, enabled: true },
-      { code: "ZFI019NA", name: "周损益生成", module: "FI", stage: "最终生成", script: "ZFI019NA.vbs", icon: "file-spreadsheet", params: ["plants"], factoryRule: "东台、黄江等范围保存", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 600, retry: 2, enabled: true },
+      { code: "ZFI019NA", name: "周损益生成", module: "FI", stage: "最终生成", script: "ZFI019NA.vbs", icon: "file-spreadsheet", params: ["businessAreas"], factoryRule: "按业务范围保存", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 600, retry: 2, enabled: true },
       { code: "ZFIR034", name: "维护特殊价格（ZFI085）", module: "FI", stage: "并行启动", script: "ZFIR034.vbs", icon: "calendar-days", params: ["period", "weekEnd"], factoryRule: "按系统日期上一完整周执行", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 300, retry: 2, enabled: true },
       { code: "ZFI019NL", name: "周损益保存导出", module: "FI", stage: "最终生成", script: "ZFI019NL.vbs", icon: "bar-chart-3", params: ["businessAreas"], factoryRule: "按选中厂区工厂和业务范围导出", defaultPlantGroup: "PINGHU_30", automation: "script", timeout: 300, retry: 3, enabled: true },
       { code: "ZFI080B", name: "实际材料明细", module: "FI", stage: "周结推送", script: "ZFI080B.vbs", icon: "calculator", params: ["plants", "period", "weekEnd"], factoryRule: "按选中工厂和上一完整周过账日期保存", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 1200, retry: 2, enabled: true },
       { code: "ZFI148", name: "推送大数据平台", module: "FI", stage: "周结推送", script: "ZFI148.vbs", icon: "send", params: ["plants", "period", "weekEnd"], factoryRule: "按选中工厂推送；年度/周次按系统日期上一完整周自动推导", defaultPlantGroup: "PINGHU_ALL", automation: "script", timeout: 1200, retry: 2, enabled: true }
     ];
+    let transactionRules = tCodes.map(item => ({ ...item }));
     const stageOrder = ["并行启动", "顺序执行", "核心并行", "最终生成", "周结推送"];
     const zfi072PlantRule = ["5021", "9301", "1101", "207M", "1024", "1032", "6041", "1022", "103C", "103D", "1031", "1033", "103C", "103D", "1035", "1036"];
     const workflow = [
@@ -239,7 +251,7 @@
       { id: "rbt-002", name: "IT 运维告警群", group: "SAP 运维告警", events: ["系统异常", "脚本失败"], enabled: true, lastPush: "2026/06/07 14:30", hasWebhook: true, hasSecret: true }
     ];
     let scheduleTasks = [
-      { id: "SCH-001", name: "周一 ZFI019NL 周损益链路", tCode: "ZFI019NL", factoryGroup: "PINGHU_ALL", plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"], time: "08:00", frequency: "每周一", status: "启用", next: "2026/06/15 08:00" }
+      { id: "SCH-001", name: "周一 ZFI019NL 周损益链路", tCode: "ZFI019NL", factoryGroup: "PINGHU_ALL", plants: ["1022", "1024", "1032", "6041", "103C", "1031", "1033", "103D", "1035", "1036"], time: "08:00", frequency: "每周一", frequencyCode: "weekly", weekday: "monday", weekdayLabel: "周一", status: "启用", next: "2026/06/15 08:00" }
     ];
     let history = [
       { id: "RUN-20260608-001", time: "2026/06/08 08:00", task: "周一 ZFI019NL 周损益链路", tCode: "ZFI019NL", plant: "1022,1024,1032,6041", duration: "45 秒", status: "成功", notify: "已推送", result: "保存并导出周损益结果 18 行" },
@@ -254,6 +266,7 @@
     };
     const fallbackConfig = JSON.parse(JSON.stringify({
       tCodes,
+      transactionRules,
       plants,
       factoryGroups,
       robots,

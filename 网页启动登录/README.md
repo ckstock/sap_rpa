@@ -155,7 +155,7 @@ localStorage.setItem("sapRpaApiBase", "http://windows-server:8080")
 | `GET` | `/api/transactions` | 读取事务码配置 |
 | `POST` | `/api/transactions` | 新增或更新事务码配置 |
 | `PUT` | `/api/transactions/{code}` | 更新指定事务码配置 |
-| `DELETE` | `/api/transactions/{code}` | 停用事务码 |
+| `DELETE` | `/api/transactions/{code}` | 删除事务码；若被定时任务或排队/运行中的任务引用则返回 `409`，已完成运行历史保留 |
 | `POST` | `/api/runs` | 创建 queued 执行任务 |
 | `GET` | `/api/runs` | 查询执行历史 |
 | `GET` | `/api/runs/{runId}` | 查询单次执行详情、日志和文件 |

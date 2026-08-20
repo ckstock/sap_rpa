@@ -12,7 +12,8 @@ Dim tcode, factoryGroup
 Dim yearValue, weekValue, periodValue, weekEndValue, dateLowValue, dateHighValue
 Dim SapGuiAuto, application, connection, session
 Dim retries, sleepMs, statusType, statusText
-Dim unresolvedOkCodeToken
+Dim unresolvedOkCodeToken, unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
+Dim alvExportDir, alvExportFilename, scriptDir, exportTimeoutMs, alvHelperLoaded
 
 tcode = "{OK_CODE}"
 factoryGroup = "{FACTORY_GROUP}"
@@ -20,7 +21,14 @@ yearValue = "{YEAR}"
 weekValue = "{WEEK}"
 periodValue = "{PERIOD}"
 weekEndValue = "{WEEK_END}"
+alvExportDir = "{ALV_EXPORT_DIR}"
+alvExportFilename = "{ALV_EXPORT_FILENAME}"
+scriptDir = "{SCRIPT_DIR}"
+exportTimeoutMs = 180000
+alvHelperLoaded = False
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
+unresolvedAlvExportDirToken = "{" & "ALV_EXPORT_DIR" & "}"
+unresolvedAlvExportFilenameToken = "{" & "ALV_EXPORT_FILENAME" & "}"
 
 If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFIR034"
 If UCase(Trim(CStr(tcode))) <> "ZFIR034" Then Fail "ZFIR034 script refuses tcode=" & CStr(tcode), 10
@@ -28,6 +36,9 @@ If IsPlaceholder(yearValue, "YEAR") Then yearValue = ""
 If IsPlaceholder(weekValue, "WEEK") Then weekValue = ""
 If IsPlaceholder(periodValue, "PERIOD") Then periodValue = ""
 If IsPlaceholder(weekEndValue, "WEEK_END") Then weekEndValue = ""
+If Trim(CStr(alvExportDir)) = unresolvedAlvExportDirToken Then alvExportDir = ""
+If Trim(CStr(alvExportFilename)) = unresolvedAlvExportFilenameToken Then alvExportFilename = ""
+If IsPlaceholder(scriptDir, "SCRIPT_DIR") Then scriptDir = ""
 
 ResolveDates
 
@@ -55,6 +66,43 @@ Function ParseDateOrEmpty(value)
       End If
    End If
 End Function
+
+Function CombinePath(folderPath, fileName)
+   If Right(CStr(folderPath), 1) = "\" Then
+      CombinePath = CStr(folderPath) & CStr(fileName)
+   Else
+      CombinePath = CStr(folderPath) & "\" & CStr(fileName)
+   End If
+End Function
+
+Function LoadAlvExportHelper()
+   Dim fso, helperPath, textFile, helperText
+   On Error Resume Next
+   LoadAlvExportHelper = False
+   If alvHelperLoaded Then
+      LoadAlvExportHelper = True
+      Exit Function
+   End If
+   Set fso = CreateObject("Scripting.FileSystemObject")
+   If Trim(CStr(scriptDir)) = "" Then scriptDir = fso.GetParentFolderName(WScript.ScriptFullName)
+   helperPath = CombinePath(scriptDir, "sap_alv_export_helper.vbs")
+   If Not fso.FileExists(helperPath) Then Fail "ALV export helper not found: " & helperPath, 8
+   Set textFile = fso.OpenTextFile(helperPath, 1, False, -2)
+   If Err.Number <> 0 Then Fail "open ALV export helper failed - " & Err.Description, 8
+   helperText = textFile.ReadAll
+   textFile.Close
+   ExecuteGlobal helperText
+   If Err.Number <> 0 Then Fail "load ALV export helper failed - " & Err.Description, 8
+   alvHelperLoaded = True
+   LoadAlvExportHelper = True
+   Err.Clear
+End Function
+
+Sub ExportAlvResult(label)
+   If Not LoadAlvExportHelper() Then Fail "ALV export helper could not be loaded", 8
+   If Not AlvExportIfConfigured(session, alvExportDir, alvExportFilename, exportTimeoutMs) Then Fail "ALV export returned false after " & label, 8
+   WScript.Echo "INFO: ALV export completed after " & label
+End Sub
 
 Sub ResolveDates()
    Dim parsedEnd, parsedStart, defaultEnd, defaultStart
@@ -218,6 +266,7 @@ WScript.Echo "INFO: year=" & yearValue
 WScript.Echo "INFO: week=" & weekValue
 WScript.Echo "INFO: period=" & dateLowValue
 WScript.Echo "INFO: weekEnd=" & dateHighValue
+WScript.Echo "INFO: date input group #1; range=[" & dateLowValue & "~" & dateHighValue & "]; P_GJAHR=" & yearValue & "; P_WEEK=" & weekValue
 If factoryGroup <> "" And Not IsPlaceholder(factoryGroup, "FACTORY_GROUP") Then WScript.Echo "INFO: factoryGroup=" & factoryGroup
 
 Err.Clear
@@ -230,6 +279,7 @@ WaitReady 8000
 CheckSapStatus "open transaction"
 
 ' === SAP operation block ===
+SetFieldByCandidates "p-gjahr", Array("wnd[0]/usr/txtP_GJAHR", "wnd[0]/usr/ctxtP_GJAHR"), yearValue
 SetFieldByCandidates "p-week", Array("wnd[0]/usr/txtP_WEEK", "wnd[0]/usr/ctxtP_WEEK"), weekValue
 SetField "budat-low", "wnd[0]/usr/ctxtS_BUDAT-LOW", dateLowValue
 SetField "budat-high", "wnd[0]/usr/ctxtS_BUDAT-HIGH", dateHighValue
@@ -237,6 +287,7 @@ Err.Clear
 FocusFieldByCandidates Array("wnd[0]/usr/ctxtS_BUDAT-HIGH"), dateHighValue
 Err.Clear
 PressExecute
+ExportAlvResult "execute"
 
 CheckSapStatus "finish"
 WScript.Echo "INFO: transaction script executed"
