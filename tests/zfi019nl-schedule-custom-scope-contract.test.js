@@ -4,12 +4,15 @@ const path = require("path");
 
 const root = path.resolve(__dirname, "..");
 const render = fs.readFileSync(path.join(root, "assets/js/portal-render.js"), "utf8");
+const api = fs.readFileSync(path.join(root, "assets/js/portal-api.js"), "utf8");
 const program = fs.readFileSync(path.join(root, "网页启动登录", "SapWebLauncher", "Program.cs"), "utf8");
 
 assert.match(render, /function allowsCustomScheduleBusinessAreaScope\(tCode\)/);
 assert.match(render, /code === "ZFI019NL"/);
 assert.match(render, /code === "ZFI019NA"/);
 assert.match(render, /!allowsCustomScheduleBusinessAreaScope\(tCode\)/);
+assert.match(api, /const fixedBusinessAreas = !allowsCustomScheduleBusinessAreaScope\(tCode\)/,
+  "custom-scope schedules must reopen from their saved snapshot instead of fixed base configuration");
 assert.match(program, /static bool AllowsCustomBusinessAreaScope\(string tcode\)/);
 assert.match(program, /normalizedTcode\.Equals\("ZFI019NL", StringComparison\.OrdinalIgnoreCase\)/);
 assert.match(program, /normalizedTcode\.Equals\("ZFI019NA", StringComparison\.OrdinalIgnoreCase\)/);

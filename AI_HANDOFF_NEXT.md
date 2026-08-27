@@ -27,7 +27,7 @@
 ## 2026-08-10 ZFI057 保存/导出
 
 - ZFI057 已纳入保存类 ALV 白名单。工作台名称会自动显示为“产值拆分（保存）”，并只加粗加黑“保存”。
-- ZFI057 三步流程不变：步骤一通过 NCo 取 ZFI019NL/ZFI_SPLIT 上游物料，步骤二执行 ZFI057.vbs，步骤三执行 ZCO020。步骤二每个成功的日期窗口都会调用 sap_alv_export_helper.vbs 写入本机 ALV 暂存并输出 OUTPUT_FILE；跨月时按发布成本月规则拆成 1 到 3 个窗口，后端按分片顺序合并后再归档。
+- ZFI057 三步流程不变：步骤一通过 NCo 取 ZFI019NL/ZFI_SPLIT 上游物料，步骤二执行 ZFI057.vbs，步骤三执行 ZCO020。步骤二每个成功的日期窗口都会调用 sap_alv_export_helper.vbs 写入本机 ALV 暂存并输出 OUTPUT_FILE；跨月时按发布成本月规则拆成 1 到 3 个窗口，具体是从截止月份往前回推到最近的发布成本月（1/3/5/7/9/11 月），例如 2026.03.30~2026.04.05 跑 3 月和 4 月两窗、2026.06.29~2026.07.05 跑 5 月/6 月/7 月三窗、跨年 1 月则回推到上年 11 月后再跑 11 月/12 月/1 月，后端按分片顺序合并后再归档。
 - ZFI057 不属于 GSBER 路由类报表。它按导出 Excel 的实际 WERKS 逐工厂读取 ZTFI48B-WERKS，按组织、周和事务码合并归档；归档失败保留本机暂存并作为任务失败通知钉钉。不得让 SAP GUI 直接写 UNC 目录，也不得由 Codex 打开导出的 Excel。
 - 本轮仅完成代码和静态/自测验证；尚未在 test888 发起真实 ZFI057 作业。发布时必须同步后端 publish 输出、assets/js/portal-render.js、transactions/ZFI057.vbs 与 transactions/sap_alv_export_helper.vbs 到 D:\RPA，并使用本项目启动脚本重启。
 
@@ -36,7 +36,7 @@
 - `transaction_plant_rules.business_areas_json` 是 ZFI057 的默认业务范围来源，不是对用户任务的强制覆盖。用户保存的 `businessAreas` 是该次执行和该定时任务的实际范围。
 - 归一化后只保留 `businessAreas` 与首项 `businessArea`，并清除 `plants/plant` 与遗留 `zfi057PlantFilter`，避免 ZFI057 混入工厂筛选或将工厂误拆成 workflow scope。没有业务范围的旧请求才回退到规则默认值。
 - 业务范围不等于固定工厂。ZFI057 在每个业务范围实际执行时只读查询 SAP 表 `ZFIT_RPA_BUKRS`：`GSBER=业务范围`，取全部 `WERKS` 工厂；多个工厂必须逐个执行步骤二。页面和定时任务允许在默认业务范围基础上增删范围。
-- ZFI057 步骤一的东台判定不再读取 JSON 或硬编码范围。后端对每个 `S_GSBER` 只读查询 `ZTFI48A`，任一匹配记录的 `ZSBU` 含“东台”才按东台口径：ALV 行以 `SMATNR=800*` 筛选后取 `MATNR`，并由 NCo `RFC_READ_TABLE` 读取 `ZFI_SPLIT` 的 `BUKRS=2030` 且 `BEGDA/ENDDA` 与本次日期范围重叠的 `MATNR`，两路去重后写入 `ZFI057` 的 `S_MATNR`。`ZFI_SPLIT` 补充物料不做 `800*` 筛选；当前工作流传入的 `SplitWerks` 为空，因此表读取不附加 `WERKS` 条件。查表失败必须使该范围失败，查无 `GSBER` 或 `ZSBU` 不含“东台”则按非东台口径处理。
+- ZFI057 步骤一的东台判定不再读取 JSON 或硬编码范围。后端对每个 `S_GSBER` 只读查询 `ZTFI48A`，任一匹配记录的 `ZSBU` 含“东台”才按东台口径：逐行判断 `SMATNR` 是否以字符 `800` 开头，仅保留命中的行并取其 `MATNR`；这不是把 `800*` 当作等值条件。随后由 NCo `RFC_READ_TABLE` 读取 `ZFI_SPLIT`，限定 `BUKRS=2030`、当前业务范围经 `ZFIT_RPA_BUKRS-GSBER` 映射得到的各个 `WERKS`，以及与本次日期范围重叠的 `BEGDA/ENDDA`，取 `MATNR` 与第一路物料去重后写入 `ZFI057` 的 `S_MATNR`。`ZFI_SPLIT` 补充物料本身不做 `800` 前缀过滤。查表失败必须使该范围失败，查无 `GSBER` 或 `ZSBU` 不含“东台”则按非东台口径处理。
 
 ## 2026-08-07 配置删除与 ZCO019 定时任务模式
 
@@ -317,3 +317,10 @@ $text=Get-Content -LiteralPath $packageScript -Raw -Encoding UTF8
 建议换新对话框继续。当前窗口上下文很长，下一步是新模块级设计，换框更省 token，也更容易让下一任 AI 只聚焦“可编排 SAP 报表链路”。
 
 如果只是小功能维护，可以不强制换窗口，但必须先读本交接文档、功能说明书和 `agent.md`，并优先用 GitNexus/diff 定位影响面。大功能或继续拆 `portal-render.js` 时建议新对话框。
+## 2026-08-21 正式目录替换规则
+
+- 源码或配置变更完成后，先编译并运行契约测试。
+- 只有 `GET /api/queue/status` 返回 `runningRunId` 为空且 `queuedCount=0` 时，才允许替换生产 `D:\RPA\bin`。
+- 替换前备份当前 `D:\RPA\bin`；复制编译产物后核对源码编译目录与生产目录的关键程序集哈希一致。
+- 重启 SapWebLauncher 与网关后，必须检查本机 `/api/health`、`/api/queue/status` 和正式入口。
+- 队列有运行或排队任务时禁止强制替换，避免中断 SAP GUI；等待队列清空后再发布。

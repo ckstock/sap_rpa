@@ -377,15 +377,14 @@
         const claimedAccount = firstPayloadString(payload, [
           "Account",
           "account",
-          "Ddid",
-          "ddid",
-          "DDID",
-          "DingTalkUserId",
-          "dingTalkUserId",
-          "dingTalkId",
-          "UserId",
-          "userId",
-          "userid"
+          "Pernr",
+          "pernr",
+          "PersonnelNumber",
+          "personnelNumber",
+          "EmployeeNo",
+          "employeeNo",
+          "UserNo",
+          "userNo"
         ]);
         const claimedUserName = firstPayloadString(payload, [
           "UserName",
@@ -419,28 +418,20 @@
       }
     }
 
+    function getResolvedPersonnelNumber() {
+      if (state.form.useDefaultNotifyUser !== false) return String(DEFAULT_DINGTALK_USER_ID || "").trim();
+      return String(state.externalAuth?.claimedAccount || "").trim();
+    }
+
     function getResolvedNotifyUserId() {
-      if (state.form.useDefaultNotifyUser !== false) return DEFAULT_DINGTALK_USER_ID;
-      if (state.externalAuth.claimedAccount) return state.externalAuth.claimedAccount;
-      return "";
-    }
-
-    function isNotifyUserBlocked() {
-      return state.form.useDefaultNotifyUser === false && !state.externalAuth.claimedAccount;
-    }
-
-    function notifyUserBlockingText() {
-      if (!isNotifyUserBlocked()) return "";
-      if (state.externalAuth.status === "invalid") return "token 无效，取消固定通知后不能提交。";
-      if (state.externalAuth.status === "missing-account") return "token 未包含钉钉 ID，取消固定通知后不能提交。";
-      return "未解析到 token 钉钉 ID，取消固定通知后不能提交。";
+      return getResolvedPersonnelNumber();
     }
 
     function notifyUserSourceText() {
       if (state.form.useDefaultNotifyUser !== false) return "联调默认";
-      if (state.externalAuth.claimedAccount) return "URL token 钉钉 ID";
+      if (state.externalAuth.claimedAccount) return "URL token 人员编号";
       if (state.externalAuth.status === "invalid") return "token 无效";
-      if (state.externalAuth.status === "missing-account") return "token 未包含钉钉 ID";
+      if (state.externalAuth.status === "missing-account") return "token 未包含人员编号";
       return "未识别 token";
     }
 

@@ -168,7 +168,7 @@
         params.plants ?? params.plantCodes ?? params.factoryCodes ??
         params.plantsCsv ?? params.plantCodesCsv ?? params.factoryCodesCsv);
       const businessAreasValue = toArray(item.businessAreas || item.businessAreaCodes || params.businessAreas);
-      const fixedBusinessAreas = tCode !== "ZFI057" && isBusinessAreaRange && hasFixedConfiguredBusinessAreas(getTCode(tCode))
+      const fixedBusinessAreas = !allowsCustomScheduleBusinessAreaScope(tCode) && isBusinessAreaRange && hasFixedConfiguredBusinessAreas(getTCode(tCode))
         ? getDefaultRunRangeForTCode(tCode, factoryGroup)
         : [];
       const plantsForTask = isDateRange
@@ -312,6 +312,10 @@
         time: run.finishedAt || run.startedAt || run.queuedAt || "",
         task: (getTCode(run.transactionCode)?.name || run.transactionCode) + " / " + (run.operatorName || "本机用户"),
         tCode: run.transactionCode,
+        scheduleTaskId: run.scheduleTaskId || "",
+        scheduleTaskName: run.scheduleTaskName || "",
+        scheduleSetter: run.scheduleSetter || run.operatorName || "",
+        operatorName: run.operatorName || "",
         plant: plantsCsv || params.plant || "",
         plantsCsv,
         businessAreasCsv,

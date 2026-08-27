@@ -2,6 +2,7 @@
 **/obj/
 dist/
 publish/
+**/publish-profile-nco/
 安装包/
 临时文件/
 vp/

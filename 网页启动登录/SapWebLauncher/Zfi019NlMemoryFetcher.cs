@@ -12,8 +12,12 @@ namespace SapWebLauncher;
 internal sealed class SapNcoConnectionConfig
 {
     public string ConnectionName { get; set; } = "";
+    public string ConnectionMode { get; set; } = "direct";
     public string SystemId { get; set; } = "";
     public string IpAddress { get; set; } = "";
+    public string MessageServerHost { get; set; } = "";
+    public string MessageServerService { get; set; } = "";
+    public string LogonGroup { get; set; } = "";
     public string Client { get; set; } = "";
     public string Language { get; set; } = "ZH";
     public string SystemNumber { get; set; } = "";
@@ -24,8 +28,19 @@ internal sealed class SapNcoConnectionConfig
     public bool IsComplete(out string message)
     {
         var missing = new List<string>();
-        if (string.IsNullOrWhiteSpace(IpAddress)) missing.Add("sapNco.ipAddress/appServerHost");
-        if (string.IsNullOrWhiteSpace(SystemNumber)) missing.Add("sapNco.systemNumber/sysNr");
+        bool messageServer = string.Equals(ConnectionMode, "messageServer", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(ConnectionMode, "group", StringComparison.OrdinalIgnoreCase);
+        if (messageServer)
+        {
+            if (string.IsNullOrWhiteSpace(MessageServerHost)) missing.Add("sapNco.messageServerHost");
+            if (string.IsNullOrWhiteSpace(SystemId)) missing.Add("sapNco.systemId");
+            if (string.IsNullOrWhiteSpace(LogonGroup)) missing.Add("sapNco.logonGroup");
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(IpAddress)) missing.Add("sapNco.ipAddress/appServerHost");
+            if (string.IsNullOrWhiteSpace(SystemNumber)) missing.Add("sapNco.systemNumber/sysNr");
+        }
         if (string.IsNullOrWhiteSpace(Client)) missing.Add("client");
         if (string.IsNullOrWhiteSpace(User)) missing.Add("user");
         if (string.IsNullOrWhiteSpace(Password)) missing.Add("password/passwordProtected");
@@ -36,7 +51,12 @@ internal sealed class SapNcoConnectionConfig
 
     public string SafeSummary()
     {
-        return $"name={ConnectionName}; systemId={SystemId}; ipAddress={IpAddress}; systemNumber={SystemNumber}; client={Client}; user={Mask(User)}; language={Language}; router={(string.IsNullOrWhiteSpace(Router) ? "-" : "configured")}";
+        bool messageServer = string.Equals(ConnectionMode, "messageServer", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(ConnectionMode, "group", StringComparison.OrdinalIgnoreCase);
+        string target = messageServer
+            ? $"messageServerHost={MessageServerHost}; messageServerService={MessageServerService}; logonGroup={LogonGroup}"
+            : $"ipAddress={IpAddress}; systemNumber={SystemNumber}";
+        return $"name={ConnectionName}; mode={(messageServer ? "messageServer" : "direct")}; systemId={SystemId}; {target}; client={Client}; user={Mask(User)}; language={Language}; router={(string.IsNullOrWhiteSpace(Router) ? "-" : "configured")}";
     }
 
     private static string Mask(string value)
@@ -85,6 +105,7 @@ internal sealed class Zfi019NlFetchResult
     public List<Dictionary<string, string>> FinalRows { get; init; } = new();
     public List<Dictionary<string, string>> SplitRows { get; init; } = new();
     public int SplitMaterialCount { get; init; }
+    public bool DongtaiOnly800 { get; init; }
 }
 
 internal sealed class SapJobStatusQuery
@@ -506,7 +527,8 @@ internal sealed class Zfi019NlMemoryFetcher
                     Options = options,
                     RawLines = lines,
                     Headers = table.Headers,
-                    AlvRows = processed.AlvRows
+                    AlvRows = processed.AlvRows,
+                    DongtaiOnly800 = dongtai.HasDongtai
                 };
             }
 
@@ -526,7 +548,8 @@ internal sealed class Zfi019NlMemoryFetcher
                     AlvRows = processed.AlvRows,
                     FinalRows = finalRows,
                     SplitRows = splitRows,
-                    SplitMaterialCount = splitRows.Count
+                    SplitMaterialCount = splitRows.Count,
+                    DongtaiOnly800 = dongtai.HasDongtai
                 };
             }
 
@@ -543,7 +566,8 @@ internal sealed class Zfi019NlMemoryFetcher
                 AlvRows = processed.AlvRows,
                 FinalRows = finalRows,
                 SplitRows = splitRows,
-                SplitMaterialCount = splitRows.Count
+                SplitMaterialCount = splitRows.Count,
+                DongtaiOnly800 = dongtai.HasDongtai
             };
         }
         catch (Exception ex)
@@ -705,8 +729,11 @@ internal sealed class Zfi019NlMemoryFetcher
         {
             var keep = true;
             var area = areaIndex >= 0 ? Normalize(values[areaIndex]) : "";
-            if (areaIndex >= 0 && dongtaiBusinessAreas.Contains(area)) keep = Normalize(values[productIndex]).StartsWith("800", StringComparison.OrdinalIgnoreCase);
-            else if (areaIndex < 0 && dongtaiRequested) keep = Normalize(values[productIndex]).StartsWith("800", StringComparison.OrdinalIgnoreCase);
+            // The exported material list is built from MATNR (inboundIndex). The
+            // ALV's SMATNR/product value may be 800* while MATNR is a 63* child
+            // material, which must not enter the ZFI019NL_MEMORY source set.
+            if (areaIndex >= 0 && dongtaiBusinessAreas.Contains(area)) keep = Normalize(values[inboundIndex]).StartsWith("800", StringComparison.OrdinalIgnoreCase);
+            else if (areaIndex < 0 && dongtaiRequested) keep = Normalize(values[inboundIndex]).StartsWith("800", StringComparison.OrdinalIgnoreCase);
             if (!keep) continue;
 
             var row = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -720,7 +747,7 @@ internal sealed class Zfi019NlMemoryFetcher
             AddFinalMaterial(finalRows, values[inboundIndex], ReportSource);
         }
 
-        return (true, $"S_GSBER={string.Join(",", requestedAreas)};东台范围过滤={(dongtaiRequested ? "SMATNR 800*" : "无")}", alvRows, finalRows);
+        return (true, $"S_GSBER={string.Join(",", requestedAreas)};东台范围过滤={(dongtaiRequested ? "MATNR 800*（最终物料）" : "无")}", alvRows, finalRows);
     }
 
     private static (bool Success, string Message) AppendDongtaiSplitMaterials(
@@ -1173,9 +1200,28 @@ internal static class SapRpaNcoDestinationProvider
             { RfcConfigParameters.Name, name }
         };
 
-        if (!string.IsNullOrWhiteSpace(config.IpAddress)) parameters.Add(RfcConfigParameters.AppServerHost, config.IpAddress.Trim());
-        if (!string.IsNullOrWhiteSpace(config.SystemNumber)) parameters.Add(RfcConfigParameters.SystemNumber, config.SystemNumber.Trim());
-        if (!string.IsNullOrWhiteSpace(config.SystemId)) parameters.Add(RfcConfigParameters.SystemID, config.SystemId.Trim());
+        bool messageServer = string.Equals(config.ConnectionMode, "messageServer", StringComparison.OrdinalIgnoreCase) ||
+                             string.Equals(config.ConnectionMode, "group", StringComparison.OrdinalIgnoreCase);
+        if (messageServer)
+        {
+            if (!string.IsNullOrWhiteSpace(config.MessageServerHost))
+                parameters.Add(RfcConfigParameters.MessageServerHost, config.MessageServerHost.Trim());
+            if (!string.IsNullOrWhiteSpace(config.MessageServerService))
+                parameters.Add(RfcConfigParameters.MessageServerService, config.MessageServerService.Trim());
+            if (!string.IsNullOrWhiteSpace(config.SystemId))
+                parameters.Add(RfcConfigParameters.SystemID, config.SystemId.Trim());
+            if (!string.IsNullOrWhiteSpace(config.LogonGroup))
+                parameters.Add(RfcConfigParameters.LogonGroup, config.LogonGroup.Trim());
+        }
+        else
+        {
+            if (!string.IsNullOrWhiteSpace(config.IpAddress))
+                parameters.Add(RfcConfigParameters.AppServerHost, config.IpAddress.Trim());
+            if (!string.IsNullOrWhiteSpace(config.SystemNumber))
+                parameters.Add(RfcConfigParameters.SystemNumber, config.SystemNumber.Trim());
+            if (!string.IsNullOrWhiteSpace(config.SystemId))
+                parameters.Add(RfcConfigParameters.SystemID, config.SystemId.Trim());
+        }
         if (!string.IsNullOrWhiteSpace(config.User)) parameters.Add(RfcConfigParameters.User, config.User.Trim());
         if (!string.IsNullOrWhiteSpace(config.Password)) parameters.Add(RfcConfigParameters.Password, config.Password);
         if (!string.IsNullOrWhiteSpace(config.Client)) parameters.Add(RfcConfigParameters.Client, config.Client.Trim());

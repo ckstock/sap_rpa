@@ -7,13 +7,22 @@
   "dingTalkOpenApi": {
     "appKey": "你的真实AppKey",
     "appSecret": "你的真实AppSecret",
-    "agentId": "你的真实AgentId"
+    "agentIdBySystem": {
+      "EP1": "生产系统对应的AgentId",
+      "TD1": "测试系统对应的AgentId"
+    },
+    "defaultAgentId": "未配置系统映射时使用的AgentId",
+    "agentId": "旧版本兼容备用AgentId"
   },
   "sapNco": {
+    "connectionMode": "direct",
     "connectionName": "test888",
     "ipAddress": "10.0.40.212",
     "systemNumber": "10",
     "systemId": "TD1",
+    "messageServerHost": "",
+    "messageServerService": "",
+    "logonGroup": "",
     "router": ""
   },
   "zfi057Workflow": {

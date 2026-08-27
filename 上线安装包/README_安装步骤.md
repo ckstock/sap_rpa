@@ -6,6 +6,10 @@
 2. 必要脚本：生成上线包、配置 SAP 登录信息。
 3. 发布产物：`SapWebLauncher`、前端页面、VBS 事务脚本、本机配置模板。
 
+## 正式切换前清理统计报表历史
+
+正式上线使用全新统计数据时，只清理运行历史，不删除通用配置和定时任务。操作前确认 `/api/queue/status` 返回 `runningRunId` 为空、`queuedCount=0`，暂停启动监控并停止本项目 API，完整备份 `D:\RPA\data\sap-rpa-config.db` 以及同目录的 `-wal`、`-shm` 文件。备份后在 SQLite 事务中清理 `runs`、`run_batch_items`、`run_params`、`run_result_logs`、`run_files`、`run_logs`、`schedule_task_runs`，不要删除 `schedule_tasks`、`transactions`、`plants`、`plant_groups`、`plant_group_members`、`transaction_plant_rules`、`notification_robots`、`notification_robot_bindings`、`config_delete_markers` 或 `app_settings`。重启 API、网关和启动监控后，验证统计报表查询为 0 条、定时任务和基础配置仍存在；清理前备份路径必须记录在上线交接记录中。
+
 ## 2026-08-06 ALV 组织归档上线口径
 
 保存类 ALV 的 SAP GUI 导出先落本机暂存，再由后端归档到 `fileStorage.alvExportDataDirectory`。不得把 UNC 网络路径直接交给 SAP GUI。后端使用只读 SAP 查询：业务范围型 `ZFI080`、`ZFI080B`、`ZFI019NL`、`ZFI019NA`、`ZFI148` 按导出 Excel 的 `GSBER` 查询 `ZTFI48A`；其余保存类按 `WERKS` 查询 `ZTFI48B`。命中后路径为 `<根目录>\ZBU\ZSBU\yyyy_WKnn\事务码_卡片名称_WKnn.xlsx`，同组织的工厂合并，一厂多组织各生成一份。只有查询成功但无映射时才使用 `<根目录>\集采工厂\yyyy_WKnn` 回退目录；映射失败或 Excel 缺必需列时必须失败、保留暂存并触发钉钉失败通知。发布后必须执行真实导出验证网络盘路径、文件内容和重跑覆盖，不能只看 API health。
@@ -69,6 +73,11 @@ Copy-Item "D:\RPA\config.local.example.json" "D:\RPA\config.local.json"
     "alvExportDataDirectory": "D:\\RPA\\临时文件\\文件数据"
   },
   "dingTalkOpenApi": {
+    "agentIdBySystem": {
+      "EP1": "生产系统对应的AgentId",
+      "TD1": "测试系统对应的AgentId"
+    },
+    "defaultAgentId": "未配置系统映射时使用的AgentId",
     "baseUrl": "https://你的钉钉OpenAPI网关根地址/",
     "appKey": "你的真实AppKey",
     "appSecret": "你的真实AppSecret",
@@ -296,6 +305,7 @@ C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 11. SAP GUI 已登录复用时，日志出现 `Detected ready SAP GUI session; skip sapshcut login`。
 12. 钉钉启用时，日志出现 `sap dingtalk openapi sent: userid=...`。
 13. 含“保存”的 ALV 导出任务完成后，后端根据导出 Excel 的实际 `WERKS` 或 `GSBER` 读取 SAP 映射，将最终 Excel 写入 `fileStorage.alvExportDataDirectory` 下的 `ZBU\ZSBU\yyyy_WKnn`；没有有效映射时写入 `集采工厂\yyyy_WKnn`。同一组织、周和事务码的工厂数据合并为同一个 Excel，一厂多组织各写一份；父 run 只登记这些最终文件。SAP GUI 始终只写本机 `D:\RPA\临时文件\ALV本地暂存`，后端确认归档成功才清理暂存；映射或网络写入失败时保留暂存并发钉钉失败通知。验收必须检查组织/周目录、Excel 内容和重跑不重复来源行。
+14. 正式页面源代码不得引用外网脚本 CDN；`assets/vendor/lucide-1.33.0.min.js` 必须随包存在并能通过正式域名返回 200。即使图标脚本缺失，页面也必须继续执行 `/rpa/api/health` 和 `/rpa/api/config` 初始化。
 
 当前前台“保存类 ALV 导出”只承诺 7 个事务码：`ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`。`ZFI148`、`ZFIR034`、`ZFI057`、`ZCO020` 不按普通保存类 ALV Excel 归档；旧 `ZFI019NI` 没有生产 VBS 和工作台入口，不作为上线保存卡片。
 
@@ -309,3 +319,17 @@ C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 4. 启动后确认进程留存、`runtimeRoot=D:\RPA`、四个 URL 检查正常。
 5. 真实提交一次受控事务码，确认数据库有 run/log，含“保存”事务按 `fileStorage.alvExportDataDirectory` 落盘。
 6. 失败时收集 `D:\RPA\logs` 里对应 stderr/log 尾部，不要只记录 health failed。
+## SAP system profiles and NCo connection modes
+
+`04_配置SAP登录信息.bat` stores named SAP profiles. The first existing configuration is migrated to profile `T` when no profile list exists. Choose `S` to switch to a saved profile, `C` to add or update a profile, or `N` to keep the active profile. Saved profile switching does not ask for the SAP password again.
+
+`04_切换SAP系统.bat` opens the saved-profile selector. `04_切换SAP系统.bat P` switches directly to profile `P`.
+
+NCo supports two modes:
+
+- `direct`: `AppServerHost + SystemNumber`.
+- `messageServer`: `MessageServerHost + MessageServerService + SystemID + LogonGroup`; `MessageServerService` may be a value such as `3611`. In this mode `systemNumber` is not used for NCo.
+
+SAP GUI launch combines the matching SAP Logon group entry with the active profile's verified message-server service. For example, `EP1 / S4PRD01 / 3611 / HUANAN_PRD` is launched with `/M/S4PRD01/S/3611/G/HUANAN_PRD`. The logon group must never be treated as an application-server host or combined with a direct instance number. Once a message-server group entry matches, the launcher does not fall back to an incomplete description-only shortcut.
+
+After switching, restart `SapWebLauncher` before running a new task. SAP GUI/VBS and NCo/RFC then read the same active profile, so SAP table queries cannot remain on the previous system.

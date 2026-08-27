@@ -44,8 +44,6 @@ static class Program
     private const int SchedulePollIntervalMilliseconds = 30_000;
     private const int ScheduleTriggerLookbackMinutes = 15;
     private const string TestDateOverrideEnvironmentName = "test888";
-    // Temporary default until DingTalk scan login writes the real user id into runs.ding_talk_user_id.
-    private const string DefaultDingTalkId = "11464769";
     private const int NotificationWorkerTimeoutSeconds = 12;
     private const string Zfi057TbtcoJobName = "ZFI057";
     private const int Zfi057TbtcoPollTimeoutSeconds = 600;
@@ -163,6 +161,14 @@ static class Program
              args[0].Equals("test-dingtalk-gateway-config", StringComparison.OrdinalIgnoreCase)))
         {
             Environment.Exit(RunDingTalkGatewayConfigDiagnostic());
+            return;
+        }
+
+        if (args.Length > 0 &&
+            (args[0].Equals("--test-dingtalk-user-id", StringComparison.OrdinalIgnoreCase) ||
+             args[0].Equals("test-dingtalk-user-id", StringComparison.OrdinalIgnoreCase)))
+        {
+            Environment.Exit(RunDingTalkUserIdDiagnostic(args.Skip(1).ToArray()));
             return;
         }
 
@@ -470,11 +476,13 @@ static class Program
                 1,
                 businessArea,
                 diagnosticPlants,
-                "ZFI019NL_MEMORY",
+                BuildZfi057MaterialSourceSummary(fetch.FetchResult.FinalRows, fetch.FetchResult.SplitRows, fetch.FetchResult.DongtaiOnly800),
                 Array.Empty<string>(),
                 fetch.Materials,
                 fetch.Materials,
-                fetch.FetchResult.SplitRows);
+                fetch.FetchResult.SplitRows,
+                fetch.FetchResult.FinalRows,
+                fetch.FetchResult.DongtaiOnly800);
 
             Console.WriteLine("ZFI019NL memory diagnostic");
             Console.WriteLine($"status={fetch.Result.Status}");
@@ -615,6 +623,38 @@ static class Program
         {
             Console.Error.WriteLine($"SAP DingTalk gateway configuration diagnostic failed: {ex.Message}");
             Log($"SAP DingTalk gateway configuration diagnostic failed: {ex}");
+            return 1;
+        }
+    }
+
+    static int RunDingTalkUserIdDiagnostic(string[] args)
+    {
+        try
+        {
+            var values = ParseCliKeyValueArgs(args);
+            string pernr = First(values, "pernr", "personnelNumber", "ivPernr") ?? "";
+            if (string.IsNullOrWhiteSpace(pernr))
+            {
+                Console.Error.WriteLine("Specify --pernr <webpage personnel number>." );
+                return 2;
+            }
+
+            var parameters = ApplyLocalConfig(new SapRunParams { Script = "notification-user-diagnostic" });
+            DingTalkUserIdFetchResult result = new DingTalkUserIdFetcher().Fetch(
+                BuildSapNcoConnectionConfig(parameters),
+                pernr);
+            Console.WriteLine("SAP DingTalk recipient diagnostic");
+            Console.WriteLine($"status={(result.Success ? "success" : "failed")}");
+            Console.WriteLine($"function={DingTalkUserIdFetcher.FunctionName}");
+            Console.WriteLine($"IV_PERNR={result.Pernr}");
+            Console.WriteLine($"OV_DDID={result.Ddid}");
+            Console.WriteLine($"message={result.Message}");
+            return result.Success ? 0 : 2;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"SAP DingTalk recipient diagnostic failed: {ex.Message}");
+            Log($"SAP DingTalk recipient diagnostic failed: {ex}");
             return 1;
         }
     }
@@ -787,7 +827,7 @@ static class Program
             $"weekEnd={step2.WeekEnd}",
             $"runCount={windows.Count}",
             $"windowCount={windows.Count}",
-            "materialSource=step1.ZFI019NL_MEMORY",
+            "materialSource=step1.finalMergedMaterials(ZFI019NL_800*+ZFI_SPLIT)",
             "S_MATNR.source=step1FinalMaterials",
             $"materialCount={materialCount}",
             "materials=omitted",
@@ -813,6 +853,9 @@ static class Program
 
     static DateTime GetZfi057PreviousReleaseMonthStart(DateTime end)
     {
+        // ZFI057 release months are 1/3/5/7/9/11. For a cross-month range, start
+        // from the latest release month strictly before the cutoff month
+        // (Apr->Mar, Jul->May, Jan->previous Nov).
         DateTime previousReleaseMonth = end.AddMonths(end.Month % 2 == 0 ? -1 : -2);
         return new DateTime(previousReleaseMonth.Year, previousReleaseMonth.Month, 1);
     }
@@ -1159,6 +1202,8 @@ static class Program
             ButtonId = First(query, "button", "buttonid") ?? "",
             RunId = First(query, "runid", "run_id") ?? "",
             ParentRunId = First(query, "parentrunid", "parent_run_id") ?? "",
+            OperatorId = First(query, "operatorId", "operator_id", "personnelNumber", "pernr") ?? "",
+            OperatorName = First(query, "operatorName", "operator_name", "personnelName", "realName", "name") ?? "",
             IsScheduleSnapshot = First(query, "schedulesnapshot") == "1",
             TimeoutSeconds = ParseOptionalPositiveInt(First(query, "timeoutseconds", "timeout", "vbstimeoutseconds"))
         };
@@ -2103,6 +2148,7 @@ CREATE INDEX IF NOT EXISTS idx_run_params_run_id ON run_params(run_id, id);
 CREATE TABLE IF NOT EXISTS run_result_logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     run_id TEXT NOT NULL,
+    log_kind TEXT NOT NULL DEFAULT 'result',
     level TEXT NOT NULL DEFAULT 'INFO',
     message TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
@@ -2275,6 +2321,7 @@ VALUES
             EnsureColumn(connection, "runs", "locked_by", "TEXT NOT NULL DEFAULT ''");
             EnsureColumn(connection, "runs", "locked_at", "TEXT NOT NULL DEFAULT ''");
             EnsureIndex(connection, "idx_runs_parent", "runs", "parent_run_id, batch_index, attempt_no");
+            EnsureColumn(connection, "run_result_logs", "log_kind", "TEXT NOT NULL DEFAULT 'result'");
             EnsureColumn(connection, "transactions", "timeout_seconds", "INTEGER NOT NULL DEFAULT 0");
             EnsureColumn(connection, "transactions", "retry_count", "INTEGER NOT NULL DEFAULT 0");
             EnsureScheduleColumns(connection);
@@ -2290,6 +2337,8 @@ VALUES
             SyncDisabledTransactionsFromConfig(connection);
             SyncTransactionRulesFromTransactions(connection);
         }
+
+            BackfillScheduleExecutionSnapshots(connection);
 
             Log($"SQLite 数据库初始化完成: {DatabaseFilePath}");
             DatabaseInitialized = true;
@@ -4596,6 +4645,12 @@ WHERE id=$id;
             plantsCsv = NormalizePlantCodesCsv(plantsCsv);
             string plantsJson = PlantCodesToJsonArray(plantsCsv);
             string paramsJson = BuildScheduleParamsJson(item, tcode, defaultBusinessScope, plantsCsv, businessAreasCsv, applyConfiguredScope: !isExistingSchedule);
+            paramsJson = AddScheduleExecutionSnapshot(
+                connection,
+                tcode,
+                paramsJson,
+                existingSnapshot?.TCode ?? "",
+                existingSnapshot?.ParamsJson ?? "");
             string rawFrequency = FirstNonEmpty(item.Frequency, item.ScheduleType, item.FrequencyCode);
             string frequency = string.IsNullOrWhiteSpace(rawFrequency) && !string.IsNullOrWhiteSpace(item.Cron)
                 ? ""
@@ -4698,13 +4753,14 @@ ON CONFLICT(id) DO UPDATE SET
     static ScheduleTaskScopeSnapshot? LoadScheduleTaskScopeSnapshot(SqliteConnection connection, string id)
     {
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT plants_json, params_json FROM schedule_tasks WHERE id=$id LIMIT 1;";
+        command.CommandText = "SELECT tcode, plants_json, params_json FROM schedule_tasks WHERE id=$id LIMIT 1;";
         command.Parameters.AddWithValue("$id", id);
         using var reader = command.ExecuteReader();
         if (!reader.Read())
             return null;
 
-        var values = ParseScheduleParams(reader.GetString(1));
+        string tcode = reader.GetString(0);
+        var values = ParseScheduleParams(reader.GetString(2));
         string businessAreas = NormalizeCsv(FirstNonEmpty(
             GetParamValue(values, "businessAreas"),
             GetParamValue(values, "businessArea"),
@@ -4712,8 +4768,92 @@ ON CONFLICT(id) DO UPDATE SET
             GetParamValue(values, "gsberlist"),
             GetParamValue(values, "gsber")));
         return new ScheduleTaskScopeSnapshot(
-            NormalizePlantCodesCsv(string.Join(",", SafeJsonArray(reader.GetString(0)))),
-            businessAreas);
+            tcode,
+            NormalizePlantCodesCsv(string.Join(",", SafeJsonArray(reader.GetString(1)))),
+            businessAreas,
+            reader.GetString(2));
+    }
+
+    static string AddScheduleExecutionSnapshot(
+        SqliteConnection connection,
+        string tcode,
+        string paramsJson,
+        string previousTCode = "",
+        string previousParamsJson = "")
+    {
+        string scriptFile = "";
+        string scriptHash = "";
+        int timeoutSeconds = 0;
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT script_file, script_hash, timeout_seconds FROM transactions WHERE tcode=$tcode";
+            command.Parameters.AddWithValue("$tcode", tcode.ToUpperInvariant());
+            using var reader = command.ExecuteReader();
+            if (reader.Read())
+            {
+                scriptFile = reader.GetString(0);
+                scriptHash = reader.GetString(1);
+                timeoutSeconds = reader.GetInt32(2);
+            }
+        }
+
+        scriptHash = FirstNonEmpty(LoadCachedScriptHash(connection, tcode), scriptHash);
+        bool transactionChanged = !string.IsNullOrWhiteSpace(previousTCode) &&
+            !previousTCode.Equals(tcode, StringComparison.OrdinalIgnoreCase);
+        var values = ParseScheduleParams(paramsJson);
+        if (!transactionChanged && !string.IsNullOrWhiteSpace(previousParamsJson))
+        {
+            var previousValues = ParseScheduleParams(previousParamsJson);
+            foreach (string key in new[] { "script", "scriptHash", "timeoutSeconds" })
+            {
+                if (!values.ContainsKey(key) && previousValues.TryGetValue(key, out string? previousValue) &&
+                    !string.IsNullOrWhiteSpace(previousValue))
+                {
+                    values[key] = previousValue;
+                }
+            }
+        }
+        bool hasScriptSnapshot = values.ContainsKey("script") && !string.IsNullOrWhiteSpace(GetParamValue(values, "script"));
+        bool hasTimeoutSnapshot = int.TryParse(GetParamValue(values, "timeoutSeconds"), out int savedTimeout) && savedTimeout > 0;
+        if (string.IsNullOrWhiteSpace(scriptFile) && timeoutSeconds <= 0 && hasScriptSnapshot && hasTimeoutSnapshot)
+            return paramsJson;
+        if ((!hasScriptSnapshot || transactionChanged) && !string.IsNullOrWhiteSpace(scriptFile))
+            values["script"] = scriptFile;
+        if ((!hasScriptSnapshot || transactionChanged) && !string.IsNullOrWhiteSpace(scriptHash))
+            values["scriptHash"] = scriptHash;
+        if ((!hasTimeoutSnapshot || transactionChanged) && timeoutSeconds > 0)
+            values["timeoutSeconds"] = timeoutSeconds.ToString(CultureInfo.InvariantCulture);
+        return JsonSerializer.Serialize(values, JsonOptions);
+    }
+
+    static void BackfillScheduleExecutionSnapshots(SqliteConnection connection)
+    {
+        var tasks = new List<(string Id, string TCode, string ParamsJson)>();
+        using (var command = connection.CreateCommand())
+        {
+            command.CommandText = "SELECT id, tcode, params_json FROM schedule_tasks";
+            using var reader = command.ExecuteReader();
+            while (reader.Read())
+                tasks.Add((reader.GetString(0), reader.GetString(1), reader.GetString(2)));
+        }
+
+        int updated = 0;
+        foreach (var task in tasks)
+        {
+            string nextParams = AddScheduleExecutionSnapshot(connection, task.TCode, task.ParamsJson, task.TCode);
+            if (nextParams.Equals(task.ParamsJson, StringComparison.Ordinal))
+                continue;
+
+            using var update = connection.CreateCommand();
+            update.CommandText = "UPDATE schedule_tasks SET params_json=$params WHERE id=$id";
+            update.Parameters.AddWithValue("$params", nextParams);
+            update.Parameters.AddWithValue("$id", task.Id);
+            update.ExecuteNonQuery();
+            updated++;
+        }
+
+        if (updated > 0)
+            Log($"backfilled schedule execution snapshots: {updated} task(s)");
     }
 
     static void BeginImmediateTransaction(SqliteConnection connection)
@@ -5444,7 +5584,17 @@ WHERE task_id=$taskId
     static CreateRunRequest BuildRunRequestFromSchedule(ScheduleTaskDue task)
     {
         string scheduleOwner = FirstNonEmpty(task.UpdatedBy, task.CreatedBy, "Schedule Worker");
-        string dingTalkUserId = task.NotifyEnabled ? ResolveDingTalkUserIdFromNotifyTarget(task.NotifyTarget) : "";
+        Dictionary<string, string> scheduleParams = ParseScheduleParams(task.ParamsJson);
+        string personnelNumber = FirstNonEmpty(
+            GetParamValue(scheduleParams, "operatorId"),
+            GetParamValue(scheduleParams, "personnelNumber"),
+            GetParamValue(scheduleParams, "pernr"),
+            // Keep old schedules working: before operatorId was persisted, the
+            // webpage personnel number was stored after the dingtalk: prefix.
+            ResolveDingTalkUserIdFromNotifyTarget(task.NotifyTarget));
+        string operatorName = FirstNonEmpty(
+            GetParamValue(scheduleParams, "operatorName"),
+            scheduleOwner);
         var request = new CreateRunRequest
         {
             TransactionCode = task.TCode,
@@ -5454,13 +5604,14 @@ WHERE task_id=$taskId
             NotifyTarget = task.NotifyEnabled ? NormalizeNotifyTarget(task.NotifyTarget) : "",
             Operator = new OperatorIdentity
             {
-                Id = "schedule",
-                Name = scheduleOwner,
+                // Keep the webpage login identity separate from the DingTalk recipient id.
+                Id = personnelNumber,
+                Name = operatorName,
                 Dept = "SapRpa",
-                DingTalkUserId = dingTalkUserId,
-                Ddid = dingTalkUserId
+                DingTalkUserId = "",
+                Ddid = ""
             },
-            Params = ParseScheduleParams(task.ParamsJson)
+            Params = scheduleParams
         };
 
         string plants = NormalizePlantCodesCsv(FirstNonEmpty(task.Plants, GetParamValue(request.Params, "plants")));
@@ -6163,9 +6314,7 @@ WHERE tcode=$tcode AND enabled=1;
     {
         return FirstNonEmpty(
             op?.DingTalkUserId ?? "",
-            op?.Ddid ?? "",
-            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ID") ?? "",
-            DefaultDingTalkId);
+            op?.Ddid ?? "");
     }
 
     static void EnsureCreateRunRequestDefaults(CreateRunRequest request)
@@ -6181,6 +6330,15 @@ WHERE tcode=$tcode AND enabled=1;
         EnsureCreateRunRequestDefaults(request);
         string tcode = SanitizeTCode(FirstNonEmpty(request.TransactionCode, request.TCode, request.Code)).ToUpperInvariant();
         var script = LoadScriptInfo(tcode);
+        if (IsScheduleSnapshotSource(request.Source))
+        {
+            string savedScript = GetParamValue(request.Params, "script");
+            string savedHash = GetParamValue(request.Params, "scriptHash");
+            if (!string.IsNullOrWhiteSpace(savedScript))
+                script.ScriptFile = savedScript;
+            if (!string.IsNullOrWhiteSpace(savedHash))
+                script.ScriptHash = savedHash;
+        }
         string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
 
         request.TransactionCode = tcode;
@@ -6820,7 +6978,9 @@ WHERE run_id=$parentRunId
                     outputTransactionName,
                     plantRoutingIdentity,
                     archiveDate,
-                    Lookup)
+                    Lookup,
+                    useZfi057RowModifyKey: p.TCode.Equals("ZFI057", StringComparison.OrdinalIgnoreCase),
+                    worksheetName: BuildAlvWorksheetName(p))
                 : UsesBusinessAreaRequestAlvOutput(p.TCode)
                     ? AlvOrganizationExport.RouteBusinessAreaRequestWorkbook(
                         sourcePath,
@@ -6829,7 +6989,8 @@ WHERE run_id=$parentRunId
                         outputTransactionName,
                         archiveDate,
                         businessAreaIdentity,
-                        Lookup)
+                        Lookup,
+                        BuildAlvWorksheetName(p))
                     : AlvOrganizationExport.RouteBusinessAreaWorkbook(
                     sourcePath,
                      outputRoot,
@@ -6837,7 +6998,8 @@ WHERE run_id=$parentRunId
                     outputTransactionName,
                     archiveDate,
                     plantIdentity,
-                    Lookup);
+                    Lookup,
+                    BuildAlvWorksheetName(p));
 
             foreach (var output in outputs)
             {
@@ -7289,9 +7451,13 @@ SELECT r.run_id, r.transaction_code, r.operator_id, r.operator_name, r.operator_
        r.source, r.notify_target, r.priority, r.attempt, r.max_attempts, r.locked_by, r.locked_at,
        r.run_type, r.parent_run_id, r.batch_item_key, r.batch_index, r.batch_total, r.attempt_no, r.summary_json,
        r.source_parent_run_id, r.rerun_of_run_id,
-       COALESCE(NULLIF(t.name, ''), '') AS transaction_name
+       COALESCE(NULLIF(t.name, ''), '') AS transaction_name,
+       COALESCE(NULLIF(st.id, ''), '') AS schedule_task_id,
+       COALESCE(NULLIF(st.name, ''), '') AS schedule_task_name,
+       COALESCE(NULLIF(st.updated_by, ''), NULLIF(st.created_by, ''), NULLIF(r.operator_name, ''), '') AS schedule_setter
 FROM runs r
 LEFT JOIN transactions t ON t.tcode = r.transaction_code
+LEFT JOIN schedule_tasks st ON r.source = ('schedule:' || st.id)
 {whereSql}
 {orderSql}
 LIMIT $limit OFFSET $offset;
@@ -7676,9 +7842,13 @@ SELECT r.run_id, r.transaction_code, r.operator_id, r.operator_name, r.operator_
        r.source, r.notify_target, r.priority, r.attempt, r.max_attempts, r.locked_by, r.locked_at,
        r.run_type, r.parent_run_id, r.batch_item_key, r.batch_index, r.batch_total, r.attempt_no, r.summary_json,
        r.source_parent_run_id, r.rerun_of_run_id,
-       COALESCE(NULLIF(t.name, ''), '') AS transaction_name
+       COALESCE(NULLIF(t.name, ''), '') AS transaction_name,
+       COALESCE(NULLIF(st.id, ''), '') AS schedule_task_id,
+       COALESCE(NULLIF(st.name, ''), '') AS schedule_task_name,
+       COALESCE(NULLIF(st.updated_by, ''), NULLIF(st.created_by, ''), NULLIF(r.operator_name, ''), '') AS schedule_setter
 FROM runs r
 LEFT JOIN transactions t ON t.tcode = r.transaction_code
+LEFT JOIN schedule_tasks st ON r.source = ('schedule:' || st.id)
 WHERE r.run_id=$runId;
 """;
         command.Parameters.AddWithValue("$runId", runId);
@@ -7833,6 +8003,8 @@ WHERE run_id=$runId;
             var query = BuildQueryFromRunRequest(request, item);
             var pars = BuildParams(query, PrimaryProtocolName);
             pars.RunId = item.RunId;
+            pars.OperatorId = request.Operator?.Id ?? "";
+            pars.OperatorName = request.Operator?.Name ?? "";
             Log($"队列执行: runId={item.RunId}, {DescribeParams(pars)}");
 
             var result = ShouldRunZfi057Workflow(pars)
@@ -7905,8 +8077,23 @@ WHERE run_id=$runId;
             }
 
             AddWorkflowLog(aggregate, "step 1", $"query: method=NCo REPORT_SUBMIT/MEMORY_EXPORT; report=ZFI019NL; businessArea={area}; period={p.Period}; weekEnd={p.WeekEnd}; plants=not_applicable");
-            var step1Fetch = ExecuteZfi057Step1Memory(p, area, Array.Empty<string>());
+            // ZFI019NL itself is selected by business area. The mapped plants are
+            // carried only so Dongtai ZFI_SPLIT materials can be filtered by WERKS.
+            var step1Fetch = ExecuteZfi057Step1Memory(p, area, plants);
             AddStepResult(aggregate, "step 1 ZFI019NL memory", step1Fetch.Result);
+            if (step1Fetch.Materials.Length == 0 &&
+                (IsNoDataRunStatus(step1Fetch.Result.Status) ||
+                 IsExplicitNoDataText(FirstNonEmpty(step1Fetch.Result.Message, step1Fetch.Result.SapStatusText))))
+            {
+                string message = $"业务范围 {area} 没物料，跳过 ZFI057 和 ZCO020";
+                aggregate.Logs.Add(new RunLogLine
+                {
+                    Level = "WARN",
+                    Message = $"[scope] businessArea={area} no data after ZFI019NL memory fetch; {message}"
+                });
+                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_material", message));
+                continue;
+            }
             if (!IsSuccessResult(step1Fetch.Result))
             {
                 string message = $"step1 failed: {FirstNonEmpty(step1Fetch.Result.Message, step1Fetch.Result.SapStatusText, "ZFI019NL memory fetch failed")}";
@@ -7917,26 +8104,29 @@ WHERE run_id=$runId;
 
             string[] requestMaterialItems = NormalizeStringArray(p.Materials);
             string[] upstreamMaterialItems = step1Fetch.Materials;
-            string materialSource = "ZFI019NL_MEMORY";
+            string materialSource = BuildZfi057MaterialSourceSummary(
+                step1Fetch.FetchResult.FinalRows,
+                step1Fetch.FetchResult.SplitRows,
+                step1Fetch.FetchResult.DongtaiOnly800);
             string[] materialItems = upstreamMaterialItems;
             AddWorkflowLog(aggregate, "step 1", $"materials: selectedSource={materialSource}; selectedCount={materialItems.Length}; selectedSample={FormatSample(materialItems, 8)}; selectedHash={HashForLog(string.Join(",", materialItems))}; requestCount={requestMaterialItems.Length}; requestMaterialsIgnored=true; upstreamCount={upstreamMaterialItems.Length}; upstreamSample={FormatSample(upstreamMaterialItems, 8)}; upstreamHash={HashForLog(string.Join(",", upstreamMaterialItems))}");
-            AddZfi057MaterialAuditFile(aggregate, p, scopeIndex, area, plants, materialSource, requestMaterialItems, upstreamMaterialItems, materialItems, step1Fetch.FetchResult.SplitRows);
-            if (!ExportZfi057MaterialWorkbook(aggregate, p, scopeIndex, area, plants, upstreamMaterialItems, step1Fetch.FetchResult.SplitRows))
+            if (materialItems.Length == 0)
+            {
+                string message = $"业务范围 {area} 没物料，跳过 ZFI057 和 ZCO020";
+                aggregate.Logs.Add(new RunLogLine
+                {
+                    Level = "WARN",
+                    Message = $"[scope] businessArea={area} no data after ZFI019NL memory fetch; {message}"
+                });
+                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_material", message));
+                continue;
+            }
+            AddZfi057MaterialAuditFile(aggregate, p, scopeIndex, area, plants, materialSource, requestMaterialItems, upstreamMaterialItems, materialItems, step1Fetch.FetchResult.SplitRows, step1Fetch.FetchResult.FinalRows, step1Fetch.FetchResult.DongtaiOnly800);
+            if (!ExportZfi057MaterialWorkbook(aggregate, p, scopeIndex, area, plants, upstreamMaterialItems, step1Fetch.FetchResult.FinalRows, step1Fetch.FetchResult.DongtaiOnly800))
             {
                 string message = "step1 material workbook export failed";
                 aggregate.Logs.Add(new RunLogLine { Level = "ERROR", Message = $"ZFI057 workflow scope failed; businessArea={area}; {message}" });
                 scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "failed", message));
-                continue;
-            }
-            if (materialItems.Length == 0)
-            {
-                string message = "step1 no material list returned";
-                aggregate.Logs.Add(new RunLogLine
-                {
-                    Level = "WARN",
-                    Message = $"[scope] businessArea={area} no data after ZFI019NL memory fetch; skip step2/step3"
-                });
-                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_data", message));
                 continue;
             }
 
@@ -7993,7 +8183,7 @@ WHERE run_id=$runId;
                 else
                 {
                     aggregate.Logs.Add(new RunLogLine { Level = "WARN", Message = $"[step 3] skip ZCO020 because ZFI057 returned no data for all mapped plants; businessArea={area}; plants={string.Join(",", plants)}" });
-                    scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_data", "all mapped plants returned no data"));
+                    scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "zfi057_no_data", "all mapped plants returned no data"));
                 }
                 continue;
             }
@@ -8017,7 +8207,7 @@ WHERE run_id=$runId;
                 }
                 else
                 {
-                    scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "no_data", message));
+                    scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "zco020_no_data", message));
                 }
                 continue;
             }
@@ -8028,7 +8218,8 @@ WHERE run_id=$runId;
             }
             else
             {
-                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, "success", $"step2Success={scopeStep2Success}; step2NoData={scopeStep2NoDataSkipped}; {step3Closure.Message}"));
+                string scopeStatus = scopeStep2NoDataSkipped > 0 ? "success_with_no_data" : "success";
+                scopeResults.Add(new Zfi057WorkflowScopeResult(area, plants, scopeStatus, $"step2Success={scopeStep2Success}; step2NoData={scopeStep2NoDataSkipped}; {step3Closure.Message}"));
             }
         }
 
@@ -8043,7 +8234,7 @@ WHERE run_id=$runId;
         aggregate.Message = BuildZfi057WorkflowScopeResultMessage(aggregate.Status, scopeResults);
         aggregate.SapStatusType = aggregate.Status.Equals("failed", StringComparison.OrdinalIgnoreCase)
             ? "E"
-            : aggregate.Status.Equals("partial_failed", StringComparison.OrdinalIgnoreCase) || totalStep2NoDataSkipped > 0 || scopeResults.Any(r => r.Status.Equals("no_data", StringComparison.OrdinalIgnoreCase))
+            : aggregate.Status.Equals("partial_failed", StringComparison.OrdinalIgnoreCase) || totalStep2NoDataSkipped > 0 || scopeResults.Any(r => IsZfi057ScopeNoDataStatus(r.Status))
                 ? "W"
                 : "S";
         aggregate.SapStatusText = aggregate.Message;
@@ -8088,14 +8279,21 @@ WHERE run_id=$runId;
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        result.Status = fetchResult.Success ? "success" : "failed";
+        string fetchMessage = FirstNonEmpty(fetchResult.Message, "");
+        bool isNoData = !fetchResult.Success &&
+                        materials.Length == 0 &&
+                        (fetchMessage.Contains("MATNR/入库料号", StringComparison.OrdinalIgnoreCase) ||
+                         IsExplicitNoDataText(fetchMessage));
+        result.Status = fetchResult.Success ? "success" : isNoData ? "no_data" : "failed";
         result.Message = fetchResult.Success
             ? $"ZFI019NL memory fetch returned {materials.Length} material(s)."
             : FirstNonEmpty(fetchResult.Message, "ZFI019NL memory fetch failed.");
         result.DurationMs = EnsureDuration(0, started);
-        result.SapStatusType = fetchResult.Success ? "S" : "E";
+        result.SapStatusType = fetchResult.Success ? "S" : isNoData ? "W" : "E";
         result.SapStatusText = fetchResult.Message;
-        result.Logs.Add(new RunLogLine { Level = fetchResult.Success ? "INFO" : "ERROR", Message = $"ZFI019NL memory fetch result: success={fetchResult.Success}; subrc={fetchResult.Subrc}; method={fetchResult.ActualMethod}; message={Truncate(fetchResult.Message, 360)}" });
+        result.Logs.Add(new RunLogLine { Level = fetchResult.Success ? "INFO" : isNoData ? "WARN" : "ERROR", Message = $"ZFI019NL memory fetch result: success={fetchResult.Success}; subrc={fetchResult.Subrc}; method={fetchResult.ActualMethod}; message={Truncate(fetchResult.Message, 360)}" });
+        if (isNoData)
+            result.Logs.Add(new RunLogLine { Level = "WARN", Message = $"ZFI019NL memory fetch no-data; businessArea={businessArea}; skip step2/step3" });
         result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch options={fetchResult.Options}" });
         result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch counts: rawLines={fetchResult.RawLines.Count}; headers={fetchResult.Headers.Count}; alvRows={fetchResult.AlvRows.Count}; finalRows={fetchResult.FinalRows.Count}; splitMaterials={fetchResult.SplitMaterialCount}" });
         result.Logs.Add(new RunLogLine { Level = "INFO", Message = $"ZFI019NL memory fetch headerSample={Truncate(string.Join("|", fetchResult.Headers), 1200)}" });
@@ -8143,6 +8341,14 @@ WHERE run_id=$runId;
         string area = FirstNonEmpty(result.BusinessArea, "-");
         if (result.Status.Equals("success", StringComparison.OrdinalIgnoreCase))
             return $"{area}运行成功";
+        if (result.Status.Equals("success_with_no_data", StringComparison.OrdinalIgnoreCase))
+            return $"{area}运行成功（部分工厂无数据）";
+        if (result.Status.Equals("no_material", StringComparison.OrdinalIgnoreCase))
+            return $"{area}没物料";
+        if (result.Status.Equals("zfi057_no_data", StringComparison.OrdinalIgnoreCase))
+            return $"{area}有物料，但ZFI057运行后无数据";
+        if (result.Status.Equals("zco020_no_data", StringComparison.OrdinalIgnoreCase))
+            return $"{area}运行成功（ZCO020过滤后无数据）";
         if (result.Status.Equals("no_data", StringComparison.OrdinalIgnoreCase))
             return $"{area}无数据";
 
@@ -8150,6 +8356,15 @@ WHERE run_id=$runId;
         return string.IsNullOrWhiteSpace(detail)
             ? $"{area}运行失败"
             : $"{area}运行失败（{Truncate(detail, 160)}）";
+    }
+
+    static bool IsZfi057ScopeNoDataStatus(string status)
+    {
+        return status.Equals("no_material", StringComparison.OrdinalIgnoreCase) ||
+               status.Equals("zfi057_no_data", StringComparison.OrdinalIgnoreCase) ||
+               status.Equals("zco020_no_data", StringComparison.OrdinalIgnoreCase) ||
+               status.Equals("success_with_no_data", StringComparison.OrdinalIgnoreCase) ||
+               status.Equals("no_data", StringComparison.OrdinalIgnoreCase);
     }
 
     static bool IsSuccessResult(RunResultRequest result)
@@ -8190,6 +8405,7 @@ WHERE run_id=$runId;
         return compact.Contains("没有符合条件数据", StringComparison.OrdinalIgnoreCase) ||
                compact.Contains("没有符合条件的数据", StringComparison.OrdinalIgnoreCase) ||
                compact.Contains("没有找到符合条件的数据", StringComparison.OrdinalIgnoreCase) ||
+               compact.Contains("MATNR/入库料号", StringComparison.OrdinalIgnoreCase) ||
                value.Contains("No data found", StringComparison.OrdinalIgnoreCase) ||
                value.Contains("No records found", StringComparison.OrdinalIgnoreCase);
     }
@@ -8508,11 +8724,18 @@ WHERE run_id=$runId;
     {
         SapNcoLocalConfig config = LoadSapNcoLocalConfig();
         string systemId = FirstNonEmpty(config.SystemId, p.System);
-        string ipAddress = FirstNonEmpty(config.IpAddress, config.AppServerHost, config.Ashost);
-        string systemNumber = NormalizeSapSystemNumber(FirstNonEmpty(config.SystemNumber, config.SysNr, p.SysNr));
+        string connectionMode = NormalizeSapNcoConnectionMode(config.ConnectionMode, config.MessageServerHost);
+        bool messageServer = string.Equals(connectionMode, "messageServer", StringComparison.OrdinalIgnoreCase);
+        string ipAddress = messageServer ? "" : FirstNonEmpty(config.IpAddress, config.AppServerHost, config.Ashost);
+        string messageServerHost = messageServer ? FirstNonEmpty(config.MessageServerHost, config.MessageServer, config.Server) : "";
+        string messageServerService = messageServer ? FirstNonEmpty(config.MessageServerService, config.MessageServerPort) : "";
+        string logonGroup = messageServer ? FirstNonEmpty(config.LogonGroup, config.GroupName, config.Group) : "";
+        string systemNumber = messageServer ? "" : NormalizeSapSystemNumber(FirstNonEmpty(config.SystemNumber, config.SysNr, p.SysNr));
         string router = FirstNonEmpty(config.Router, config.SapRouter);
 
-        if (string.IsNullOrWhiteSpace(ipAddress) || string.IsNullOrWhiteSpace(systemNumber) || string.IsNullOrWhiteSpace(systemId))
+        bool directTargetIncomplete = !messageServer &&
+            (string.IsNullOrWhiteSpace(ipAddress) || string.IsNullOrWhiteSpace(systemNumber) || string.IsNullOrWhiteSpace(systemId));
+        if (directTargetIncomplete)
         {
             foreach (var entry in ReadSapLogonEntries())
             {
@@ -8532,8 +8755,12 @@ WHERE run_id=$runId;
         return new SapNcoConnectionConfig
         {
             ConnectionName = FirstNonEmpty(config.ConnectionName, config.Name, p.System, "SapWebLauncher"),
+            ConnectionMode = connectionMode,
             SystemId = systemId,
             IpAddress = ipAddress,
+            MessageServerHost = messageServerHost,
+            MessageServerService = messageServerService,
+            LogonGroup = logonGroup,
             SystemNumber = systemNumber,
             Client = FirstNonEmpty(config.Client, p.Client),
             User = FirstNonEmpty(config.User, p.User),
@@ -8557,10 +8784,19 @@ WHERE run_id=$runId;
         {
             ConnectionName = FirstNonEmpty(GetConfigString(sapNco, "connectionName"), GetConfigString(sapNco, "destinationName")),
             Name = GetConfigString(sapNco, "name"),
+            ConnectionMode = FirstNonEmpty(GetConfigString(sapNco, "connectionMode"), GetConfigString(sapNco, "mode")),
             SystemId = FirstNonEmpty(GetConfigString(sapNco, "systemId"), GetConfigString(sapNco, "sysId"), GetConfigString(sapNco, "sid")),
             IpAddress = FirstNonEmpty(GetConfigString(sapNco, "ipAddress"), GetConfigString(sapNco, "server")),
             AppServerHost = GetConfigString(sapNco, "appServerHost"),
             Ashost = GetConfigString(sapNco, "ashost"),
+            MessageServerHost = FirstNonEmpty(GetConfigString(sapNco, "messageServerHost"), GetConfigString(sapNco, "mshost")),
+            MessageServer = GetConfigString(sapNco, "messageServer"),
+            Server = GetConfigString(sapNco, "server"),
+            MessageServerService = FirstNonEmpty(GetConfigString(sapNco, "messageServerService"), GetConfigString(sapNco, "msService")),
+            MessageServerPort = GetConfigString(sapNco, "messageServerPort"),
+            LogonGroup = FirstNonEmpty(GetConfigString(sapNco, "logonGroup"), GetConfigString(sapNco, "groupName")),
+            GroupName = GetConfigString(sapNco, "groupName"),
+            Group = GetConfigString(sapNco, "group"),
             SystemNumber = FirstNonEmpty(GetConfigString(sapNco, "systemNumber"), GetConfigString(sapNco, "instanceNumber")),
             SysNr = GetConfigString(sapNco, "sysNr"),
             Client = GetConfigString(sapNco, "client"),
@@ -8619,6 +8855,76 @@ WHERE run_id=$runId;
         return item.HasValue ? GetJsonInt(item.Value, property, defaultValue) : defaultValue;
     }
 
+    static string BuildZfi057MaterialSourceSummary(
+        IReadOnlyList<Dictionary<string, string>> finalRows,
+        IReadOnlyList<Dictionary<string, string>> splitRows,
+        bool dongtaiOnly800 = false)
+    {
+        var entries = BuildZfi057MaterialSourceEntries(finalRows, Array.Empty<string>(), splitRows, dongtaiOnly800);
+        bool hasMemory = entries.Any(entry => entry.SourceType.Equals("ZFI019NL_MEMORY", StringComparison.OrdinalIgnoreCase));
+        bool hasCustomTable = entries.Any(entry => entry.SourceType.Equals("CUSTOM_TABLE", StringComparison.OrdinalIgnoreCase));
+        if (hasMemory && hasCustomTable)
+            return "ZFI019NL(800*)+ZFI_SPLIT";
+        if (hasCustomTable)
+            return "ZFI_SPLIT";
+        if (hasMemory)
+            return "ZFI019NL_MEMORY";
+        return "NO_DATA";
+    }
+
+    static List<(string Material, string SourceType, string Source)> BuildZfi057MaterialSourceEntries(
+        IReadOnlyList<Dictionary<string, string>>? finalRows,
+        IEnumerable<string> fallbackMaterials,
+        IReadOnlyList<Dictionary<string, string>>? splitRows,
+        bool dongtaiOnly800 = false)
+    {
+        var entries = new List<(string Material, string SourceType, string Source)>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var row in finalRows ?? Array.Empty<Dictionary<string, string>>())
+        {
+            row.TryGetValue(Zfi019NlMemoryFetcher.FinalMaterialColumn, out string? materialValue);
+            string material = FirstNonEmpty(materialValue ?? "", "").Trim();
+            if (string.IsNullOrWhiteSpace(material))
+                continue;
+
+            row.TryGetValue(Zfi019NlMemoryFetcher.FinalSourceColumn, out string? sourceValue);
+            string source = FirstNonEmpty(sourceValue ?? "", "ZFI019NL_MEMORY").Trim();
+            bool customTable = source.Contains("ZFI_SPLIT", StringComparison.OrdinalIgnoreCase);
+            if (!customTable && dongtaiOnly800 && !material.StartsWith("800", StringComparison.OrdinalIgnoreCase))
+                continue;
+            if (!seen.Add(material))
+                continue;
+            entries.Add((material, customTable ? "CUSTOM_TABLE" : "ZFI019NL_MEMORY", customTable ? source : "ZFI019NL_MEMORY"));
+        }
+
+        foreach (var row in splitRows ?? Array.Empty<Dictionary<string, string>>())
+        {
+            row.TryGetValue(Zfi019NlMemoryFetcher.FinalMaterialColumn, out string? materialValue);
+            string material = FirstNonEmpty(materialValue ?? "", "").Trim();
+            if (string.IsNullOrWhiteSpace(material) || !seen.Add(material))
+                continue;
+
+            row.TryGetValue(Zfi019NlMemoryFetcher.FinalSourceColumn, out string? sourceValue);
+            entries.Add((material, "CUSTOM_TABLE", FirstNonEmpty(sourceValue ?? "", "ZFI_SPLIT").Trim()));
+        }
+
+        if (entries.Count == 0)
+        {
+            foreach (string value in fallbackMaterials
+                .Select(material => FirstNonEmpty(material, "").Trim())
+                .Where(material => !string.IsNullOrWhiteSpace(material))
+                .Where(material => !dongtaiOnly800 || material.StartsWith("800", StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(material => material, StringComparer.OrdinalIgnoreCase))
+            {
+                entries.Add((value, "ZFI019NL_MEMORY", "ZFI019NL_MEMORY"));
+            }
+        }
+
+        return entries;
+    }
+
     static void AddZfi057MaterialAuditFile(
         RunResultRequest aggregate,
         SapRunParams p,
@@ -8629,7 +8935,9 @@ WHERE run_id=$runId;
         string[] requestMaterials,
         string[] upstreamMaterials,
         string[] selectedMaterials,
-        IReadOnlyList<Dictionary<string, string>> sourceRows)
+        IReadOnlyList<Dictionary<string, string>> sourceRows,
+        IReadOnlyList<Dictionary<string, string>>? finalRows = null,
+        bool dongtaiOnly800 = false)
     {
         try
         {
@@ -8638,6 +8946,7 @@ WHERE run_id=$runId;
             string runPart = SafeFileNamePart(FirstNonEmpty(p.RunId, DateTime.Now.ToString("yyyyMMddHHmmss")));
             string areaPart = SafeFileNamePart(FirstNonEmpty(businessArea, "scope"));
             string path = Path.Combine(directory, $"{runPart}_scope{scopeIndex}_{areaPart}_materials.csv");
+            var sourceEntries = BuildZfi057MaterialSourceEntries(finalRows, upstreamMaterials, sourceRows, dongtaiOnly800);
             var lines = new List<string>
             {
                 "section,key,value",
@@ -8653,6 +8962,8 @@ WHERE run_id=$runId;
                 $"summary,selectedCount,{selectedMaterials.Length}",
                 $"summary,selectedHash,{CsvCell(HashForLog(string.Join(",", selectedMaterials)))}",
                 $"summary,customTableCount,{sourceRows.Count}",
+                $"summary,zfi019nlCount,{sourceEntries.Count(entry => entry.SourceType.Equals("ZFI019NL_MEMORY", StringComparison.OrdinalIgnoreCase))}",
+                $"summary,customTableMaterialCount,{sourceEntries.Count(entry => entry.SourceType.Equals("CUSTOM_TABLE", StringComparison.OrdinalIgnoreCase))}",
                 "",
                 "source,index,material"
             };
@@ -8669,6 +8980,16 @@ WHERE run_id=$runId;
                     row.TryGetValue(Zfi019NlMemoryFetcher.FinalMaterialColumn, out string? material);
                     row.TryGetValue(Zfi019NlMemoryFetcher.FinalSourceColumn, out string? source);
                     lines.Add($"{CsvCell(material ?? "")},{CsvCell(source ?? "")}");
+                }
+            }
+            if (sourceEntries.Count > 0)
+            {
+                lines.Add("");
+                lines.Add("materialSource,index,material,sourceType,source");
+                for (int i = 0; i < sourceEntries.Count; i++)
+                {
+                    var entry = sourceEntries[i];
+                    lines.Add($"materialSource,{i + 1},{CsvCell(entry.Material)},{CsvCell(entry.SourceType)},{CsvCell(entry.Source)}");
                 }
             }
             File.WriteAllLines(path, lines, new UTF8Encoding(false));
@@ -8688,7 +9009,8 @@ WHERE run_id=$runId;
         string businessArea,
         string[] plants,
         string[] upstreamMaterials,
-        IReadOnlyList<Dictionary<string, string>> splitRows)
+        IReadOnlyList<Dictionary<string, string>> finalRows,
+        bool dongtaiOnly800 = false)
     {
         string stagingPath = "";
         try
@@ -8720,29 +9042,12 @@ WHERE run_id=$runId;
                     sheet.Cell(1, i + 1).Value = headers[i];
 
                 int row = 2;
-                foreach (string material in upstreamMaterials
-                    .Select(value => FirstNonEmpty(value, "").Trim())
-                    .Where(value => !string.IsNullOrWhiteSpace(value))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
-                {
-                    WriteZfi057MaterialRow(sheet, row++, businessArea, material, "ZFI019NL_MEMORY", "ZFI019NL", p, scopeIndex, plants);
-                }
-
-                foreach (var splitRow in splitRows)
-                {
-                    splitRow.TryGetValue(Zfi019NlMemoryFetcher.FinalMaterialColumn, out string? material);
-                    splitRow.TryGetValue(Zfi019NlMemoryFetcher.FinalSourceColumn, out string? source);
-                    material = FirstNonEmpty(material ?? "", "").Trim();
-                    if (string.IsNullOrWhiteSpace(material))
-                        continue;
-
-                    WriteZfi057MaterialRow(sheet, row++, businessArea, material, "CUSTOM_TABLE", FirstNonEmpty(source ?? "", "ZFI_SPLIT"), p, scopeIndex, plants);
-                }
+                foreach (var entry in BuildZfi057MaterialSourceEntries(finalRows, upstreamMaterials, Array.Empty<Dictionary<string, string>>(), dongtaiOnly800))
+                    WriteZfi057MaterialRow(sheet, row++, businessArea, entry.Material, entry.SourceType, entry.Source, p, scopeIndex, plants);
 
                 if (row == 2)
                 {
-                    WriteZfi057MaterialRow(sheet, row++, businessArea, "", "NO_DATA", "ZFI019NL_MEMORY", p, scopeIndex, plants);
+                    WriteZfi057MaterialRow(sheet, row++, businessArea, "", "NO_DATA", "NO_DATA", p, scopeIndex, plants);
                 }
 
                 sheet.Columns().AdjustToContents();
@@ -8758,7 +9063,7 @@ WHERE run_id=$runId;
                 aggregate.Logs);
 
             var exportResult = new RunResultRequest { Status = "success", Files = organizedFiles };
-            if (!ArchiveStagedAlvFiles(exportResult))
+            if (!ArchiveStagedAlvFiles(exportResult, p.TCode, useZfi057RowModifyKey: false, worksheetName: BuildAlvWorksheetName(p)))
             {
                 aggregate.Logs.AddRange(exportResult.Logs);
                 AddWorkflowLog(aggregate, "step 1", $"material workbook archive failed: {exportResult.Message}");
@@ -8809,7 +9114,8 @@ WHERE run_id=$runId;
             transactionName,
             archiveDate,
             businessArea,
-            Lookup).ToList();
+            Lookup,
+            BuildAlvWorksheetName(p)).ToList();
     }
 
     static void WriteZfi057MaterialRow(
@@ -9589,6 +9895,8 @@ WHERE run_id=$runId;
             ButtonId = p.ButtonId,
             RunId = p.RunId,
             ParentRunId = p.ParentRunId,
+            OperatorId = p.OperatorId,
+            OperatorName = p.OperatorName,
             IsScheduleSnapshot = p.IsScheduleSnapshot,
             TimeoutSeconds = p.TimeoutSeconds
         };
@@ -9753,7 +10061,9 @@ WHERE run_id=$runId;
         using (var deleteLogs = connection.CreateCommand())
         {
             deleteLogs.Transaction = tx;
-            deleteLogs.CommandText = "DELETE FROM run_result_logs WHERE run_id=$runId";
+            // Preserve queue, lifecycle and notification diagnostics. Only execution-result
+            // detail is replaceable when a result callback is repeated for the same run.
+            deleteLogs.CommandText = "DELETE FROM run_result_logs WHERE run_id=$runId AND log_kind='result'";
             deleteLogs.Parameters.AddWithValue("$runId", runId);
             deleteLogs.ExecuteNonQuery();
         }
@@ -9770,7 +10080,7 @@ WHERE run_id=$runId;
         {
             using var command = connection.CreateCommand();
             command.Transaction = tx;
-            command.CommandText = "INSERT INTO run_result_logs(run_id, level, message) VALUES($runId, $level, $message)";
+            command.CommandText = "INSERT INTO run_result_logs(run_id, log_kind, level, message) VALUES($runId, 'result', $level, $message)";
             command.Parameters.AddWithValue("$runId", runId);
             command.Parameters.AddWithValue("$level", FirstNonEmpty(line.Level, "INFO"));
             command.Parameters.AddWithValue("$message", line.Message ?? "");
@@ -9931,7 +10241,10 @@ VALUES($runId, $type, $name, $path, $size);
             SummaryJson = reader.FieldCount > 30 ? reader.GetString(30) : "",
             SourceParentRunId = reader.FieldCount > 31 ? reader.GetString(31) : "",
             RerunOfRunId = reader.FieldCount > 32 ? reader.GetString(32) : "",
-            TransactionName = reader.FieldCount > 33 ? reader.GetString(33) : ""
+            TransactionName = reader.FieldCount > 33 ? reader.GetString(33) : "",
+            ScheduleTaskId = reader.FieldCount > 34 ? reader.GetString(34) : "",
+            ScheduleTaskName = reader.FieldCount > 35 ? reader.GetString(35) : "",
+            ScheduleSetter = reader.FieldCount > 36 ? reader.GetString(36) : ""
         };
     }
 
@@ -10060,7 +10373,7 @@ ORDER BY batch_index, attempt_no, child_run_id;
         {
             using var connection = OpenDatabaseConnection();
             using var command = connection.CreateCommand();
-            command.CommandText = "INSERT INTO run_result_logs(run_id, level, message) VALUES($runId, $level, $message)";
+            command.CommandText = "INSERT INTO run_result_logs(run_id, log_kind, level, message) VALUES($runId, 'event', $level, $message)";
             command.Parameters.AddWithValue("$runId", runId);
             command.Parameters.AddWithValue("$level", level);
             command.Parameters.AddWithValue("$message", message);
@@ -10112,16 +10425,12 @@ ORDER BY batch_index, attempt_no, child_run_id;
 
     static void DispatchRunNotification(string runId, string eventName, string message, bool skipSapDingTalk)
     {
-        bool parentBatchStart = eventName.Equals("start", StringComparison.OrdinalIgnoreCase) && IsParentRun(runId);
-        if (IsRunFinishedEvent(eventName) || parentBatchStart)
+        bool isStartEvent = eventName.Equals("start", StringComparison.OrdinalIgnoreCase);
+        if (IsRunFinishedEvent(eventName) || isStartEvent)
         {
             if (!RunRequestsSapDingTalkNotification(runId))
             {
                 AppendRunLog(runId, "INFO", "sap dingtalk notify skipped: notifyTarget is not dingtalk");
-            }
-            else if (skipSapDingTalk)
-            {
-                AppendRunLog(runId, "INFO", "sap dingtalk notify skipped: legacy VBS notification result detected");
             }
             else if (!ShouldSendSapDingTalkForRunEvent(runId, eventName))
             {
@@ -10131,6 +10440,8 @@ ORDER BY batch_index, attempt_no, child_run_id;
             {
                 try
                 {
+                    if (skipSapDingTalk)
+                        AppendRunLog(runId, "WARN", "legacy VBS notification marker detected; using unified ZFI_GET_DDID recipient resolution");
                     SendSapDingTalkNotification(runId, eventName, message);
                 }
                 catch (Exception ex)
@@ -10394,11 +10705,40 @@ ORDER BY 1;
     {
         string provider = ResolveSapDingTalkProvider();
         var run = LoadRun(runId, includeDetails: true);
-        string dingTalkId = FirstNonEmpty(
-            ResolveDingTalkUserIdFromNotifyTarget(run?.NotifyTarget ?? ""),
-            run?.DingTalkUserId ?? "",
-            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_ID") ?? "",
-            DefaultDingTalkId);
+        string pernr = ResolveDingTalkPersonnelNumber(run);
+        if (string.IsNullOrWhiteSpace(pernr))
+        {
+            AppendRunLog(runId, "WARN", $"sap dingtalk notify skipped: {DingTalkUserIdFetcher.FunctionName} requires webpage personnel number ({DingTalkUserIdFetcher.PersonnelNumberParameter})");
+            return;
+        }
+
+        SapNcoConnectionConfig? notificationConnectionConfig = null;
+        DingTalkUserIdFetchResult userIdResult;
+        try
+        {
+            SapRunParams notificationParameters = ApplyLocalConfig(new SapRunParams
+            {
+                Script = "notification-user"
+            });
+            notificationConnectionConfig = BuildSapNcoConnectionConfig(notificationParameters);
+            userIdResult = new DingTalkUserIdFetcher().Fetch(
+                notificationConnectionConfig,
+                pernr);
+        }
+        catch (Exception ex)
+        {
+            userIdResult = new DingTalkUserIdFetchResult
+            {
+                Pernr = pernr,
+                Message = $"{DingTalkUserIdFetcher.FunctionName} could not resolve the recipient: {ex.Message}"
+            };
+        }
+
+        string dingTalkId = ResolveDingTalkRecipientId(pernr, userIdResult, out bool usedPersonnelNumberFallback);
+        if (usedPersonnelNumberFallback)
+            AppendRunLog(runId, "WARN", $"sap dingtalk recipient fallback: {DingTalkUserIdFetcher.DingTalkUserIdParameter} is empty; userid={dingTalkId}; source={DingTalkUserIdFetcher.PersonnelNumberParameter}; reason={Truncate(userIdResult.Message, 240)}");
+        else
+            AppendRunLog(runId, "INFO", $"sap dingtalk recipient resolved: {DingTalkUserIdFetcher.PersonnelNumberParameter}={pernr}, {DingTalkUserIdFetcher.DingTalkUserIdParameter}={dingTalkId}");
         string workNo = FirstNonEmpty(
             Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_WORKNO") ?? "",
             "");
@@ -10422,7 +10762,7 @@ ORDER BY 1;
         {
             case "direct":
             case "openapi":
-                SendSapDingTalkNotificationByDirectOpenApi(runId, request);
+                SendSapDingTalkNotificationByDirectOpenApi(runId, request, notificationConnectionConfig);
                 return;
 
             case "http":
@@ -10457,6 +10797,38 @@ ORDER BY 1;
                 AppendRunLog(runId, "INFO", $"sap dingtalk notify skipped: provider={provider}, IV_DDID={request.DingTalkId}");
                 return;
         }
+    }
+
+    static string ResolveDingTalkPersonnelNumber(RunRecordView? run)
+    {
+        string operatorId = FirstNonEmpty(run?.OperatorId ?? "", "").Trim();
+        if (IsWebpagePersonnelNumber(operatorId))
+            return operatorId;
+
+        string notifyTargetValue = ResolveDingTalkUserIdFromNotifyTarget(run?.NotifyTarget ?? "");
+        if (IsWebpagePersonnelNumber(notifyTargetValue))
+            return notifyTargetValue;
+
+        string storedValue = FirstNonEmpty(run?.DingTalkUserId ?? "", "").Trim();
+        return IsWebpagePersonnelNumber(storedValue) ? storedValue : "";
+    }
+
+    static string ResolveDingTalkRecipientId(
+        string webpagePersonnelNumber,
+        DingTalkUserIdFetchResult result,
+        out bool usedPersonnelNumberFallback)
+    {
+        string resolvedDdid = FirstNonEmpty(result?.Ddid ?? "", "").Trim();
+        usedPersonnelNumberFallback = string.IsNullOrWhiteSpace(resolvedDdid);
+        return usedPersonnelNumberFallback
+            ? FirstNonEmpty(webpagePersonnelNumber, "").Trim()
+            : resolvedDdid;
+    }
+
+    static bool IsWebpagePersonnelNumber(string value)
+    {
+        string normalized = (value ?? "").Trim();
+        return normalized.Length is > 0 and <= 16 && normalized.All(char.IsDigit);
     }
 
     static string BuildSapDingTalkMessage(RunRecordView? run, string fallbackMessage)
@@ -10910,7 +11282,7 @@ ORDER BY 1;
 
         return NormalizeStringArray(businessAreas)
             .Where(area => !string.IsNullOrWhiteSpace(area))
-            .Select(area => $"[{area}]->\u5DE5\u5382\uFF1A\u672A\u89E3\u6790\uFF08ZFIT_RPA_BUKRS \u6620\u5C04\u65E5\u5FD7\u7F3A\u5931\uFF09")
+            .Select(area => $"[{area}]->\u5DE5\u5382\uFF1A\u6267\u884C\u65F6\u6309 ZFIT_RPA_BUKRS \u67E5\u8BE2")
             .ToList();
     }
 
@@ -10984,7 +11356,7 @@ ORDER BY 1;
         var ordered = windows
             .OrderBy(window => window.Index)
             .ToList();
-        if (ordered.Count <= 1)
+        if (ordered.Count == 0)
             return new List<string>();
 
         return ordered
@@ -11092,12 +11464,12 @@ ORDER BY 1;
 
     static List<string> BuildZfi057DingTalkBusinessAreaMappingValuesFromLogs(RunRecordView run)
     {
-        var values = new List<string>();
+        var mappings = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+        var mappingOrder = new List<string>();
         foreach (var line in run.Logs)
         {
             string message = line.Message ?? "";
-            if (!message.Contains("businessArea=", StringComparison.OrdinalIgnoreCase) ||
-                !message.Contains("plants=", StringComparison.OrdinalIgnoreCase))
+            if (!Regex.IsMatch(message, @"^\s*\[scope\]\s*#\d+\s+", RegexOptions.IgnoreCase))
                 continue;
 
             var match = Regex.Match(message, @"\bbusinessArea=([^;]+);\s*plants=([^;\r\n]*)", RegexOptions.IgnoreCase);
@@ -11105,16 +11477,29 @@ ORDER BY 1;
                 continue;
 
             string area = match.Groups[1].Value.Trim();
-            string plants = NormalizeCsv(match.Groups[2].Value.Trim());
             if (string.IsNullOrWhiteSpace(area))
                 continue;
 
-            string value = $"[{area}]->\u5DE5\u5382\uFF1A{FirstNonEmpty(plants, "\u672A\u89E3\u6790")}";
-            if (!values.Any(existing => existing.Equals(value, StringComparison.OrdinalIgnoreCase)))
-                values.Add(value);
+            if (!mappings.TryGetValue(area, out var plants))
+            {
+                plants = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                mappings[area] = plants;
+                mappingOrder.Add(area);
+            }
+
+            foreach (string plant in NormalizeStringArray(match.Groups[2].Value.Trim()))
+                plants.Add(plant);
         }
 
-        return values;
+        return mappingOrder
+            .Select(area =>
+            {
+                string plants = mappings[area].Count == 0
+                    ? "\u672A\u89E3\u6790\uFF08ZFIT_RPA_BUKRS \u6620\u5C04\u5931\u8D25\uFF09"
+                    : string.Join(",", mappings[area].OrderBy(value => value, StringComparer.OrdinalIgnoreCase));
+                return $"[{area}]->\u5DE5\u5382\uFF1A{plants}";
+            })
+            .ToList();
     }
 
     static string GetDictionaryValue(Dictionary<string, string> values, params string[] keys)
@@ -11515,21 +11900,31 @@ ORDER BY 1;
                eventName.Equals("finish", StringComparison.OrdinalIgnoreCase);
     }
 
-    static void SendSapDingTalkNotificationByDirectOpenApi(string runId, SapDingTalkNotifyRequest request)
+    static void SendSapDingTalkNotificationByDirectOpenApi(
+        string runId,
+        SapDingTalkNotifyRequest request,
+        SapNcoConnectionConfig? existingConnectionConfig = null)
     {
-        var config = LoadDingTalkOpenApiConfig();
+        SapNcoConnectionConfig connectionConfig = existingConnectionConfig ??
+            BuildSapNcoConnectionConfig(ApplyLocalConfig(new SapRunParams
+            {
+                Script = "notification-config"
+            }));
+        var config = LoadDingTalkOpenApiConfig(connectionConfig.SystemId);
         if (!config.HasCredentials)
         {
-            AppendRunLog(runId, "WARN", $"sap dingtalk openapi skipped: missing {config.MissingCredentialFieldsSummary} config");
+            AppendRunLog(runId, "WARN", $"sap dingtalk openapi skipped: systemId={connectionConfig.SystemId}; missing {config.MissingCredentialFieldsSummary} config");
             return;
         }
 
-        DingTalkGatewayConfigFetchResult gateway = FetchDingTalkGatewayConfig();
+        DingTalkGatewayConfigFetchResult gateway = FetchDingTalkGatewayConfig(connectionConfig);
         if (!gateway.Success)
         {
             AppendRunLog(runId, "WARN", $"sap dingtalk openapi skipped: {gateway.Message}");
             return;
         }
+
+        AppendRunLog(runId, "INFO", $"sap dingtalk agent selected: systemId={config.SystemId}; source={config.AgentIdSource}");
 
         string token = FetchDingTalkOpenApiToken(gateway.BaseUrl, config);
         if (string.IsNullOrWhiteSpace(token))
@@ -11543,7 +11938,7 @@ ORDER BY 1;
         var payload = new
         {
             agent_id = config.AgentId,
-            userid_list = FirstNonEmpty(request.DingTalkId, DefaultDingTalkId),
+            userid_list = request.DingTalkId,
             msg = new
             {
                 msgtype = "markdown",
@@ -11617,7 +12012,7 @@ ORDER BY 1;
         }
     }
 
-    static DingTalkOpenApiConfig LoadDingTalkOpenApiConfig()
+    static DingTalkOpenApiConfig LoadDingTalkOpenApiConfig(string systemId = "")
     {
         using JsonDocument? config = LoadLocalConfigDocument();
         JsonElement? dingTalk = TryGetObject(config?.RootElement, "dingTalkOpenApi");
@@ -11636,18 +12031,34 @@ ORDER BY 1;
             Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_APP_SECRET") ?? "",
             GetConfigString(dingTalk, "appSecret"),
             GetConfigString(dingTalk, "app_secret"));
-        string agentId = FirstNonEmpty(
+        string environmentAgentId = FirstNonEmpty(
             Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_OPENAPI_AGENT_ID") ?? "",
             Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_OPENAPI_AGENTID") ?? "",
-            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_AGENT_ID") ?? "",
+            Environment.GetEnvironmentVariable("SAP_RPA_DINGTALK_AGENT_ID") ?? "");
+        string legacyAgentId = FirstNonEmpty(
             GetConfigString(dingTalk, "agentId"),
             GetConfigString(dingTalk, "agent_id"));
+        string defaultAgentId = FirstNonEmpty(
+            GetConfigString(dingTalk, "defaultAgentId"),
+            GetConfigString(dingTalk, "default_agent_id"));
+        Dictionary<string, string> agentIdBySystem = GetConfigStringMap(dingTalk, "agentIdBySystem");
+        if (agentIdBySystem.Count == 0)
+            agentIdBySystem = GetConfigStringMap(dingTalk, "agent_id_by_system");
+        string agentId = ResolveDingTalkAgentId(
+            systemId,
+            agentIdBySystem,
+            defaultAgentId,
+            legacyAgentId,
+            environmentAgentId,
+            out string agentIdSource);
 
         return new DingTalkOpenApiConfig
         {
             AppKey = appKey,
             AppSecret = appSecret,
-            AgentId = agentId
+            AgentId = agentId,
+            SystemId = systemId,
+            AgentIdSource = agentIdSource
         };
     }
 
@@ -11657,7 +12068,11 @@ ORDER BY 1;
         {
             Script = "notification-config"
         });
-        SapNcoConnectionConfig connectionConfig = BuildSapNcoConnectionConfig(parameters);
+        return FetchDingTalkGatewayConfig(BuildSapNcoConnectionConfig(parameters));
+    }
+
+    static DingTalkGatewayConfigFetchResult FetchDingTalkGatewayConfig(SapNcoConnectionConfig connectionConfig)
+    {
         return new DingTalkGatewayConfigFetcher().Fetch(connectionConfig);
     }
 
@@ -11887,6 +12302,83 @@ ORDER BY 1;
     static string GetConfigString(JsonElement? item, string property)
     {
         return item.HasValue ? GetJsonString(item.Value, property) : "";
+    }
+
+    static Dictionary<string, string> GetConfigStringMap(JsonElement? item, string property)
+    {
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (!item.HasValue ||
+            item.Value.ValueKind != JsonValueKind.Object ||
+            !TryGetJsonPropertyIgnoreCase(item.Value, property, out JsonElement map) ||
+            map.ValueKind != JsonValueKind.Object)
+        {
+            return values;
+        }
+
+        foreach (JsonProperty entry in map.EnumerateObject())
+        {
+            string value = JsonValueToString(entry.Value).Trim();
+            if (!string.IsNullOrWhiteSpace(entry.Name) && !string.IsNullOrWhiteSpace(value))
+                values[entry.Name.Trim()] = value;
+        }
+
+        return values;
+    }
+
+    static bool TryGetJsonPropertyIgnoreCase(JsonElement item, string property, out JsonElement value)
+    {
+        if (item.ValueKind == JsonValueKind.Object)
+        {
+            foreach (JsonProperty candidate in item.EnumerateObject())
+            {
+                if (candidate.Name.Equals(property, StringComparison.OrdinalIgnoreCase))
+                {
+                    value = candidate.Value;
+                    return true;
+                }
+            }
+        }
+
+        value = default;
+        return false;
+    }
+
+    static string ResolveDingTalkAgentId(
+        string systemId,
+        IReadOnlyDictionary<string, string> agentIdBySystem,
+        string defaultAgentId,
+        string legacyAgentId,
+        string environmentAgentId,
+        out string source)
+    {
+        if (!string.IsNullOrWhiteSpace(environmentAgentId))
+        {
+            source = "environment override";
+            return environmentAgentId.Trim();
+        }
+
+        string normalizedSystemId = (systemId ?? "").Trim();
+        if (!string.IsNullOrWhiteSpace(normalizedSystemId) &&
+            agentIdBySystem.TryGetValue(normalizedSystemId, out string? mappedAgentId) &&
+            !string.IsNullOrWhiteSpace(mappedAgentId))
+        {
+            source = $"config agentIdBySystem[{normalizedSystemId}]";
+            return mappedAgentId.Trim();
+        }
+
+        if (agentIdBySystem.Count > 0)
+        {
+            source = string.IsNullOrWhiteSpace(normalizedSystemId)
+                ? "missing SAP SystemId for configured agentIdBySystem"
+                : $"missing config agentIdBySystem[{normalizedSystemId}]";
+            return "";
+        }
+
+        string configuredDefault = FirstNonEmpty(defaultAgentId, legacyAgentId);
+        source = string.IsNullOrWhiteSpace(configuredDefault)
+            ? "missing config mapping"
+            : "config defaultAgentId/legacy agentId";
+        return configuredDefault;
     }
 
     static string EnsureTrailingSlash(string value)
@@ -12416,8 +12908,16 @@ ORDER BY 1;
                     UseShellExecute = false,
                     CreateNoWindow = false
                 };
-                foreach (string arg in attempt.Args)
-                    startInfo.ArgumentList.Add(arg);
+                if (attempt.Name.Equals("saplogon-message-server-group", StringComparison.OrdinalIgnoreCase))
+                {
+                    // sapshcut uses a legacy parser and does not reliably accept this route through ArgumentList.
+                    startInfo.Arguments = string.Join(" ", attempt.Args.Select(QuoteSapshcutCommandLineArg));
+                }
+                else
+                {
+                    foreach (string arg in attempt.Args)
+                        startInfo.ArgumentList.Add(arg);
+                }
 
                 Log($"未检测到可用 SAP GUI 会话，启动 SAP GUI: mode={attempt.Name}, path={sapshcut}, args={MaskSapArgs(string.Join(" ", attempt.Args))}");
                 try
@@ -12523,10 +13023,13 @@ ORDER BY 1;
 
     static List<SapLoginAttempt> BuildSapLoginAttempts(SapRunParams p)
     {
-        return BuildSapLoginAttempts(p, GetSapLogonIniPaths());
+        return BuildSapLoginAttempts(p, GetSapLogonIniPaths(), LoadSapNcoLocalConfig());
     }
 
-    static List<SapLoginAttempt> BuildSapLoginAttempts(SapRunParams p, IEnumerable<string> sapLogonIniPaths)
+    static List<SapLoginAttempt> BuildSapLoginAttempts(
+        SapRunParams p,
+        IEnumerable<string> sapLogonIniPaths,
+        SapNcoLocalConfig? ncoConfig = null)
     {
         var attempts = new List<SapLoginAttempt>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -12541,8 +13044,7 @@ ORDER BY 1;
 
         var common = BuildCommonSapShortcutArgs(p).ToList();
         string system = EscapeArg(p.System);
-        if (!string.IsNullOrWhiteSpace(system))
-            Add("saplogon-description", new[] { $"-sysname={system}" }.Concat(common));
+        bool matchedMessageServerEntry = false;
 
         foreach (var entry in ReadSapLogonEntries(sapLogonIniPaths))
         {
@@ -12551,7 +13053,19 @@ ORDER BY 1;
 
             string sid = FirstNonEmpty(entry.SystemId, entry.Description, p.System);
             string server = entry.Server;
-            string sysNr = FirstNonEmpty(NormalizeSapSystemNumber(p.SysNr), entry.SystemNumber);
+            if (entry.IsMessageServer)
+            {
+                matchedMessageServerEntry = true;
+                string messageServerService = ResolveSapGuiMessageServerService(p, entry, ncoConfig);
+                Add("saplogon-message-server-group", new[]
+                {
+                    $"-system={EscapeArg(sid)}",
+                    $"-guiparm=/M/{EscapeArg(entry.MessageServerHost)}/S/{EscapeArg(messageServerService)}/G/{EscapeArg(entry.Server)}"
+                }.Concat(common));
+                continue;
+            }
+
+            string sysNr = FirstNonEmpty(entry.SystemNumber, NormalizeSapSystemNumber(p.SysNr));
             if (!string.IsNullOrWhiteSpace(sid) &&
                 !string.IsNullOrWhiteSpace(server) &&
                 !string.IsNullOrWhiteSpace(sysNr))
@@ -12570,8 +13084,11 @@ ORDER BY 1;
             }
         }
 
+        if (!matchedMessageServerEntry && !string.IsNullOrWhiteSpace(system))
+            Add("saplogon-description", new[] { $"-sysname={system}" }.Concat(common));
+
         string normalizedConfigSysNr = NormalizeSapSystemNumber(p.SysNr);
-        if (!string.IsNullOrWhiteSpace(system) && !string.IsNullOrWhiteSpace(normalizedConfigSysNr))
+        if (!matchedMessageServerEntry && !string.IsNullOrWhiteSpace(system) && !string.IsNullOrWhiteSpace(normalizedConfigSysNr))
         {
             Add("configured-system-sysnr", new[]
             {
@@ -12581,6 +13098,31 @@ ORDER BY 1;
         }
 
         return attempts;
+    }
+
+    static string ResolveSapGuiMessageServerService(
+        SapRunParams p,
+        SapLogonEntry entry,
+        SapNcoLocalConfig? ncoConfig)
+    {
+        if (ncoConfig == null ||
+            !string.Equals(NormalizeSapNcoConnectionMode(ncoConfig.ConnectionMode, ncoConfig.MessageServerHost), "messageServer", StringComparison.OrdinalIgnoreCase))
+            return entry.MessageServerService;
+
+        bool targetMatches = new[] { ncoConfig.ConnectionName, ncoConfig.Name, ncoConfig.SystemId }
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Any(value => value.Equals(p.System, StringComparison.OrdinalIgnoreCase) ||
+                          value.Equals(entry.SystemId, StringComparison.OrdinalIgnoreCase) ||
+                          value.Equals(entry.Description, StringComparison.OrdinalIgnoreCase));
+        string configuredHost = FirstNonEmpty(ncoConfig.MessageServerHost, ncoConfig.MessageServer, ncoConfig.Server);
+        string configuredGroup = FirstNonEmpty(ncoConfig.LogonGroup, ncoConfig.GroupName, ncoConfig.Group);
+        string configuredService = FirstNonEmpty(ncoConfig.MessageServerService, ncoConfig.MessageServerPort);
+        bool endpointMatches = configuredHost.Equals(entry.MessageServerHost, StringComparison.OrdinalIgnoreCase) &&
+                               configuredGroup.Equals(entry.Server, StringComparison.OrdinalIgnoreCase);
+
+        return targetMatches && endpointMatches && !string.IsNullOrWhiteSpace(configuredService)
+            ? configuredService
+            : entry.MessageServerService;
     }
 
     static List<string> BuildCommonSapShortcutArgs(SapRunParams p)
@@ -12596,6 +13138,17 @@ ORDER BY 1;
             args.Add($"-language={EscapeArg(p.Language)}");
         args.Add("-maxgui");
         return args;
+    }
+
+    static string QuoteSapshcutCommandLineArg(string value)
+    {
+        if (string.IsNullOrEmpty(value))
+            return "\"\"";
+        if (!value.Any(char.IsWhiteSpace) && !value.Contains('"'))
+            return value;
+
+        return "\"" + value.Replace("\\", "\\\\", StringComparison.Ordinal)
+                            .Replace("\"", "\\\"", StringComparison.Ordinal) + "\"";
     }
 
     static List<SapLogonEntry> ReadSapLogonEntries()
@@ -12626,6 +13179,9 @@ ORDER BY 1;
                         Server = GetIniValue(values, "Server", key),
                         SystemNumber = NormalizeSapSystemNumber(GetIniValue(values, "Database", key)),
                         SystemId = GetIniValue(values, "MSSysName", key),
+                        MessageServerHost = GetIniValue(values, "MSSrvName", key),
+                        MessageServerService = GetIniValue(values, "MSSrvPort", key),
+                        Origin = GetIniValue(values, "Origin", key),
                         Router = FirstNonEmpty(GetIniValue(values, "Router", key), GetIniValue(values, "Router2", key))
                     };
                     entries.Add(entry);
@@ -12738,6 +13294,16 @@ ORDER BY 1;
         return int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out int sysNr)
             ? sysNr.ToString("00", CultureInfo.InvariantCulture)
             : "";
+    }
+
+    static string NormalizeSapNcoConnectionMode(string mode, string messageServerHost)
+    {
+        if (string.Equals(mode, "messageServer", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(mode, "group", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(mode, "logonGroup", StringComparison.OrdinalIgnoreCase) ||
+            !string.IsNullOrWhiteSpace(messageServerHost))
+            return "messageServer";
+        return "direct";
     }
 
     static string AppendDiagnostic(string current, string next)
@@ -13772,7 +14338,7 @@ WScript.Quit 0
             if (SupportsAlvExport(p.TCode) &&
                 parsed.Status.Equals("success", StringComparison.OrdinalIgnoreCase) &&
                 parsed.Files.Count > 0 &&
-                !ArchiveStagedAlvFiles(parsed))
+                !ArchiveStagedAlvFiles(parsed, p.TCode, useZfi057RowModifyKey: p.TCode.Equals("ZFI057", StringComparison.OrdinalIgnoreCase), worksheetName: BuildAlvWorksheetName(p)))
             {
                 keepTempFile = true;
             }
@@ -13802,7 +14368,11 @@ WScript.Quit 0
         }
     }
 
-    static bool ArchiveStagedAlvFiles(RunResultRequest result)
+    static bool ArchiveStagedAlvFiles(
+        RunResultRequest result,
+        string transactionCode = "",
+        bool useZfi057RowModifyKey = false,
+        string worksheetName = "")
     {
         string stagingRoot = Path.GetFullPath(AlvExportStagingDirectory)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
@@ -13850,7 +14420,9 @@ WScript.Quit 0
                         sourcePath,
                         temporaryArchivePath,
                         out long archivedSize,
-                        out string mergeMessage);
+                        out string mergeMessage,
+                        useZfi057RowModifyKey: useZfi057RowModifyKey,
+                        worksheetName: worksheetName);
 
                     if (!merged)
                     {
@@ -14343,6 +14915,89 @@ WScript.Quit 0
             string plantFileName = BuildAlvDirectPlantFileName("ZFI072N", "\u7EF4\u62A4\u91C7\u8D2D\u4EF7", "6700", new DateTime(2026, 7, 28, 13, 45, 53));
             bool plantFileNameOk = plantFileName.Equals("ZFI072N_\u7EF4\u62A4\u91C7\u8D2D\u4EF7_\u5DE5\u53826700_20260728134553.xlsx", StringComparison.Ordinal);
             Check("ALV direct plant file name", plantFileNameOk, plantFileName);
+
+            {
+                string tempRoot = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_zfi057_row_modify_{Guid.NewGuid():N}");
+                Directory.CreateDirectory(tempRoot);
+                try
+                {
+                    string source1 = Path.Combine(tempRoot, "zfi057-part1.xlsx");
+                    string source2 = Path.Combine(tempRoot, "zfi057-part2.xlsx");
+                    string[] headers = { "BUKRS", "WERKS", "KADKY", "SMATNR", "STUFE", "MATNR", "VALUE" };
+
+                    void WriteZfi057Rows(string path, params string[][] dataRows)
+                    {
+                        using var workbook = new XLWorkbook();
+                        var sheet = workbook.Worksheets.Add("ALV");
+                        for (int column = 0; column < headers.Length; column++)
+                            sheet.Cell(1, column + 1).Value = headers[column];
+                        for (int row = 0; row < dataRows.Length; row++)
+                            for (int column = 0; column < headers.Length; column++)
+                                sheet.Cell(row + 2, column + 1).Value = dataRows[row][column];
+                        workbook.SaveAs(path);
+                    }
+
+                    AlvOrganizationMappingResult RowModifyLookup(string plant) => new()
+                    {
+                        Success = true,
+                        Targets = new[] { new AlvOrganizationTarget("BU1", "PH1") }
+                    };
+
+                    WriteZfi057Rows(
+                        source1,
+                        new[] { "2030", "103C", "20260531", "800-FG-A", "1", "631-BOM-A", "10" },
+                        new[] { "2030", "103C", "20260531", "800-FG-B", "1", "631-BOM-B", "20" });
+                    string legacyArchive = Path.Combine(tempRoot, "zfi057-legacy-archive.xlsx");
+                    string legacyMerged = Path.Combine(tempRoot, "zfi057-legacy-merged.xlsx");
+                    using (var legacy = new XLWorkbook(source1))
+                    {
+                        var legacySheet = legacy.Worksheets.First();
+                        legacySheet.Cell(1, headers.Length + 1).Value = "__SAP_RPA_SOURCE_KEY";
+                        legacySheet.Column(headers.Length + 1).Hide();
+                        for (int row = 2; row <= 3; row++)
+                            legacySheet.Cell(row, headers.Length + 1).Value = "ZFI057|plant|103C";
+                        legacy.SaveAs(legacyArchive);
+                    }
+                    _ = AlvOrganizationExport.RoutePlantWorkbook(
+                        source1, tempRoot, "ZFI057", "\u4EA7\u503C\u62C6\u5206", "103C",
+                        new DateTime(2026, 8, 5), RowModifyLookup, useZfi057RowModifyKey: true);
+
+                    WriteZfi057Rows(
+                        source2,
+                        new[] { "2030", "103C", "20260531", "800-FG-A", "1", "631-BOM-A", "99" },
+                        new[] { "2030", "103C", "20260531", "800-FG-C", "1", "631-BOM-C", "30" });
+                    var outputs = AlvOrganizationExport.RoutePlantWorkbook(
+                        source2, tempRoot, "ZFI057", "\u4EA7\u503C\u62C6\u5206", "103C",
+                        new DateTime(2026, 8, 5), RowModifyLookup, useZfi057RowModifyKey: true);
+
+                    string outputPath = outputs.Single().Path;
+                    using var merged = new XLWorkbook(outputPath);
+                    var rows = merged.Worksheets.First().RangeUsed()?.RowsUsed().Skip(1).ToList() ?? new List<IXLRangeRow>();
+                    var rowA = rows.SingleOrDefault(row => row.Cell(6).GetString().Equals("631-BOM-A", StringComparison.OrdinalIgnoreCase));
+                    bool ok = rows.Count == 3 && rowA != null && rowA.Cell(7).GetString().Equals("99", StringComparison.OrdinalIgnoreCase);
+                    Check("ZFI057 ALV row modify uses six business fields", ok,
+                        $"outputs={outputs.Count}; rows={rows.Count}; updatedValue={rowA?.Cell(7).GetString()}; file={outputPath}");
+
+                    bool legacyMergedOk = AlvOrganizationExport.TryMergeAggregateWorkbookForArchive(
+                        legacyArchive,
+                        outputPath,
+                        legacyMerged,
+                        out long legacyMergedSize,
+                        out string legacyMergeMessage,
+                        useZfi057RowModifyKey: true);
+                    using var legacyResult = new XLWorkbook(legacyMerged);
+                    var legacyRows = legacyResult.Worksheets.First().RangeUsed()?.RowsUsed().Skip(1).ToList() ?? new List<IXLRangeRow>();
+                    var legacyRowA = legacyRows.SingleOrDefault(row => row.Cell(6).GetString().Equals("631-BOM-A", StringComparison.OrdinalIgnoreCase));
+                    bool legacyOk = legacyMergedOk && legacyMergedSize > 0 && legacyRows.Count == 3 &&
+                                    legacyRowA != null && legacyRowA.Cell(7).GetString().Equals("99", StringComparison.OrdinalIgnoreCase);
+                    Check("ZFI057 shared archive modifies legacy source-key rows", legacyOk,
+                        $"merged={legacyMergedOk}; rows={legacyRows.Count}; updatedValue={legacyRowA?.Cell(7).GetString()}; message={legacyMergeMessage}");
+                }
+                finally
+                {
+                    try { Directory.Delete(tempRoot, recursive: true); } catch { }
+                }
+            }
 
             string zco019DetailName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", "ZCO019_plant1022_detail.xlsx");
             string zco019SummaryName = ResolveAlvOutputTransactionName("ZCO019", "\u6807\u51c6\u6750\u6599\u6210\u672c", "ZCO019_plant1022_summary.xlsx");
@@ -15009,6 +15664,36 @@ INSERT INTO schedule_tasks(id, weekday, created_at) VALUES('stored-fri', 'friday
             bool noReportSourceInMaterialSource = !text.Contains("\"MAT001\",\"ZFI019NL\"", StringComparison.OrdinalIgnoreCase);
             bool ok = exists && aggregate.Files.Count == 1 && hasHash && hasSelected && hasUpstream && hasCustomCount && hasCustomSource && noReportSourceInMaterialSource;
             Check("ZFI057 material audit file", ok, $"exists={exists}, files={aggregate.Files.Count}, hash={hasHash}, selected={hasSelected}, upstream={hasUpstream}, customCount={hasCustomCount}, customSource={hasCustomSource}, onlyCustomSource={noReportSourceInMaterialSource}, file={path}");
+            var sourceEntries = BuildZfi057MaterialSourceEntries(
+                new[]
+                {
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [Zfi019NlMemoryFetcher.FinalMaterialColumn] = "800-MEMORY",
+                        [Zfi019NlMemoryFetcher.FinalSourceColumn] = "ZFI019NL"
+                    },
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [Zfi019NlMemoryFetcher.FinalMaterialColumn] = "631-MEMORY-CHILD",
+                        [Zfi019NlMemoryFetcher.FinalSourceColumn] = "ZFI019NL"
+                    },
+                    new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                    {
+                        [Zfi019NlMemoryFetcher.FinalMaterialColumn] = "631-SPLIT",
+                        [Zfi019NlMemoryFetcher.FinalSourceColumn] = "ZFI_SPLIT(BUKRS=2030,WERKS=1022)"
+                    }
+                },
+                Array.Empty<string>(),
+                Array.Empty<Dictionary<string, string>>(),
+                dongtaiOnly800: true);
+            bool sourceSplit = sourceEntries.Any(entry => entry.Material.Equals("631-SPLIT", StringComparison.OrdinalIgnoreCase) &&
+                                                           entry.SourceType.Equals("CUSTOM_TABLE", StringComparison.OrdinalIgnoreCase) &&
+                                                           entry.Source.Contains("ZFI_SPLIT", StringComparison.OrdinalIgnoreCase));
+            bool sourceMemory = sourceEntries.Any(entry => entry.Material.Equals("800-MEMORY", StringComparison.OrdinalIgnoreCase) &&
+                                                            entry.SourceType.Equals("ZFI019NL_MEMORY", StringComparison.OrdinalIgnoreCase));
+            bool non800MemoryFiltered = !sourceEntries.Any(entry => entry.Material.Equals("631-MEMORY-CHILD", StringComparison.OrdinalIgnoreCase));
+            Check("ZFI057 merged material rows retain source type and filter Dongtai memory", sourceSplit && sourceMemory && non800MemoryFiltered,
+                $"sourceEntries={string.Join(";", sourceEntries.Select(entry => $"{entry.Material}:{entry.SourceType}:{entry.Source}"))}");
             try { if (exists) File.Delete(path); } catch { }
         }
 
@@ -15047,6 +15732,9 @@ INSERT INTO schedule_tasks(id, weekday, created_at) VALUES('stored-fri', 'friday
             };
             bool ok = IsZfi057Step2NoDataResult(noData) && !IsZfi057Step2NoDataResult(realFailure);
             Check("ZFI057 step2 no-data skip detection", ok, $"noData={IsZfi057Step2NoDataResult(noData)}, realFailure={IsZfi057Step2NoDataResult(realFailure)}");
+
+            bool step1NoDataText = IsExplicitNoDataText("没有可用的 MATNR/入库料号结果。");
+            Check("ZFI019NL no-material text is recognized as no-data", step1NoDataText, $"recognized={step1NoDataText}");
 
             var aggregate = new RunResultRequest();
             AddSkippedStepResult(aggregate, "step 2 ZFI057 skipped(no-data)", noData);
@@ -15263,11 +15951,31 @@ INSERT INTO schedule_tasks(id, weekday, created_at) VALUES('stored-fri', 'friday
         }
 
         {
+            var marchAprilWindows = ResolveZfi057Step2DateWindows("2026.03.30", "2026.04.05");
+            bool ok = marchAprilWindows.Count == 2 &&
+                      marchAprilWindows[0].KadkyLow.Equals("2026.03.01", StringComparison.OrdinalIgnoreCase) &&
+                      marchAprilWindows[0].KadatLow.Equals("2026.03.02", StringComparison.OrdinalIgnoreCase) &&
+                      marchAprilWindows[1].KadkyLow.Equals("2026.04.01", StringComparison.OrdinalIgnoreCase) &&
+                      marchAprilWindows[1].KadatLow.Equals("2026.04.02", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 release-month split starts from March when weekEnd is April", ok, string.Join(" | ", marchAprilWindows.Select(w => $"{w.Index}:{w.KadkyLow}~{w.KadkyHigh}/{w.KadatLow}~{w.KadatHigh}")));
+        }
+
+        {
             var sameMonthWindows = ResolveZfi057Step2DateWindows("2026.05.04", "2026.05.10");
             bool ok = sameMonthWindows.Count == 1 &&
                       sameMonthWindows[0].KadkyLow.Equals("2026.05.01", StringComparison.OrdinalIgnoreCase) &&
                       sameMonthWindows[0].KadatLow.Equals("2026.05.02", StringComparison.OrdinalIgnoreCase);
             Check("ZFI057 S_KADAT low starts from day 2", ok, string.Join(" | ", sameMonthWindows.Select(w => $"{w.Index}:{w.KadkyLow}~{w.KadkyHigh}/{w.KadatLow}~{w.KadatHigh}")));
+        }
+
+        {
+            var juneJulyWindows = ResolveZfi057Step2DateWindows("2026.06.29", "2026.07.05");
+            bool ok = juneJulyWindows.Count == 3 &&
+                      juneJulyWindows[0].KadkyLow.Equals("2026.05.01", StringComparison.OrdinalIgnoreCase) &&
+                      juneJulyWindows[1].KadkyLow.Equals("2026.06.01", StringComparison.OrdinalIgnoreCase) &&
+                      juneJulyWindows[2].KadkyLow.Equals("2026.07.01", StringComparison.OrdinalIgnoreCase) &&
+                      juneJulyWindows[2].KadatLow.Equals("2026.07.02", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 release-month split starts from May when weekEnd is July", ok, string.Join(" | ", juneJulyWindows.Select(w => $"{w.Index}:{w.KadkyLow}~{w.KadkyHigh}/{w.KadatLow}~{w.KadatHigh}")));
         }
 
         {
@@ -15632,6 +16340,28 @@ Item1=test888
         }
 
         {
+            string noMaterial = BuildZfi057WorkflowScopeResultMessage("success", new[]
+            {
+                new Zfi057WorkflowScopeResult("7500", new[] { "2032", "2034" }, "no_material", "ZFI019NL returned no materials")
+            });
+            string zco020NoData = BuildZfi057WorkflowScopeResultMessage("success", new[]
+            {
+                new Zfi057WorkflowScopeResult("7500", new[] { "2032", "2034" }, "zco020_no_data", BuildZfi057Zco020NoDataMessage("7500"))
+            });
+            string partialPlantNoData = BuildZfi057WorkflowScopeResultMessage("success", new[]
+            {
+                new Zfi057WorkflowScopeResult("7500", new[] { "2032", "2034" }, "success_with_no_data", "step2Success=1; step2NoData=1")
+            });
+            bool ok = noMaterial.Contains("7500没物料", StringComparison.Ordinal) &&
+                      zco020NoData.Contains("7500运行成功（ZCO020过滤后无数据）", StringComparison.Ordinal) &&
+                      !zco020NoData.Contains("没物料", StringComparison.Ordinal) &&
+                      partialPlantNoData.Contains("7500运行成功（部分工厂无数据）", StringComparison.Ordinal) &&
+                      !partialPlantNoData.Contains("没物料", StringComparison.Ordinal);
+            Check("ZFI057 scope summary distinguishes no material from downstream no-data", ok,
+                $"noMaterial={noMaterial}; zco020NoData={zco020NoData}; partialPlantNoData={partialPlantNoData}");
+        }
+
+        {
             var run = new RunRecordView
             {
                 RunId = "RUN-SELFTEST-ZFI019NL",
@@ -15984,10 +16714,12 @@ Item1=test888
                 DurationMs = 122903
             };
             run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[scope] #1 businessArea=2800; plants=9001,9002" });
+            run.Logs.Add(new RunLogLine { Level = "INFO", Message = "[step 2] businessArea=2800; plants=9001" });
             string markdown = BuildSapDingTalkMarkdownContent(run, run.SapStatusText);
             string plain = BuildSapDingTalkContent(run, run.SapStatusText);
             bool ok = markdown.Contains("[2800]->\u5DE5\u5382\uFF1A9001,9002", StringComparison.OrdinalIgnoreCase) &&
                       plain.Contains("[2800]->\u5DE5\u5382\uFF1A9001,9002", StringComparison.OrdinalIgnoreCase) &&
+                      markdown.Split("[2800]->\u5DE5\u5382\uFF1A9001,9002", StringSplitOptions.None).Length - 1 == 1 &&
                       !markdown.Contains("\u672A\u89E3\u6790", StringComparison.OrdinalIgnoreCase) &&
                       !plain.Contains("\u672A\u89E3\u6790", StringComparison.OrdinalIgnoreCase);
             Check("DingTalk prefers logged ZFI057 scope mapping", ok, Truncate(markdown.Replace("\n", " | "), 260));
@@ -16073,6 +16805,47 @@ Item1=test888
         }
 
         {
+            var agentIds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["EP1"] = "871715610",
+                ["TD1"] = "326645003"
+            };
+            string ep1Source;
+            string td1Source;
+            string unknownSource;
+            string environmentSource;
+            string ep1 = ResolveDingTalkAgentId("EP1", agentIds, "326645003", "", "", out ep1Source);
+            string td1 = ResolveDingTalkAgentId("TD1", agentIds, "326645003", "", "", out td1Source);
+            string unknown = ResolveDingTalkAgentId("UNKNOWN", agentIds, "326645003", "", "", out unknownSource);
+            string environment = ResolveDingTalkAgentId("EP1", agentIds, "326645003", "", "ENV_AGENT", out environmentSource);
+            bool ok = ep1 == "871715610" &&
+                      td1 == "326645003" &&
+                      unknown == "" &&
+                      environment == "ENV_AGENT" &&
+                      ep1Source.Contains("agentIdBySystem", StringComparison.OrdinalIgnoreCase) &&
+                      td1Source.Contains("agentIdBySystem", StringComparison.OrdinalIgnoreCase) &&
+                      unknownSource.Contains("missing config agentIdBySystem", StringComparison.OrdinalIgnoreCase) &&
+                      environmentSource.Equals("environment override", StringComparison.OrdinalIgnoreCase);
+            Check("DingTalk AgentId selects from SAP SystemId mapping", ok, $"EP1={ep1}; TD1={td1}; unknown={unknown}; env={environment}");
+        }
+
+        {
+            string resolved = ResolveDingTalkRecipientId(
+                "10040297",
+                new DingTalkUserIdFetchResult { Success = true, Pernr = "10040297", Ddid = "f-059" },
+                out bool resolvedFallback);
+            string fallback = ResolveDingTalkRecipientId(
+                "10040297",
+                new DingTalkUserIdFetchResult { Pernr = "10040297", Ddid = "" },
+                out bool emptyFallback);
+            bool ok = resolved.Equals("f-059", StringComparison.Ordinal) &&
+                      !resolvedFallback &&
+                      fallback.Equals("10040297", StringComparison.Ordinal) &&
+                      emptyFallback;
+            Check("DingTalk recipient uses OV_DDID and falls back to webpage personnel number", ok, $"resolved={resolved}; resolvedFallback={resolvedFallback}; fallback={fallback}; emptyFallback={emptyFallback}");
+        }
+
+        {
             string[] urls = DingTalkGatewayConfigFetcher.ExtractBaseUrlsForTest(new[]
             {
                 "ZPP154| https://gateway.example.test/auth-api/openapi ",
@@ -16146,6 +16919,65 @@ Item1=test888
                     a.Args.Any(x => x.Equals("-system=TD1", StringComparison.OrdinalIgnoreCase)) &&
                     a.Args.Any(x => x.Equals("-guiparm=10.0.40.212 10", StringComparison.OrdinalIgnoreCase)));
                 Check("sapshcut guiparm fallback", ok, string.Join(" | ", attempts.Select(a => $"{a.Name}:{MaskSapArgs(string.Join(" ", a.Args))}")));
+            }
+            finally
+            {
+                try { File.Delete(ini); } catch { }
+            }
+        }
+
+        {
+            string ini = Path.Combine(Path.GetTempPath(), $"sap_rpa_selftest_saplogon_group_{Guid.NewGuid():N}.ini");
+            File.WriteAllText(ini, """
+[Server]
+Item1=HUANAN_PRD
+[Database]
+Item1=92
+[MSSysName]
+Item1=EP1
+[MSSrvName]
+Item1=S4PRD01
+[MSSrvPort]
+Item1=sapmsEP1
+[Origin]
+Item1=MS_SEL_GROUPS
+[Description]
+Item1=PRD
+""", Encoding.ASCII);
+            try
+            {
+                var p = new SapRunParams
+                {
+                    System = "PRD",
+                    Client = "888",
+                    User = "LYFICO68",
+                    Password = "SECRET",
+                    Language = "ZH",
+                    SysNr = "10"
+                };
+                var attempts = BuildSapLoginAttempts(p, new[] { ini });
+                SapLoginAttempt first = attempts.FirstOrDefault();
+                bool ok = string.Equals(first.Name, "saplogon-message-server-group", StringComparison.OrdinalIgnoreCase) &&
+                          first.Args.Any(x => x.Equals("-system=EP1", StringComparison.OrdinalIgnoreCase)) &&
+                          first.Args.Any(x => x.Equals("-guiparm=/M/S4PRD01/S/sapmsEP1/G/HUANAN_PRD", StringComparison.OrdinalIgnoreCase)) &&
+                          !attempts.Any(a => a.Name.Equals("configured-system-sysnr", StringComparison.OrdinalIgnoreCase));
+                Check("sapshcut message server group", ok, string.Join(" | ", attempts.Select(a => $"{a.Name}:{MaskSapArgs(string.Join(" ", a.Args))}")));
+
+                var ncoConfig = new SapNcoLocalConfig
+                {
+                    ConnectionMode = "messageServer",
+                    ConnectionName = "PRD",
+                    SystemId = "EP1",
+                    MessageServerHost = "S4PRD01",
+                    MessageServerService = "3611",
+                    LogonGroup = "HUANAN_PRD"
+                };
+                var numericPortAttempts = BuildSapLoginAttempts(p, new[] { ini }, ncoConfig);
+                SapLoginAttempt numericPortFirst = numericPortAttempts.FirstOrDefault();
+                bool numericPortOk = string.Equals(numericPortFirst.Name, "saplogon-message-server-group", StringComparison.OrdinalIgnoreCase) &&
+                                     numericPortFirst.Args.Any(x => x.Equals("-guiparm=/M/S4PRD01/S/3611/G/HUANAN_PRD", StringComparison.OrdinalIgnoreCase)) &&
+                                     !numericPortAttempts.Any(a => a.Name.Equals("saplogon-description", StringComparison.OrdinalIgnoreCase));
+                Check("sapshcut message server numeric service", numericPortOk, string.Join(" | ", numericPortAttempts.Select(a => $"{a.Name}:{MaskSapArgs(string.Join(" ", a.Args))}")));
             }
             finally
             {
@@ -16736,6 +17568,7 @@ Item1=test888
 
     static RunResultRequest BuildRunResultFromVbs(string stdout, string stderr, int exitCode, DateTime started)
     {
+        bool explicitNoDataMarker = false;
         var result = new RunResultRequest
         {
             Status = exitCode == 0 ? "success" : "failed",
@@ -16751,6 +17584,13 @@ Item1=test888
             if (TryReadOutputKey(line, "STATUS_TYPE", out string statusType))
             {
                 result.SapStatusType = statusType;
+                result.Logs.Add(new RunLogLine { Level = "INFO", Message = line });
+            }
+            else if (TryReadOutputKey(line, "NO_DATA", out string noDataValue))
+            {
+                explicitNoDataMarker = noDataValue.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+                    noDataValue.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+                    noDataValue.Equals("yes", StringComparison.OrdinalIgnoreCase);
                 result.Logs.Add(new RunLogLine { Level = "INFO", Message = line });
             }
             else if (TryReadOutputKey(line, "STATUS_TEXT", out string statusText))
@@ -16819,11 +17659,14 @@ Item1=test888
             result.Logs.LastOrDefault()?.Message ?? "",
             exitCode == 0 ? "transaction script executed" : $"VBS exit code {exitCode}");
 
-        if (IsExplicitNoDataResult(result))
+        if (explicitNoDataMarker || IsExplicitNoDataResult(result))
         {
             result.Status = "no_data";
             result.SapStatusType = "W";
-            result.Message = "SAP query completed with no matching data";
+            result.Message = FirstNonEmpty(
+                result.SapStatusText,
+                result.Message,
+                "SAP query completed with no matching data");
             result.Logs.Add(new RunLogLine { Level = "INFO", Message = "classified SAP result as no_data; no export or archive is required" });
         }
 
@@ -16897,6 +17740,7 @@ Item1=test888
                compact.Contains("\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u6570\u636E", StringComparison.OrdinalIgnoreCase) ||
                compact.Contains("\u6CA1\u6709\u7B26\u5408\u6761\u4EF6\u7684\u6570\u636E", StringComparison.OrdinalIgnoreCase) ||
                compact.Contains("\u6CA1\u6709\u627E\u5230\u7B26\u5408\u6761\u4EF6\u7684\u6570\u636E", StringComparison.OrdinalIgnoreCase) ||
+               compact.Contains("MATNR/\u5165\u5E93\u6599\u53F7", StringComparison.OrdinalIgnoreCase) ||
                compact.Contains("\u67E5\u8BE2\u65E0\u6570\u636E", StringComparison.OrdinalIgnoreCase) ||
                compact.Contains("\u65E0\u6570\u636E", StringComparison.OrdinalIgnoreCase);
     }
@@ -17077,6 +17921,15 @@ Item1=test888
         return file;
     }
 
+    static string BuildAlvWorksheetName(SapRunParams p)
+    {
+        string personnelNumber = (p.OperatorId ?? "").Trim();
+        string operatorName = (p.OperatorName ?? "").Trim();
+        string combined = string.Join("_", new[] { personnelNumber, operatorName }
+            .Where(value => !string.IsNullOrWhiteSpace(value)));
+        return AlvOrganizationExport.NormalizeWorksheetName(combined);
+    }
+
     static IEnumerable<string> SplitLines(string value)
     {
         return (value ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Split('\n');
@@ -17193,6 +18046,8 @@ class SapRunParams
     public string ButtonId { get; set; } = "";
     public string RunId { get; set; } = "";
     public string ParentRunId { get; set; } = "";
+    public string OperatorId { get; set; } = "";
+    public string OperatorName { get; set; } = "";
     public bool IsScheduleSnapshot { get; set; }
     public int? TimeoutSeconds { get; set; }
 }
@@ -17222,7 +18077,7 @@ record Zfi057TbtcoJobEvaluation(int ExpectedJobs, IReadOnlyList<SapJobStatusRow>
 
 record DingTalkParamGroup(string Label, string[] Keys, bool SplitValues);
 
-record ScheduleTaskScopeSnapshot(string PlantsCsv, string BusinessAreasCsv);
+record ScheduleTaskScopeSnapshot(string TCode, string PlantsCsv, string BusinessAreasCsv, string ParamsJson);
 
 record DingTalkInputLine(string Label, List<string> Values)
 {
@@ -17245,10 +18100,19 @@ class SapNcoLocalConfig
 {
     public string ConnectionName { get; set; } = "";
     public string Name { get; set; } = "";
+    public string ConnectionMode { get; set; } = "";
     public string SystemId { get; set; } = "";
     public string IpAddress { get; set; } = "";
     public string AppServerHost { get; set; } = "";
     public string Ashost { get; set; } = "";
+    public string MessageServerHost { get; set; } = "";
+    public string MessageServer { get; set; } = "";
+    public string Server { get; set; } = "";
+    public string MessageServerService { get; set; } = "";
+    public string MessageServerPort { get; set; } = "";
+    public string LogonGroup { get; set; } = "";
+    public string GroupName { get; set; } = "";
+    public string Group { get; set; } = "";
     public string SystemNumber { get; set; } = "";
     public string SysNr { get; set; } = "";
     public string Client { get; set; } = "";
@@ -17286,7 +18150,13 @@ class SapLogonEntry
     public string Server { get; set; } = "";
     public string SystemNumber { get; set; } = "";
     public string SystemId { get; set; } = "";
+    public string MessageServerHost { get; set; } = "";
+    public string MessageServerService { get; set; } = "";
+    public string Origin { get; set; } = "";
     public string Router { get; set; } = "";
+    public bool IsMessageServer => !string.IsNullOrWhiteSpace(MessageServerHost) &&
+                                   !string.IsNullOrWhiteSpace(MessageServerService) &&
+                                   !string.IsNullOrWhiteSpace(Server);
 }
 
 class TransactionConfigRequest
@@ -17629,6 +18499,9 @@ class RunRecordView
     public string SummaryJson { get; set; } = "";
     public string SourceParentRunId { get; set; } = "";
     public string RerunOfRunId { get; set; } = "";
+    public string ScheduleTaskId { get; set; } = "";
+    public string ScheduleTaskName { get; set; } = "";
+    public string ScheduleSetter { get; set; } = "";
     public List<string> ChildRunIds { get; set; } = new();
     public List<BatchItemStatus> BatchItems { get; set; } = new();
     public string LockedBy { get; set; } = "";
@@ -17732,6 +18605,8 @@ class DingTalkOpenApiConfig
     public string AppKey { get; set; } = "";
     public string AppSecret { get; set; } = "";
     public string AgentId { get; set; } = "";
+    public string SystemId { get; set; } = "";
+    public string AgentIdSource { get; set; } = "";
     public bool HasCredentials =>
         !string.IsNullOrWhiteSpace(AppKey) &&
         !string.IsNullOrWhiteSpace(AppSecret) &&

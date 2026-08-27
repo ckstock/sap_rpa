@@ -134,6 +134,15 @@ internal static class AlvOrganizationExport
     private const string SourceKeyColumnName = "__SAP_RPA_SOURCE_KEY";
     private const string UnmappedOrganizationDirectoryName = "\u96C6\u91C7\u5DE5\u5382";
     private const string DongtaiDirectoryName = "\u4E1C\u53F0";
+    private static readonly string[][] Zfi057ModifyKeyAliases =
+    {
+        new[] { "BUKRS", "COMPANYCODE", "\u516C\u53F8\u4EE3\u7801" },
+        new[] { "WERKS", "WERK", "PLANT", "FACTORY", "\u5DE5\u5382" },
+        new[] { "KADKY", "COSTINGDATE", "\u6210\u672C\u6838\u7B97\u65E5\u671F" },
+        new[] { "SMATNR", "PMATNR", "FINISHEDPRODUCT", "PRODUCT", "\u6210\u54C1" },
+        new[] { "STUFE", "LEVEL", "HIERARCHY", "\u9636\u5C42", "\u5C42\u7EA7" },
+        new[] { "MATNR", "BOMMATNR", "BOMMATERIAL", "BOM\u6599\u53F7" }
+    };
 
     public static IReadOnlyList<RunFile> RoutePlantWorkbook(
         string sourcePath,
@@ -142,7 +151,9 @@ internal static class AlvOrganizationExport
         string transactionName,
         string plant,
         DateTime archiveDate,
-        Func<string, AlvOrganizationMappingResult> lookup)
+        Func<string, AlvOrganizationMappingResult> lookup,
+        bool useZfi057RowModifyKey = false,
+        string worksheetName = "")
     {
         if (lookup == null) throw new ArgumentNullException(nameof(lookup));
         using var source = new XLWorkbook(sourcePath);
@@ -177,7 +188,9 @@ internal static class AlvOrganizationExport
                 sourceKey: $"{NormalizeTransactionCode(transactionCode)}|plant|{requestPlant}",
                 sourceLabel: "\u5DE5\u5382",
                 sourceCode: requestPlant,
-                lookup);
+                lookup,
+                useZfi057RowModifyKey,
+                worksheetName);
         }
 
         var groupedRows = new Dictionary<string, List<IXLRangeRow>>(StringComparer.OrdinalIgnoreCase);
@@ -218,7 +231,7 @@ internal static class AlvOrganizationExport
 
             foreach (string targetPath in targetPaths)
             {
-                UpsertRows(targetPath, rows[plantColumn.RowIndex], group.Value, columnCount, sourceKey);
+                UpsertRows(targetPath, rows[plantColumn.RowIndex], group.Value, columnCount, sourceKey, useZfi057RowModifyKey, worksheetName);
                 results[targetPath] = BuildRunFile(targetPath);
             }
         }
@@ -234,7 +247,8 @@ internal static class AlvOrganizationExport
         string transactionName,
         DateTime archiveDate,
         string sourcePlant,
-        Func<string, AlvOrganizationMappingResult> lookup)
+        Func<string, AlvOrganizationMappingResult> lookup,
+        string worksheetName = "")
     {
         if (lookup == null) throw new ArgumentNullException(nameof(lookup));
         using var source = new XLWorkbook(sourcePath);
@@ -327,7 +341,7 @@ internal static class AlvOrganizationExport
 
                 foreach (string targetPath in targetPaths)
                 {
-                    UpsertRows(targetPath, rows[businessAreaColumn.RowIndex], sourceGroup.Value, columnCount, sourceKey);
+                    UpsertRows(targetPath, rows[businessAreaColumn.RowIndex], sourceGroup.Value, columnCount, sourceKey, worksheetName: worksheetName);
                     results[targetPath] = BuildRunFile(targetPath);
                 }
             }
@@ -344,7 +358,8 @@ internal static class AlvOrganizationExport
         string transactionName,
         DateTime archiveDate,
         string sourceBusinessArea,
-        Func<string, AlvOrganizationMappingResult> lookup)
+        Func<string, AlvOrganizationMappingResult> lookup,
+        string worksheetName = "")
     {
         if (lookup == null) throw new ArgumentNullException(nameof(lookup));
         using var source = new XLWorkbook(sourcePath);
@@ -425,7 +440,7 @@ internal static class AlvOrganizationExport
 
             foreach (string targetPath in targetPaths)
             {
-                UpsertRows(targetPath, rows[headerRowIndex], sourceGroup.Value, columnCount, sourceKey);
+                    UpsertRows(targetPath, rows[headerRowIndex], sourceGroup.Value, columnCount, sourceKey, worksheetName: worksheetName);
                 results[targetPath] = BuildRunFile(targetPath);
             }
         }
@@ -461,7 +476,9 @@ internal static class AlvOrganizationExport
         string sourceKey,
         string sourceLabel,
         string sourceCode,
-        Func<string, AlvOrganizationMappingResult> lookup)
+        Func<string, AlvOrganizationMappingResult> lookup,
+        bool useZfi057RowModifyKey = false,
+        string worksheetName = "")
     {
         if (lookup == null) throw new ArgumentNullException(nameof(lookup));
         var mapping = lookup(sourceCode);
@@ -481,7 +498,7 @@ internal static class AlvOrganizationExport
         var result = new List<RunFile>();
         foreach (string targetPath in targetPaths)
         {
-            UpsertWholeWorkbook(targetPath, sourcePath, sourceKey);
+        UpsertWholeWorkbook(targetPath, sourcePath, sourceKey, useZfi057RowModifyKey, worksheetName);
             result.Add(BuildRunFile(targetPath));
         }
 
@@ -720,7 +737,12 @@ internal static class AlvOrganizationExport
         }
     }
 
-    private static void UpsertWholeWorkbook(string targetPath, string sourcePath, string sourceKey)
+    private static void UpsertWholeWorkbook(
+        string targetPath,
+        string sourcePath,
+        string sourceKey,
+        bool useZfi057RowModifyKey = false,
+        string worksheetName = "")
     {
         using var source = new XLWorkbook(sourcePath);
         var sheet = source.Worksheets.FirstOrDefault();
@@ -732,14 +754,33 @@ internal static class AlvOrganizationExport
         if (rows.Count == 0)
             throw new InvalidOperationException($"ALV workbook has no rows: {sourcePath}");
 
-        UpsertRows(targetPath, rows[0], rows.Skip(1).ToList(), range.ColumnCount(), sourceKey);
+        UpsertRows(targetPath, rows[0], rows.Skip(1).ToList(), range.ColumnCount(), sourceKey, useZfi057RowModifyKey, worksheetName);
     }
 
-    private static void UpsertRows(string targetPath, IXLRangeRow sourceHeader, IReadOnlyList<IXLRangeRow> incomingRows, int sourceColumnCount, string sourceKey)
+    private static void UpsertRows(
+        string targetPath,
+        IXLRangeRow sourceHeader,
+        IReadOnlyList<IXLRangeRow> incomingRows,
+        int sourceColumnCount,
+        string sourceKey,
+        bool useZfi057RowModifyKey = false,
+        string worksheetName = "")
     {
         Directory.CreateDirectory(Path.GetDirectoryName(targetPath) ?? throw new InvalidOperationException("ALV target directory is missing."));
         var header = ReadRow(sourceHeader, sourceColumnCount);
         var retainedRows = new List<(List<XLCellValue> Values, string SourceKey)>();
+        var incomingRowsWithKeys = incomingRows
+            .Select(row =>
+            {
+                string rowSourceKey = useZfi057RowModifyKey
+                    ? BuildZfi057RowModifyKey(sourceHeader, row, sourceColumnCount, sourceKey)
+                    : sourceKey;
+                return (Row: row, SourceKey: rowSourceKey);
+            })
+            .ToList();
+        var incomingSourceKeys = incomingRowsWithKeys
+            .Select(item => item.SourceKey)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         if (File.Exists(targetPath))
         {
@@ -760,17 +801,27 @@ internal static class AlvOrganizationExport
                     foreach (var row in existingRows.Skip(1))
                     {
                         string existingSourceKey = sourceKeyColumn > 0 ? row.Cell(sourceKeyColumn).GetString().Trim() : "legacy";
-                        if (!existingSourceKey.Equals(sourceKey, StringComparison.OrdinalIgnoreCase))
+                        if (useZfi057RowModifyKey)
+                        {
+                            string existingBaseKey = existingSourceKey;
+                            int fieldsMarker = existingBaseKey.IndexOf("|fields|", StringComparison.OrdinalIgnoreCase);
+                            if (fieldsMarker > 0)
+                                existingBaseKey = existingBaseKey[..fieldsMarker];
+                            if (existingBaseKey.Equals("legacy", StringComparison.OrdinalIgnoreCase))
+                                existingBaseKey = sourceKey;
+                            existingSourceKey = BuildZfi057RowModifyKey(existingRows[0], row, comparableColumnCount, existingBaseKey);
+                        }
+                        if (!incomingSourceKeys.Contains(existingSourceKey))
                             retainedRows.Add((ReadRow(row, sourceColumnCount), existingSourceKey));
                     }
                 }
             }
         }
 
-        foreach (var row in incomingRows)
-            retainedRows.Add((ReadRow(row, sourceColumnCount), sourceKey));
+        foreach (var item in incomingRowsWithKeys)
+            retainedRows.Add((ReadRow(item.Row, sourceColumnCount), item.SourceKey));
 
-        WriteAggregateWorkbook(targetPath, header, retainedRows);
+        WriteAggregateWorkbook(targetPath, header, retainedRows, worksheetName);
     }
 
     public static bool TryMergeAggregateWorkbookForArchive(
@@ -778,7 +829,9 @@ internal static class AlvOrganizationExport
         string incomingPath,
         string mergedOutputPath,
         out long mergedSize,
-        out string message)
+        out string message,
+        bool useZfi057RowModifyKey = false,
+        string worksheetName = "")
     {
         mergedSize = 0;
         message = "";
@@ -800,7 +853,16 @@ internal static class AlvOrganizationExport
         if (!HeadersMatch(existingHeader, incomingHeader))
             throw new InvalidOperationException($"ALV archive aggregate headers differ from incoming workbook: {existingArchivePath}");
 
-        var incomingSourceKeys = incomingRows
+        var incomingRowsWithKeys = incomingRows
+            .Select(row =>
+            {
+                string rowSourceKey = useZfi057RowModifyKey
+                    ? BuildZfi057RowModifyKey(incomingHeader, row.Values, row.SourceKey)
+                    : row.SourceKey;
+                return (Row: row, SourceKey: rowSourceKey);
+            })
+            .ToList();
+        var incomingSourceKeys = incomingRowsWithKeys
             .Select(row => row.SourceKey)
             .Where(key => !string.IsNullOrWhiteSpace(key))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -811,14 +873,100 @@ internal static class AlvOrganizationExport
         }
 
         var mergedRows = existingRows
+            .Select(row =>
+            {
+                string rowSourceKey = useZfi057RowModifyKey
+                    ? BuildZfi057RowModifyKey(existingHeader, row.Values, row.SourceKey)
+                    : row.SourceKey;
+                return (Values: row.Values, SourceKey: rowSourceKey);
+            })
             .Where(row => !incomingSourceKeys.Contains(row.SourceKey))
-            .Concat(incomingRows)
+            .Concat(incomingRowsWithKeys.Select(row => (Values: row.Row.Values, SourceKey: row.SourceKey)))
             .ToList();
 
-        WriteAggregateWorkbook(mergedOutputPath, incomingHeader, mergedRows);
+        WriteAggregateWorkbook(mergedOutputPath, incomingHeader, mergedRows, worksheetName);
         mergedSize = new FileInfo(mergedOutputPath).Length;
         message = $"merged sourceKeys={incomingSourceKeys.Count}; rows={mergedRows.Count}";
         return true;
+    }
+
+    private static string BuildZfi057RowModifyKey(IXLRangeRow header, IXLRangeRow row, int columnCount, string sourceKey)
+    {
+        var values = new List<string>(Zfi057ModifyKeyAliases.Length);
+        for (int fieldIndex = 0; fieldIndex < Zfi057ModifyKeyAliases.Length; fieldIndex++)
+        {
+            int column = FindHeaderColumn(header, columnCount, Zfi057ModifyKeyAliases[fieldIndex]);
+            if (column <= 0)
+                throw new InvalidOperationException($"ZFI057 ALV 缺少行级 modify 字段：{string.Join("/", Zfi057ModifyKeyAliases[fieldIndex])}");
+
+            string value = NormalizeModifyKeyValue(row.Cell(column).GetString(), fieldIndex == 2);
+            if (value.Length == 0)
+                throw new InvalidOperationException($"ZFI057 ALV 行缺少行级 modify 字段值：{Zfi057ModifyKeyAliases[fieldIndex][0]}");
+            values.Add(value);
+        }
+
+        return $"{sourceKey}|fields|{string.Join("|", values)}";
+    }
+
+    private static string BuildZfi057RowModifyKey(
+        IReadOnlyList<XLCellValue> header,
+        IReadOnlyList<XLCellValue> row,
+        string sourceKey)
+    {
+        string baseSourceKey = sourceKey ?? "";
+        int fieldsMarker = baseSourceKey.IndexOf("|fields|", StringComparison.OrdinalIgnoreCase);
+        if (fieldsMarker > 0)
+            baseSourceKey = baseSourceKey[..fieldsMarker];
+
+        var values = new List<string>(Zfi057ModifyKeyAliases.Length);
+        for (int fieldIndex = 0; fieldIndex < Zfi057ModifyKeyAliases.Length; fieldIndex++)
+        {
+            int column = FindHeaderColumn(header, Zfi057ModifyKeyAliases[fieldIndex]);
+            if (column < 0 || column >= row.Count)
+                throw new InvalidOperationException($"ZFI057 ALV 缺少行级 modify 字段：{string.Join("/", Zfi057ModifyKeyAliases[fieldIndex])}");
+
+            string value = NormalizeModifyKeyValue(row[column].ToString(), fieldIndex == 2);
+            if (value.Length == 0)
+                throw new InvalidOperationException($"ZFI057 ALV 行缺少行级 modify 字段值：{Zfi057ModifyKeyAliases[fieldIndex][0]}");
+            values.Add(value);
+        }
+
+        return $"{baseSourceKey}|fields|{string.Join("|", values)}";
+    }
+
+    private static int FindHeaderColumn(IXLRangeRow header, int columnCount, IReadOnlyList<string> aliases)
+    {
+        for (int column = 1; column <= columnCount; column++)
+        {
+            string normalized = NormalizeHeaderValue(header.Cell(column).GetString());
+            if (aliases.Any(alias => normalized.Equals(NormalizeHeaderValue(alias), StringComparison.OrdinalIgnoreCase)))
+                return column;
+        }
+
+        return 0;
+    }
+
+    private static int FindHeaderColumn(IReadOnlyList<XLCellValue> header, IReadOnlyList<string> aliases)
+    {
+        for (int column = 0; column < header.Count; column++)
+        {
+            string normalized = NormalizeHeaderValue(header[column].ToString());
+            if (aliases.Any(alias => normalized.Equals(NormalizeHeaderValue(alias), StringComparison.OrdinalIgnoreCase)))
+                return column;
+        }
+
+        return -1;
+    }
+
+    private static string NormalizeHeaderValue(string value)
+        => Regex.Replace((value ?? "").Trim(), @"[\s\u3000:_\-]+", "").ToUpperInvariant();
+
+    private static string NormalizeModifyKeyValue(string value, bool dateValue)
+    {
+        string normalized = Regex.Replace((value ?? "").Trim(), @"\s+", "");
+        if (dateValue)
+            normalized = Regex.Replace(normalized, @"[.\-/]", "");
+        return normalized.ToUpperInvariant().Replace("|", "%7C", StringComparison.Ordinal);
     }
 
     private static bool TryReadAggregateWorkbook(
@@ -870,7 +1018,8 @@ internal static class AlvOrganizationExport
     private static void WriteAggregateWorkbook(
         string targetPath,
         IReadOnlyList<XLCellValue> header,
-        IReadOnlyList<(List<XLCellValue> Values, string SourceKey)> rows)
+        IReadOnlyList<(List<XLCellValue> Values, string SourceKey)> rows,
+        string worksheetName = "")
     {
         if (header.Count == 0)
             throw new InvalidOperationException($"ALV aggregate header is empty: {targetPath}");
@@ -883,7 +1032,7 @@ internal static class AlvOrganizationExport
         try
         {
             using var output = new XLWorkbook();
-            var worksheet = output.Worksheets.Add("ALV");
+            var worksheet = output.Worksheets.Add(NormalizeWorksheetName(worksheetName));
             WriteRow(worksheet, 1, header);
             worksheet.Cell(1, header.Count + 1).Value = SourceKeyColumnName;
             worksheet.Column(header.Count + 1).Hide();
@@ -907,6 +1056,19 @@ internal static class AlvOrganizationExport
             if (File.Exists(tempPath))
                 File.Delete(tempPath);
         }
+    }
+
+    public static string NormalizeWorksheetName(string value)
+    {
+        string normalized = Regex.Replace((value ?? "").Trim(), @"[:\\/\?\*\[\]]", "_");
+        normalized = Regex.Replace(normalized, @"\s+", " ").Trim().Trim('\'', '"');
+        if (normalized.Length == 0)
+            return "ALV";
+
+        if (normalized.Equals("History", StringComparison.OrdinalIgnoreCase))
+            normalized = "_History";
+
+        return normalized.Length <= 31 ? normalized : normalized[..31];
     }
 
     private static List<XLCellValue> ReadRow(IXLRangeRow row, int columnCount)

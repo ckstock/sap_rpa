@@ -160,12 +160,74 @@ Sub WaitReady(timeoutMs)
 End Sub
 
 Sub CheckSapStatus(stage)
+   Dim statusReadOk, screenEvidence
+   statusReadOk = False
+   statusType = ""
+   statusText = ""
    Err.Clear
    statusType = session.findById("wnd[0]/sbar").MessageType
    statusText = session.findById("wnd[0]/sbar").Text
-   If Err.Number = 0 And Trim(CStr(statusText)) <> "" Then WScript.Echo "INFO: sap status after " & stage & " type=" & statusType & ", text=" & statusText
-   If Err.Number = 0 And (statusType = "E" Or statusType = "A") Then Fail "SAP status error after " & stage & " - " & statusText, 6
+   statusReadOk = (Err.Number = 0)
    Err.Clear
+   screenEvidence = NoDataScreenEvidence()
+   If statusReadOk And Trim(CStr(statusText)) <> "" Then WScript.Echo "INFO: sap status after " & stage & " type=" & statusType & ", text=" & statusText
+   If IsNoDataText(statusText) Or IsNoDataText(screenEvidence) Then
+      ExitNoData stage, FirstNonEmptyText(statusText, screenEvidence)
+   End If
+   If statusReadOk And (statusType = "E" Or statusType = "A") Then Fail "SAP status error after " & stage & " - " & statusText, 6
+   Err.Clear
+End Sub
+
+Function FirstNonEmptyText(firstValue, secondValue)
+   If Trim(CStr(firstValue)) <> "" Then
+      FirstNonEmptyText = CStr(firstValue)
+   Else
+      FirstNonEmptyText = CStr(secondValue)
+   End If
+End Function
+
+Function IsNoDataText(value)
+   Dim textValue, noData, noMatch, noFound
+   textValue = LCase(Trim(CStr(value)))
+   noData = ChrW(&H65E0) & ChrW(&H6570) & ChrW(&H636E)
+   noMatch = ChrW(&H6CA1) & ChrW(&H6709) & ChrW(&H7B26) & ChrW(&H5408) & ChrW(&H6761) & ChrW(&H4EF6)
+   noFound = ChrW(&H6CA1) & ChrW(&H6709) & ChrW(&H627E) & ChrW(&H5230)
+   IsNoDataText = InStr(textValue, "no data") > 0 Or _
+                  InStr(textValue, "no records") > 0 Or _
+                  InStr(textValue, "no matching") > 0 Or _
+                  InStr(CStr(value), noData) > 0 Or _
+                  InStr(CStr(value), noMatch) > 0 Or _
+                  InStr(CStr(value), noFound) > 0
+End Function
+
+Function NoDataScreenEvidence()
+   Dim evidence, obj
+   On Error Resume Next
+   NoDataScreenEvidence = ""
+   evidence = ""
+   Err.Clear
+   Set obj = session.findById("wnd[0]")
+   If Err.Number = 0 And IsObject(obj) Then evidence = CStr(obj.Text)
+   Err.Clear
+   If IsNoDataText(evidence) Then
+      NoDataScreenEvidence = evidence
+      Exit Function
+   End If
+   Set obj = session.findById("wnd[0]/usr")
+   If Err.Number = 0 And IsObject(obj) Then evidence = CStr(obj.Text)
+   If IsNoDataText(evidence) Then NoDataScreenEvidence = evidence
+   Err.Clear
+End Function
+
+Sub ExitNoData(stage, detail)
+   Dim rangeText
+   rangeText = dateLowValue & "~" & dateHighValue
+   WScript.Echo "NO_DATA=1"
+   WScript.Echo "STATUS_TYPE=W"
+   WScript.Echo "STATUS_TEXT=ZFIR034 no data after " & stage & "; S_BUDAT=" & rangeText & "; P_GJAHR=" & yearValue & "; P_WEEK=" & weekValue & "; detail=" & CStr(detail)
+   WScript.Echo "WARN: SAP query returned no matching data; ALV export was skipped"
+   WScript.Echo "INFO: transaction script executed"
+   WScript.Quit 0
 End Sub
 
 Sub SetField(label, id, value)

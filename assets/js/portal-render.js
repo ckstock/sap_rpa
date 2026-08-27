@@ -1,7 +1,13 @@
     function render() {
       app.innerHTML = renderShell();
       bindEvents();
-      lucide.createIcons();
+      if (window.lucide && typeof window.lucide.createIcons === "function") {
+        try {
+          window.lucide.createIcons();
+        } catch (err) {
+          console.warn("Lucide icon initialization failed", err);
+        }
+      }
     }
 
     async function refreshBridgeData({ silent = true } = {}) {
@@ -29,10 +35,10 @@
         disableTestDateOverrideState();
         state.bridge.lastChecked = checkedAt;
         state.queue = { online: false, runningRunId: "", queuedCount: null, queuePosition: null, runsAhead: null, workItemsAhead: null, lastChecked: checkedAt };
-        state.config = { online: false, source: "fallback", lastLoaded: checkedAt, error: err.message || "本机 API 不可用" };
-        clearReportData("本机 API 不可用，请启动 API");
+        state.config = { online: false, source: "fallback", lastLoaded: checkedAt, error: err.message || "执行服务器 API 不可用" };
+        clearReportData("执行服务器 API 不可用，请刷新页面或联系管理员");
         restoreFallbackConfig();
-        if (!silent) toast("本机执行器未启动，基础配置暂不能落库", "warn");
+        if (!silent) toast("执行服务器 API 未连接，基础配置暂不能落库", "warn");
         render();
         return;
       }
@@ -51,7 +57,7 @@
       await refreshReportData({ silent: true, renderAfter: false, refreshHistory: false });
       await refreshHistoryData({ silent });
 
-      if (!silent) toast(state.config.online ? "已连接本机执行器并刷新数据" : "API 已连接，但基础配置接口不可用", state.config.online ? "ok" : "warn");
+      if (!silent) toast(state.config.online ? "已连接执行服务器并刷新数据" : "API 已连接，但基础配置接口不可用", state.config.online ? "ok" : "warn");
       render();
     }
 
@@ -129,8 +135,8 @@
         if (refreshHistory) await refreshHistoryData({ silent: true, range: getReportRangeFromState() });
         if (!silent) toast("报表数据已刷新", "ok");
       } catch (err) {
-        clearReportData(err.message || "本机 API 不可用，请启动 API");
-        if (!silent) toast("报表接口不可用，请启动 API", "warn");
+        clearReportData(err.message || "执行服务器 API 不可用，请刷新页面或联系管理员");
+        if (!silent) toast("报表接口不可用，请刷新页面或联系管理员", "warn");
       } finally {
         state.report.loading = false;
         if (renderAfter) render();
@@ -162,21 +168,19 @@
     }
 
     function renderNotifyUserControl() {
-      const notifyUserId = getResolvedNotifyUserId();
-      const isBlocked = isNotifyUserBlocked();
-      const detailText = notifyUserId
-        ? `当前提交通知人：${notifyUserId}（${notifyUserSourceText()}）`
-        : notifyUserBlockingText();
+      const personnelNumber = getResolvedPersonnelNumber();
+      const detailText = personnelNumber
+        ? `当前通知人员编号：${personnelNumber}（${notifyUserSourceText()}）`
+        : "未识别到网页人员编号";
       return `
         <div class="field">
           <label class="checkbox-card">
             <input id="useDefaultNotifyUser" type="checkbox" ${state.form.useDefaultNotifyUser === false ? "" : "checked"}>
             <span>
-              <strong>勾选固定通知 11464769</strong>
+              <strong>勾选固定通知人员编号 11464769</strong>
               <span>${esc(detailText)}</span>
             </span>
           </label>
-          ${isBlocked ? `<div class="notice warn">${esc(notifyUserBlockingText())}</div>` : ""}
         </div>
       `;
     }
@@ -343,7 +347,7 @@
       return `
         <section class="panel">
           <div class="panel-header">
-            <div><div class="panel-title">${icon("history")}执行历史</div><div class="panel-sub">${state.bridge.online ? "来自本机 SQLite run 记录" : "本机 API 未连接，显示示例记录"}</div></div>
+            <div><div class="panel-title">${icon("history")}执行历史</div><div class="panel-sub">${state.bridge.online ? "来自执行服务器 SQLite run 记录" : "执行服务器 API 未连接，显示示例记录"}</div></div>
             <div class="top-actions">
               <button class="btn small" data-action="refresh-bridge">${icon("refresh-cw")}刷新</button>
               <button class="btn small" data-action="export-history">${icon("download")}导出</button>
@@ -535,7 +539,6 @@
       } else if (state.form.tCode === "ZCO019") {
         state.form.runStrategy = getExecutionTCodeSelection(executionTCodeValue).runStrategy;
       }
-      const notifyBlocked = isNotifyUserBlocked();
       return `
         <section class="grid cols-2">
           <div class="panel">
@@ -555,7 +558,7 @@
                 ${renderExecutePlants()}
                 ${renderNotifyUserControl()}
                 <div class="execute-actions">
-                  <button class="btn primary" data-action="start-run" ${state.role !== "executor" || state.executing || notifyBlocked ? "disabled" : ""}>${icon("send")}提交入队</button>
+                  <button class="btn primary" data-action="start-run" ${state.role !== "executor" || state.executing ? "disabled" : ""}>${icon("send")}提交入队</button>
                 </div>
               </div>
             </div>
@@ -901,7 +904,7 @@
       const noticeClass = online ? "ok" : "warn";
       const noticeText = online
         ? `API 已连接，保存定时任务会写入 ${BRIDGE_API}${CONFIG_API_PATHS.schedulesRoot || "/api/schedules"} 并刷新列表。`
-        : `本机 API 未启动或配置接口不可用，当前仅显示只读示例/缓存列表；保存不会生效，请启动 API 后再保存。${state.config.error ? "原因：" + state.config.error : ""}`;
+        : `执行服务器 API 或配置接口不可用，当前仅显示只读示例/缓存列表；保存不会生效，请刷新页面或联系管理员。${state.config.error ? "原因：" + state.config.error : ""}`;
       return `
         <section class="panel">
           <div class="panel-header">
@@ -969,7 +972,7 @@
       const title = online ? "API 配置源已连接" : "离线只读模式";
       const sub = online
         ? `基础配置保存到本地 SQLite，经 API 写入数据库。数据来自 ${BRIDGE_API}${CONFIG_API_PATHS.root}，最近刷新 ${state.config.lastLoaded || state.bridge.lastChecked || "-"}`
-        : `当前显示页面内置静态默认值，可打开编辑表单查看；保存、删除和新增需要先启动本机 API。${state.config.error ? "原因：" + state.config.error : "请启动本机 Bridge 后刷新。"}`;
+        : `当前显示页面内置静态默认值，可打开编辑表单查看；保存、删除和新增需要先连接执行服务器 API。${state.config.error ? "原因：" + state.config.error : "请刷新页面或联系管理员。"}`;
       return `
         <div class="config-status">
           <div class="config-status-main">
@@ -1256,8 +1259,9 @@
     }
 
     function buildScheduleNotifyTarget() {
-      const dingTalkId = getResolvedNotifyUserId();
-      return dingTalkId ? `dingtalk:${dingTalkId}` : "dingtalk";
+      // The target stores the webpage personnel number; SAP resolves OV_DDID at send time.
+      const personnelNumber = getResolvedPersonnelNumber();
+      return personnelNumber ? `dingtalk:${personnelNumber}` : "dingtalk";
     }
 
     function buildScheduleConfigPayload() {
@@ -1289,8 +1293,8 @@
         : "";
       const enabled = readInputChecked("scheduleEnabled");
       const notifyEnabled = readInputChecked("scheduleNotifyStart") || readInputChecked("scheduleNotifySuccess") || readInputChecked("scheduleNotifyFail");
-      if (notifyEnabled && !getResolvedNotifyUserId()) throw new Error(notifyUserBlockingText() || "缺少定时任务通知人钉钉 ID");
       const currentUserName = state.user.name || state.externalAuth.claimedUserName || "portal";
+      const personnelNumber = getResolvedPersonnelNumber();
       const scheduleDateForm = {
         ...state.scheduleForm,
         useTestDateOverride: readInputChecked("scheduleUseTestDateOverride"),
@@ -1341,13 +1345,15 @@
         enabled,
         status: enabled ? "启用" : "停用",
         notifyEnabled,
-        notifyStart: readInputChecked("scheduleNotifyStart"),
-        notifySuccess: readInputChecked("scheduleNotifySuccess"),
-        notifyFail: readInputChecked("scheduleNotifyFail"),
-        notifyOnSuccess: readInputChecked("scheduleNotifySuccess"),
-        notifyOnFailure: readInputChecked("scheduleNotifyFail"),
-        notifyTarget: notifyEnabled ? buildScheduleNotifyTarget() : "",
-        createdBy: state.scheduleForm.createdBy || currentUserName,
+          notifyStart: readInputChecked("scheduleNotifyStart"),
+          notifySuccess: readInputChecked("scheduleNotifySuccess"),
+          notifyFail: readInputChecked("scheduleNotifyFail"),
+          notifyOnSuccess: readInputChecked("scheduleNotifySuccess"),
+          notifyOnFailure: readInputChecked("scheduleNotifyFail"),
+          notifyTarget: buildScheduleNotifyTarget(),
+          operatorId: personnelNumber,
+          operatorName: currentUserName,
+          createdBy: state.scheduleForm.createdBy || currentUserName,
         updatedBy: currentUserName
       };
       if (scheduleDateOverride) {

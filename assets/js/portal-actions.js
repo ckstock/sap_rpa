@@ -398,7 +398,10 @@
 
     async function saveScheduleFromModal() {
       if (!state.bridge.online || !state.config.online) {
-        toast("保存失败：本机 API 未启动或配置接口不可用，定时任务没有落库", "err");
+        await refreshBridgeData({ silent: true });
+      }
+      if (!state.bridge.online || !state.config.online) {
+        toast("保存失败：执行服务器 API 或配置接口不可用，定时任务没有落库；请刷新页面或联系管理员", "err");
         return;
       }
       try {
@@ -438,7 +441,7 @@
     async function deleteScheduleTaskFromList(id) {
       if (!id) return;
       if (!state.bridge.online || !state.config.online) {
-        toast("删除失败：本机 API 未启动或配置接口不可用", "err");
+        toast("删除失败：执行服务器 API 或配置接口不可用；请刷新页面或联系管理员", "err");
         return;
       }
 
@@ -475,7 +478,7 @@
     function openConfigModal(kind, mode, id = "") {
       state.modal = `config:${kind}:${mode}:${encodeURIComponent(id)}`;
       render();
-      if (!canWriteConfig()) toast("当前 API 未连接，可查看和修改表单；保存时需要先启动本机 API", "warn");
+      if (!canWriteConfig()) toast("执行服务器 API 未连接，可查看和修改表单；保存前请刷新页面或联系管理员", "warn");
     }
 
     async function refreshConfigWithRender() {
@@ -787,7 +790,7 @@
     }
 
     async function saveConfigFromModal(kind, mode, id = "") {
-      if (!canWriteConfig()) return toast("当前 API 未连接，不能保存基础配置；请启动本机 API 后刷新再保存", "warn");
+      if (!canWriteConfig()) return toast("执行服务器 API 未连接，不能保存基础配置；请刷新页面或联系管理员", "warn");
       try {
         const payload = buildConfigPayload(kind, mode, id);
         const resourceId = getConfigResourceId(kind, payload, id);
@@ -806,7 +809,7 @@
     }
 
     async function deleteConfigItem(kind, id) {
-      if (!canWriteConfig()) return toast("当前 API 未连接，不能删除基础配置；请启动本机 API 后刷新再删除", "warn");
+      if (!canWriteConfig()) return toast("执行服务器 API 未连接，不能删除基础配置；请刷新页面或联系管理员", "warn");
       if (!id) return toast("缺少配置主键，无法删除", "warn");
       const labels = { plant: "工厂", group: "业务范围", tcode: "事务码", rule: "事务码规则", robot: "通知机器人" };
       if (!window.confirm(`确认删除${labels[kind] || "该配置"} ${id}？删除后会立即从页面移除。`)) return;
@@ -882,10 +885,6 @@
     }
 
     function wakeProtocol() {
-      if (isNotifyUserBlocked()) {
-        toast(notifyUserBlockingText(), "warn");
-        return;
-      }
       launchProtocol();
       addLog("WARN", "协议唤醒模式没有浏览器回传，结果需要查看本地日志。");
       toast("已发起协议唤醒", "info");
@@ -893,11 +892,6 @@
 
     async function startRun() {
       if (state.role !== "executor" || state.executing) return;
-      if (isNotifyUserBlocked()) {
-        toast(notifyUserBlockingText(), "warn");
-        render();
-        return;
-      }
       state.executing = true;
       resetRun();
       const payload = buildRunPayload();
@@ -925,14 +919,7 @@
         render();
         pollRunStatus(created.runId, 0);
       } catch (err) {
-        if (isNotifyUserBlocked()) {
-          state.executing = false;
-          addLog("WARN", err.message);
-          toast(err.message, "warn");
-          render();
-          return;
-        }
-        addLog("WARN", "本机 API 不可用，回退到协议唤醒：" + err.message);
+        addLog("WARN", "执行服务器 API 不可用，回退到协议唤醒：" + err.message);
         wakeProtocol();
         setTimeout(() => {
           setStep(1, "done");
@@ -945,9 +932,8 @@
     }
 
     async function createBridgeRun(payload) {
-      const notifyUserId = getResolvedNotifyUserId();
-      if (!notifyUserId) throw new Error(notifyUserBlockingText() || "缺少提交通知员工号");
-      state.user.dingTalkUserId = notifyUserId;
+      const personnelNumber = getResolvedPersonnelNumber();
+      state.user.dingTalkUserId = personnelNumber;
       const runParams = payload.rangeKind === "dateRange"
         ? {
             runStrategy: payload.runStrategy
@@ -987,11 +973,12 @@
           priority: 0,
           maxAttempts: 1,
           operator: {
-            id: state.user.name,
+            // Keep the webpage personnel number. SAP resolves the real DingTalk userid only when notifying.
+            id: personnelNumber,
             name: state.user.name,
             dept: state.user.dept,
-            dingTalkUserId: notifyUserId,
-            ddid: notifyUserId
+            dingTalkUserId: "",
+            ddid: ""
           },
           params: runParams
         })
@@ -999,10 +986,6 @@
     }
 
     function launchProtocol(runId = "") {
-      if (isNotifyUserBlocked()) {
-        toast(notifyUserBlockingText(), "warn");
-        return;
-      }
       const url = buildProtocolUrl(runId);
       const payload = buildRunPayload();
       addLog("INFO", "协议唤醒 SapWebLauncher：" + payload.tcode + "，" + payload.rangeLabel + " " + payload.rangeCsv);
@@ -1141,14 +1124,13 @@
 
     function buildProtocolUrl(runId = "") {
       const p = buildRunPayload();
-      const notifyUserId = getResolvedNotifyUserId();
+      const personnelNumber = getResolvedPersonnelNumber();
       const params = new URLSearchParams({
         action: "run",
         tcode: p.tcode,
         script: p.script,
-        notifyUserId,
-        dingTalkUserId: notifyUserId,
-        ddid: notifyUserId
+        operatorId: personnelNumber,
+        personnelNumber
       });
       if (p.runStrategy) params.set("runStrategy", p.runStrategy);
       if (p.dateMode === "testOverride" || p.testDateMode === "testOverride") {
@@ -1215,14 +1197,20 @@
     async function exportHistory() {
       try {
         const range = getReportRangeFromInputs();
-        const rows = state.bridge.online ? await loadAllRunsForExport(range) : history.slice();
+        if (!state.bridge.online) {
+          throw new Error("执行服务器 API 未连接，无法按查询条件读取完整历史");
+        }
+        const rows = await loadAllRunsForExport(range);
         const csvRows = [
-          ["任务ID","执行时间","任务名称","事务码","工厂","工厂入参","业务范围入参","业务范围组","执行参数","时长","状态","通知","结果摘要"],
+          ["任务ID","执行时间","任务名称","事务码","定时任务ID","定时任务名称","设置人","工厂","工厂入参","业务范围入参","业务范围组","执行参数","时长","状态","通知","结果摘要"],
           ...rows.map(x => [
             x.id,
             x.time,
             x.task,
             x.tCode,
+            x.scheduleTaskId || "-",
+            x.scheduleTaskName || "-",
+            x.scheduleSetter || x.operatorName || "-",
             x.plant || "",
             x.plantsCsv || x.plant || "",
             x.businessAreasCsv || x.businessAreas || "",

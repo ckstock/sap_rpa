@@ -104,6 +104,9 @@ context.bridgeFetch = async path => {
     runId,
     transactionCode,
     operatorName: "测试用户",
+    scheduleTaskId: runId === "RUN-1" ? "SCH-001" : "",
+    scheduleTaskName: runId === "RUN-1" ? "周报任务" : "",
+    scheduleSetter: runId === "RUN-1" ? "MiRO Wang/王淼榕" : "",
     status: "success",
     requestJson,
     durationMs: 1234,
@@ -157,12 +160,23 @@ context.bridgeFetch = async path => {
   assert.match(csv, /任务ID/);
   assert.match(csv, /工厂入参/);
   assert.match(csv, /业务范围入参/);
+  assert.match(csv, /定时任务ID/);
+  assert.match(csv, /定时任务名称/);
+  assert.match(csv, /设置人/);
+  assert.match(csv, /SCH-001/);
+  assert.match(csv, /MiRO Wang\/王淼榕/);
   assert.match(csv, /执行参数/);
   assert.match(csv, /1022,1032/);
   assert.match(csv, /2900,9200/);
   assert.match(csv, /5100,2790/);
   assert.equal(createdLink.download, "sap-rpa-history.csv");
   assert.equal(createdLink.clicked, true);
+
+  let offlineError = "";
+  context.toast = message => { offlineError = String(message); };
+  vm.runInContext("state.bridge.online = false", context);
+  await vm.runInContext("(async () => { await exportHistory(); })()", context);
+  assert.match(offlineError, /API/);
   console.log("REPORT_HISTORY_EXPORT_CONTRACT_OK");
 })().catch(err => {
   console.error(err);
