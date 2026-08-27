@@ -8,7 +8,7 @@
 
 ## 正式切换前清理统计报表历史
 
-正式上线使用全新统计数据时，只清理运行历史，不删除通用配置和定时任务。操作前确认 `/api/queue/status` 返回 `runningRunId` 为空、`queuedCount=0`，暂停启动监控并停止本项目 API，完整备份 `D:\RPA\data\sap-rpa-config.db` 以及同目录的 `-wal`、`-shm` 文件。备份后在 SQLite 事务中清理 `runs`、`run_batch_items`、`run_params`、`run_result_logs`、`run_files`、`run_logs`、`schedule_task_runs`，不要删除 `schedule_tasks`、`transactions`、`plants`、`plant_groups`、`plant_group_members`、`transaction_plant_rules`、`notification_robots`、`notification_robot_bindings`、`config_delete_markers` 或 `app_settings`。重启 API、网关和启动监控后，验证统计报表查询为 0 条、定时任务和基础配置仍存在；清理前备份路径必须记录在上线交接记录中。
+正式上线使用全新数据时，只清理测试运行历史和上线前遗留的定时任务，不删除通用配置。操作前确认 `/api/queue/status` 返回 `runningRunId` 为空、`queuedCount=0`，暂停启动监控并停止本项目 API，完整备份 `D:\RPA\data\sap-rpa-config.db` 以及同目录的 `-wal`、`-shm` 文件。备份后在 SQLite 事务中清理 `runs`、`run_batch_items`、`run_params`、`run_result_logs`、`run_files`、`run_logs`、`schedule_task_runs` 和 `schedule_tasks`；不要删除 `transactions`、`plants`、`plant_groups`、`plant_group_members`、`transaction_plant_rules`、`notification_robots`、`notification_robot_bindings`、`config_delete_markers` 或 `app_settings`。重启 API、网关和启动监控后，验证统计报表查询为 0 条、定时任务列表为空、基础配置仍可读取；清理前备份路径必须记录在上线交接记录中。
 
 ## 2026-08-06 ALV 组织归档上线口径
 

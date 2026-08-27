@@ -9,7 +9,7 @@ V2 本地 API + 网关门户，用于从网页发起 SAP 事务码自动化执�
 - **定时任务入参快照公共规则：**新建任务时，基础配置仅提供默认工厂/业务范围；保存后，任务的工厂、业务范围和手工填写的日期等入参作为快照写入任务。后续基础配置、工厂组成员或固定业务范围的改动，都不会修改既有任务；只有用户在该任务的编辑页主动改入参并保存，才会更新快照。触发、入队、SAP 执行和失败重跑均使用同一快照。未填写日期而选择“自动取上周”的任务，日期仍按每次计划运行时的上周计算。
 - **定时任务执行版本快照：**任务保存时同时保存当时事务码对应的 VBS 文件名、脚本哈希和超时秒数。后续基础配置替换脚本、脚本缓存或修改事务超时，不会改变已经保存任务的执行版本；用户在任务编辑页主动更换事务码并保存时，才按新事务码重新取脚本和超时。调度触发、队列运行、批次子任务和失败重跑均使用该任务快照。
 - **统计报表导出全量分页：**左侧统计报表的“导出报表”会按当前日期范围分页拉取全部 run，不只导出当前页缓存；CSV 里会附带原始工厂入参、业务范围入参和业务范围组，方便排查遗漏。
-- **正式上线统计数据清理：**正式切换前先确认队列 `runningRunId` 为空且 `queuedCount=0`，停止本项目 API 后备份 `D:\RPA\data\sap-rpa-config.db`（含 WAL/SHM），再只清理 `runs`、`run_batch_items`、`run_params`、`run_result_logs`、`run_files`、`run_logs`、`schedule_task_runs`。必须保留 `schedule_tasks`、`transactions`、工厂/组织映射、`app_settings` 和其他通用配置；清理后重启服务并确认统计报表为空、配置仍可读取。
+- **正式上线数据清理：**正式切换前先确认队列 `runningRunId` 为空且 `queuedCount=0`，停止本项目 API 后备份 `D:\RPA\data\sap-rpa-config.db`（含 WAL/SHM），再清理统计运行历史 `runs`、`run_batch_items`、`run_params`、`run_result_logs`、`run_files`、`run_logs`、`schedule_task_runs`，以及上线前遗留的 `schedule_tasks`。必须保留 `transactions`、工厂/组织映射、`app_settings` 和其他通用配置；清理后重启服务并确认统计报表为空、定时任务列表为空、基础配置仍可读取。
 - **正式目录替换规则：**源码或配置变更完成后，必须先编译并运行契约测试；确认 `GET /api/queue/status` 的 `runningRunId` 为空且 `queuedCount=0` 后，备份生产 `D:\RPA\bin`，再把最新编译产物复制到生产目录。复制后必须核对源码编译目录与 `D:\RPA\bin` 的关键程序集哈希一致，重启 SapWebLauncher 和网关，并检查本机 `/api/health`、`/api/queue/status` 及正式入口可访问。队列有运行或排队任务时不得替换正式程序集，避免中断 SAP GUI；只能等待任务完成后再发布。
 
 - 工作区源码目录是 `D:\RPA\RpaProject`，服务器运行目录是 `D:\RPA`。
