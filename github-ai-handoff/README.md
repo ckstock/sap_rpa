@@ -1,210 +1,145 @@
 # SAP RPA Project AI Handoff
 
-Last updated: 2026-06-09
+Last updated: 2026-07-29
 
-This folder is for project handoff between computers, maintainers, and AI coding agents. It must not contain SAP passwords, Netlify tokens, GitHub tokens, OAuth tickets, or personal credentials.
+This folder is for project handoff between computers, maintainers, and AI coding agents. It must not contain SAP passwords, DingTalk secrets, GitHub tokens, OAuth tickets, certificates, SQLite databases, logs, exported Excel files, or personal credentials.
 
-## Access Control
+## Current Authority
 
-This handoff document is safe to publish in the public repository because it does not contain SAP passwords, Netlify tokens, GitHub tokens, OAuth tickets, or personal credentials.
+The current project authority is no longer the old Netlify + `sap-rpa://` handoff flow. Use these files first:
 
-GitHub does not support password-protecting one folder inside a repository. If future materials include sensitive implementation notes or credentials, access must be controlled at repository level:
+- `AI_HANDOFF_NEXT.md`: latest AI handoff and current risk notes.
+- `README.md`: current project entry summary.
+- `SapRpa_V2_功能说明书.html`: user-visible behavior and operation guide.
+- `SAP_直接调用清单.md`: SAP table/report/function/VBS direct-call inventory.
+- `上线安装包/上线安装文档清单.md`: production installation checklist.
+- `上线安装包/生产部署拷贝清单.md`: production copy, local-state preservation, and certificate handling checklist.
+- `上线安装包/README_安装步骤.md`: manual installation and upgrade guide.
+- `上线安装包/最终上线部署步骤/README_V2_Windows_Server_上线部署.md`: Windows Server runbook.
 
-- Make the repository private before committing sensitive materials.
-- Grant access only to maintainers who need the SAP RPA source.
-- Do not commit local SAP login config, Netlify tokens, OAuth ticket files, logs, or generated secrets.
-- If a future AI or developer needs credentials, configure them on that computer through the installer/config scripts, not through Git.
+## Runtime Model
 
-## Project Goal
-
-This project provides a lightweight SAP automation portal:
-
-1. A static web portal lets the user choose a transaction code and factory scope.
-2. The page calls the local browser protocol `sap-rpa://`.
-3. A Windows local launcher logs in to SAP GUI and runs the matching VBS automation script.
-4. Netlify hosts the static page. Each execution computer installs the local launcher package.
-
-The current priority is function completion, especially opening/running transaction-code scripts, not building a large scheduling or analytics system.
-
-## Main Runtime Flow
+Current V2 runtime:
 
 ```text
-Netlify/index.html
-  -> sap-rpa://run?tcode=...&script=...&factoryGroup=...&plants=...
-  -> HKCU browser protocol registration
-  -> %LOCALAPPDATA%\SapRpaLauncher\SapWebLauncher.exe
-  -> %LOCALAPPDATA%\SapWebLauncher\config.json
-  -> sapshcut starts SAP GUI
-  -> SAP GUI Scripting runs transactions/<TCODE>.vbs
+https://fi_automation.srv.lstech.com/rpa/
+  -> D:\RPA\gateway\rpa-gateway.js
+  -> http://127.0.0.1:8080/api/*
+  -> D:\RPA\bin\SapWebLauncher.exe --serve
+  -> D:\RPA\data\sap-rpa-config.db
+  -> D:\RPA\transactions\*.vbs
+  -> SAP GUI / SAP NCo / DingTalk OpenAPI
 ```
 
-Important boundary:
+The HTTP compatibility URL is server-specific: `http://<server-ip>:6174/rpa/`. The current integration server uses `http://10.0.41.158:6174/rpa/`; the production system IP is `10.0.2.120`, so its compatibility URL should be `http://10.0.2.120:6174/rpa/`. Do not document the compatibility URL as the primary production URL, and do not copy the integration-server IP into production scripts.
 
-- The web page must not send SAP account/password.
-- The web page currently sends only transaction code, script file, factory group, and selected plants.
-- Year/week/date and other transaction-specific query conditions should be handled inside each VBS script or its top parameter section.
+`D:\RPA\启动脚本\start_sap_rpa_services.cmd` and `check_sap_rpa_services.cmd` pass arguments through to PowerShell. They auto-detect the local IPv4 by default; on production, use `-HttpCompatibilityHost 10.0.2.120` or set `RPA_HTTP_COMPATIBILITY_HOST=10.0.2.120` when the host has multiple NICs.
 
-## Key Directories
+`sap-rpa://` is only a historical compatibility path. It is not the production user entry for the current server deployment.
+
+## Directory Boundaries
+
+- Source repository: `D:\RPA\RpaProject`
+- Runtime root: `D:\RPA`
+- Backend executable: `D:\RPA\bin\SapWebLauncher.exe`
+- Runtime frontend assets: `D:\RPA\assets`
+- Runtime VBS/catalog: `D:\RPA\transactions`
+- Runtime SQLite: `D:\RPA\data\sap-rpa-config.db`
+- Runtime logs: `D:\RPA\logs`
+- Runtime gateway: `D:\RPA\gateway`
+- Runtime startup scripts: `D:\RPA\启动脚本`
+- Real local config: `D:\RPA\config.local.json`
+- Config template: `D:\RPA\config.local.example.json`
+- HTTPS certificate directory: `D:\RPA\certs\lstech.com`
+
+After any source change that affects frontend, transactions, gateway, scripts, docs, or backend code, copy or publish to the runtime directory before testing the public URL. A green source build does not prove the deployed server is running the new version.
+
+## Local Configuration
+
+Production-specific values stay on the machine:
+
+- SAP GUI login config: `%LOCALAPPDATA%\SapWebLauncher\config.json`, protected by Windows DPAPI for the current Windows user.
+- DingTalk and SAP NCo config: `D:\RPA\config.local.json`.
+- Certificates under `D:\RPA\certs\lstech.com`.
+- SQLite, logs, and exported Excel output under `D:\RPA`.
+
+Do not commit these runtime-private files.
+
+## Production Copy Rule
+
+`D:\RPA` can be copied to a production server as a program package, but production-local state must not be overwritten by test-server state. Program files include `index.html`, `assets`, `gateway`, `启动脚本`, `bin`, `transactions`, `依赖\SapNco`, `config.local.example.json`, and docs.
+
+Preserve or recreate production-local state on the target machine:
+
+- `D:\RPA\config.local.json`
+- `D:\RPA\data\sap-rpa-config.db`
+- `D:\RPA\logs\`
+- `D:\RPA\outputs\`
+- `D:\RPA\certs\lstech.com\`
+- `%LOCALAPPDATA%\SapWebLauncher\config.json`
+
+`D:\RPA\certs` is not technically install-only; it can be copied only as controlled production certificate backup/migration material. It must not be included in GitHub, public zip packages, normal program packages, or plaintext chat attachments. After certificate copy or replacement, reset ACLs and verify HTTPS.
+
+The ALV Excel output root is controlled by:
+
+1. Environment variable `SAP_RPA_ALV_EXPORT_DIR`, if set.
+2. `D:\RPA\config.local.json` key `fileStorage.alvExportDataDirectory`.
+3. Default `D:\RPA\临时文件\文件数据`.
+
+For production migration to a network share or another data disk, change `fileStorage.alvExportDataDirectory` in the real runtime config and restart only this project backend.
+
+## Current Transaction Entry Set
+
+The workstation page and execution/schedule dropdowns should expose only the current workbench cards:
+
+- 采购价: `ZFI072A` -> `ZFI072N`
+- 产值拆分: `ZFI057`
+- 实际领料: `ZFIR034` -> `ZFI080` -> `ZFI080B`
+- 标准价: `ZCO019`
+- 周结完工成本明细表: `ZFI019NL`, `ZFI019NA`, `ZFI148`
+
+Current production ALV save/export commitment is limited to these 7 transaction codes:
 
 ```text
-D:\工作\sap_rpa\index.html
+ZFI072A, ZFI072N, ZFI080, ZFI080B, ZCO019, ZFI019NA, ZFI019NL
 ```
 
-Static web portal. Published to Netlify. Also copied to `D:\工作\index.html` for local file preview.
+`ZFI019NI` is an old residual catalog entry from the early design. It has no production VBS and no current workbench entry. Do not reintroduce it into the frontend fallback, default `transaction-config.json`, execution dropdown, schedule dropdown, or save/export checklist.
+
+## ALV Export Rules
+
+Factory-type save transactions write one Excel file per factory:
 
 ```text
-D:\工作\sap_rpa\网页启动登录\SapWebLauncher
+<alvExportDataDirectory>\yyyy_WKnn_工厂\事务码_卡片名称_工厂工厂号_yyyyMMddHHmmss.xlsx
 ```
 
-C#/.NET 8 Windows launcher. It registers and handles `sap-rpa://`, reads local SAP login config, calls `sapshcut`, waits for SAP GUI, and runs VBS scripts.
+If one factory produces multiple windows, such as cross-month date windows, merge only that factory's part files into one final factory Excel and delete the part files. Do not create a cross-factory parent workbook.
 
-```text
-D:\工作\sap_rpa\网页启动登录\transactions
-```
+Business-area save transactions first export a raw workbook, then split by the actual factory column in the workbook. Supported headers include `WERKS`, `Plant Code`, `工厂`, `工厂号`, `工厂代码`, `大BU-工厂`, and `业务范围-小厂`.
 
-Transaction catalog and VBS scripts. Add or replace transaction automation here.
+Do not infer factory from `ZTSD001`, SQLite plant config, local JSON config, business-area input, or static mapping when splitting Excel. If the raw workbook has only headers or no factory data rows, clean the raw file and empty `_raw_business_area` folders and treat it as no data. If there are business rows but no usable factory column or factory value, fail and keep the raw workbook for diagnosis.
 
-```text
-D:\工作\sap_rpa\上线安装包
-```
+## Verification Baseline
 
-Installer source folder. Use it to generate the target-computer package under `D:\工作\SapRpa上线安装包`.
-
-```text
-D:\工作\设计文档
-```
-
-Architecture and design documents outside the repo. Update when implementation direction changes.
-
-## Current Transaction Design
-
-Transaction metadata exists in two places for now:
-
-- Frontend list in `index.html` (`tCodes`, `factoryGroups`, `plantCatalog`).
-- Launcher-side catalog in `网页启动登录\transactions\transaction-config.json`.
-
-When adding a new transaction code, update both until the frontend is changed to load the JSON catalog directly.
-
-Current transaction catalog includes:
-
-```text
-ZFI072A, ZFI085, ZFI014D, ZFI072N, ZFI057, ZCO020, ZPP063, ZPP063X,
-ZFI019NC, ZFI080, ZFI019NI, ZCO019, ZFI019NA, ZFI019NL, ZFI080B, ZFI148
-```
-
-Implemented VBS placeholders:
-
-- `ZFI019NL.vbs`
-- `ZFI072A.vbs`
-
-These scripts currently open the transaction and print calculated parameters. The real recorded SAP GUI actions should replace the `SAP 操作区` section while keeping the parameter calculation and session-waiting code.
-
-## VBS Parameter Pattern
-
-Recorded SAP Script usually contains hard-coded values. Standardize each VBS like this:
-
-```vbscript
-targetDate = DateAdd("d", -7, Date)
-yearValue = Year(targetDate)
-weekValue = DatePart("ww", targetDate, vbMonday, vbFirstFourDays)
-
-' Replace recorded hard-coded values with variables:
-' session.findById("wnd[0]/usr/txtGJAHR").Text = CStr(yearValue)
-' session.findById("wnd[0]/usr/txtWEEK").Text = CStr(weekValue)
-' session.findById("wnd[0]/usr/ctxtWERKS").Text = plantsCsv
-```
-
-Factory scope comes from the page as `plantsCsv` and `factoryGroup`. Other special fields can stay inside the transaction-specific VBS until a later version needs a unified parameter engine.
-
-## Local SAP Login Configuration
-
-On each execution computer, SAP login config is local:
-
-```text
-%LOCALAPPDATA%\SapWebLauncher\config.json
-```
-
-The password is stored as `passwordProtected` through Windows DPAPI for the current Windows user. It cannot be copied directly to another computer or another Windows account.
-
-Configure it by running:
-
-```text
-D:\工作\SapRpa上线安装包\04_配置SAP登录信息.bat
-```
-
-Do not commit this config file or any real SAP password.
-
-## Installer And Registry
-
-The official browser protocol is:
-
-```text
-sap-rpa://
-```
-
-The old temporary `sap-zck://` test protocol should not be installed. The uninstall script can clean old leftovers.
-
-Target computer install order:
-
-1. Copy the whole generated `D:\工作\SapRpa上线安装包` folder to the computer.
-2. Run `01_安装到本机.bat`.
-3. Run `04_配置SAP登录信息.bat`.
-4. Run `02_检测环境.bat`.
-5. Open the Netlify page and execute a transaction.
-
-Registry location:
-
-```text
-HKEY_CURRENT_USER\Software\Classes\sap-rpa
-```
-
-No administrator permission should be required because the protocol is registered under HKCU.
-
-## Build And Verification
-
-Recommended checks before release:
+Minimum verification after deployment or upgrade:
 
 ```powershell
-$node='C:\Users\chen.kai6\.cache\codex-runtimes\codex-primary-runtime\dependencies\node\bin\node.exe'
-& $node -e "const fs=require('fs'); const html=fs.readFileSync('D:/工作/sap_rpa/index.html','utf8'); const scripts=[...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m=>m[1]); for(const s of scripts)new Function(s); console.log('ok', scripts.length);"
-
-$dotnet = Join-Path $env:LOCALAPPDATA 'CodexDotnetSdk8_421\dotnet.exe'
-& $dotnet build 'D:\工作\sap_rpa\网页启动登录\SapWebLauncher\SapWebLauncher.csproj' -c Release
-
-$exe='D:\工作\sap_rpa\网页启动登录\SapWebLauncher\bin\Release\net8.0-windows\SapWebLauncher.exe'
-& $exe test
-
-powershell -ExecutionPolicy Bypass -File 'D:\工作\sap_rpa\上线安装包\scripts\make_package.ps1'
+& "D:\RPA\bin\SapWebLauncher.exe" test
+Invoke-RestMethod "http://127.0.0.1:8080/api/health"
+curl.exe --ssl-no-revoke -s -o NUL -w "HTTPS portal %{http_code}\n" https://fi_automation.srv.lstech.com/rpa/
+curl.exe --ssl-no-revoke -s -o NUL -w "HTTPS API %{http_code}\n" https://fi_automation.srv.lstech.com/rpa/api/health
+curl.exe -s -o NUL -w "HTTP portal %{http_code}\n" http://<server-ip>:6174/rpa/
 ```
 
-## Release Rules
+Health checks are necessary but not sufficient. Before production release, submit a controlled transaction from the real page and verify:
 
-GitHub remote:
+- SQLite has the run and logs.
+- SAP GUI session handling matches expectation.
+- DingTalk send log appears when configured.
+- Save/export transaction output lands under `fileStorage.alvExportDataDirectory`.
+- The enabled transaction API and frontend dropdowns do not expose `ZFI019NI`.
 
-```text
-https://github.com/ckstock/sap_rpa
-```
+## Git Rules
 
-Netlify production site:
-
-```text
-https://hilarious-mandazi-8c2dc7.netlify.app
-Site ID: c6bc6d81-cf7f-4776-95f2-30356a6f342e
-```
-
-Release sequence:
-
-1. Run local validation.
-2. Commit only intended source/docs changes.
-3. Push `main` to GitHub after user approval.
-4. Deploy to the existing Netlify site, not a new site.
-5. Verify the live URL with a cache-busting query string.
-
-User preference: after long editing sessions, ask before committing; roughly every four hours is acceptable. If the user explicitly says to publish, commit/push/deploy can proceed.
-
-## Current Known Gaps
-
-- `ZFI019NL.vbs` and `ZFI072A.vbs` still need real recorded SAP GUI steps inserted into the `SAP 操作区`.
-- Most transaction codes are cataloged but use `openOnly` until their VBS scripts are recorded and added.
-- Frontend transaction metadata and `transaction-config.json` should eventually be unified to avoid double maintenance.
-- Netlify is static hosting. It should not store frequently changed factory data or secrets. If server-side storage is required later, add a real backend or a managed data service.
+Use `git add -- <explicit files>`. Do not use `git add .` in this repository. Keep real `config.local.json`, SQLite, logs, Excel output, certificates, SAP DPAPI config, and private packages out of Git.
