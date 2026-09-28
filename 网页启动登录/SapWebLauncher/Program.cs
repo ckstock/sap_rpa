@@ -5565,7 +5565,16 @@ WHERE task_id=$taskId
 
     static void TriggerScheduleTask(ScheduleTaskDue task, DateTime triggeredAt)
     {
-        long triggerId = InsertScheduleTaskRun(task.Id, "", "schedule", task.ScheduledAt, triggeredAt, "triggering", "");
+        // LoadDueScheduleTasks returns a snapshot. Reclaim the schedule row under
+        // the same SQLite write lock used by deletion so a stale snapshot cannot
+        // create a run after the user has deleted or disabled the task.
+        long triggerId = TryClaimScheduleTaskTrigger(task, triggeredAt);
+        if (triggerId == 0)
+        {
+            Log($"schedule task skipped: task={task.Id}, scheduledAt={task.ScheduledAt}, task was deleted or disabled before trigger");
+            return;
+        }
+
         try
         {
             var request = BuildRunRequestFromSchedule(task);
@@ -6057,6 +6066,47 @@ WHERE tcode=$tcode AND enabled=1;
         {
             foreach (string existingKey in values.Keys.Where(k => k.Equals(key, StringComparison.OrdinalIgnoreCase)).ToList())
                 values.Remove(existingKey);
+        }
+    }
+
+    static long TryClaimScheduleTaskTrigger(ScheduleTaskDue task, DateTime triggeredAt)
+    {
+        using var connection = OpenDatabaseConnection();
+        BeginImmediateTransaction(connection);
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText = """
+INSERT INTO schedule_task_runs(task_id, run_id, trigger_type, scheduled_at, triggered_at, status, message, created_at)
+SELECT $taskId, '', 'schedule', $scheduledAt, $triggeredAt, 'triggering', '', $createdAt
+WHERE EXISTS (
+    SELECT 1
+    FROM schedule_tasks
+    WHERE id=$taskId
+      AND enabled=1
+)
+  AND NOT EXISTS (
+    SELECT 1
+    FROM schedule_task_runs
+    WHERE task_id=$taskId
+      AND scheduled_at=$scheduledAt
+      AND trigger_type='schedule'
+  );
+SELECT CASE WHEN changes() > 0 THEN last_insert_rowid() ELSE 0 END;
+""";
+            string now = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            command.Parameters.AddWithValue("$taskId", task.Id);
+            command.Parameters.AddWithValue("$scheduledAt", task.ScheduledAt);
+            command.Parameters.AddWithValue("$triggeredAt", triggeredAt.ToString("yyyy-MM-dd HH:mm:ss"));
+            command.Parameters.AddWithValue("$createdAt", now);
+            long triggerId = Convert.ToInt64(command.ExecuteScalar() ?? 0L, CultureInfo.InvariantCulture);
+            CommitImmediateTransaction(connection);
+            return triggerId;
+        }
+        catch
+        {
+            RollbackImmediateTransaction(connection);
+            throw;
         }
     }
 
