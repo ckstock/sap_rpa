@@ -90,7 +90,7 @@ SapWebLauncher.exe --serve
 
 此时 `/api/health` 会返回 `queueMode: "disabled"`，`POST /api/runs` 仍会写入 SQLite，但不会执行 SAP GUI。正式服务器执行时不要设置这个环境变量。
 
-不要把 SAP GUI 自动化做成纯 Session 0 Windows Service。建议在服务器上使用固定 Windows 执行账号登录桌面后，通过任务计划程序“用户登录时启动”运行：
+生产环境默认使用固定 Windows 执行账号注册 `AtLogon + Interactive + Limited` 任务启动 API、网关、监控和 SAP GUI；服务器重启后由 `marcus` 登录堡垒机触发，窗口在该可视桌面中运行。其他堡垒机用户登录不会重启或接管 API。无人登录时可显式注册 `-TriggerMode AtStartup`，此时运行在 Session 0，SAP GUI/VBS 可执行但窗口不可见。
 
 ```powershell
 SapWebLauncher.exe --serve

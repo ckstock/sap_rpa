@@ -11,7 +11,7 @@
 3. 手工登录 SAP 成功，目标事务码权限可用。
 4. 目标服务器已有 Git、.NET 8 SDK 或可用的打包产物。
 5. 已确认运行目录、端口、对外路径、防火墙和访问入口。
-6. SAP GUI 自动化不要跑在纯 Session 0 Windows Service 中。
+6. 生产 API/网关默认由固定 `marcus` 执行账号的 `AtLogon + Interactive` 任务启动，服务器重启后由 `marcus` 登录触发，SAP GUI/VBS 在可视桌面运行；其他堡垒机用户登录不会重启或接管 API。若必须无人登录运行，显式使用 `-TriggerMode AtStartup`，接受 Session 0 窗口不可见。
 
 ## 2. 必填参数
 

@@ -660,7 +660,7 @@ async function pollRun(runId) {
         </tbody>
       </table>
       <div class="solution-box"><strong>渲染规则：</strong>页面定时轮询 <code>GET /api/runs/{runId}</code>，把 <code>run.logs</code>、<code>logs</code>、<code>resultLogs</code> 与本轮前端即时日志去重合并，再按时间顺序渲染到黑底日志框。它不是把日志永久保存到浏览器；持久状态以 SQLite 和 API 返回为准。</div>
-      <div class="warning-box"><strong>运行方式：</strong>SAP GUI 自动化不能作为纯 Session 0 Windows Service 运行。生产建议用任务计划程序，在固定 Windows 执行账号登录后启动 <code>SapWebLauncher.exe --serve</code>。</div>
+      <div class="warning-box"><strong>运行方式：</strong>生产 API、网关和 SAP GUI/VBS 执行器默认由固定 Windows 执行账号的 <code>AtLogon + Interactive + Limited</code> 任务启动；服务器重启后由 <code>marcus</code> 登录触发，运行在可视桌面。其他堡垒机用户登录不会重启或接管 API。只有明确接受窗口不可见时才使用 <code>AtStartup</code> Session 0 模式。</div>
     </section>
 
     <section id="frontend" class="section">

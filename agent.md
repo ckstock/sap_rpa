@@ -131,8 +131,8 @@ SapWebLauncher 后端要按可维护、可运维、可扩展的设计模式实�
 5. `config.local.json` 只能在目标服务器本机生成或由管理员现场填写。Git 和安装包里只能放 `config.local.example.json` 这类占位模板。
 6. 安装包不得复制开发机数据库、日志、导出文件、真实本机配置、SAP 登录配置、真实钉钉密钥或个人路径。模块化后只复制 `index.html` 不复制 `assets/js` 会导致页面白屏或按钮无响应。
 7. SQLite 数据库初始化必须区分“新装”和“升级”。升级默认保留数据库；如果要重建，必须先备份并明确说明会丢失的配置、运行历史和日志。
-8. SAP GUI 自动化依赖交互式 Windows 桌面会话，不能按普通 Windows Service 在 Session 0 中直接执行 VBS。部署时必须使用固定 Windows 执行账号登录桌面，或使用“用户登录后启动”的计划任务承载 SAP GUI 执行器。
-9. 本地 API 可以做后台常驻进程或服务；SAP GUI/VBS 执行必须绑定到可交互桌面，并保持串行队列，避免多个任务同时操作同一个 SAP GUI 会话。
+8. 生产 SAP GUI 自动化默认由固定 Windows 执行账号的 `AtLogon + Interactive + Limited` 计划任务承载，服务器重启后由 `marcus` 登录触发并在可视桌面执行；不能把其他堡垒机用户登录当成启动或接管条件。需要无人登录时，必须显式改用 `AtStartup`，接受 Session 0 窗口不可见。
+9. 本地 API 可以做后台常驻进程；SAP GUI/VBS 执行必须保持串行队列，避免多个任务同时操作同一个 SAP GUI 会话。可视化模式下 API 只启动一次，其他用户登录不重启它；模式切换前必须确认队列为空。
 10. 验收不能停在 API `/api/health`。必须从网页提交一次受控任务，确认 SQLite 有 run/log，VBS 从运行目录读取最新脚本，SAP ready session 可复用，钉钉启用时日志出现 `sap dingtalk openapi sent`。
 13. 升级包必须支持备份和回滚：至少备份当前程序目录、`config.local.json`、SQLite 数据库和关键脚本；失败时不得留下半升级状态。
 14. 卸载逻辑不得默认删除 SQLite 生产数据库、日志和本机凭据。删除数据必须单独确认。

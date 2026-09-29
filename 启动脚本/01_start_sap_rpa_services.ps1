@@ -91,9 +91,23 @@ function Resolve-HttpCompatibilityHost {
     return "127.0.0.1"
 }
 
-$launcherProcess = Get-CimInstance Win32_Process |
-    Where-Object { $_.Name -eq "SapWebLauncher.exe" -and $_.CommandLine -and $_.CommandLine -like "*$Launcher*--serve*" } |
-    Select-Object -First 1
+$launcherProcess = $null
+try {
+    $launcherProcess = Get-CimInstance Win32_Process |
+        Where-Object { $_.Name -eq "SapWebLauncher.exe" -and $_.CommandLine -and $_.CommandLine -like "*$Launcher*--serve*" } |
+        Select-Object -First 1
+}
+catch {
+    Write-Warning "WMI process inspection is unavailable; falling back to the current user's SapWebLauncher process list."
+    $fallback = Get-Process -Name "SapWebLauncher" -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($fallback) {
+        $launcherProcess = [pscustomobject]@{
+            ProcessId = $fallback.Id
+            CreationDate = $fallback.StartTime
+            CommandLine = "fallback-process-list"
+        }
+    }
+}
 
 if ($launcherProcess -and $RestartLauncher) {
     Write-Host "Restarting SapWebLauncher API. PID=$($launcherProcess.ProcessId)"

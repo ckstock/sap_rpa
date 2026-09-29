@@ -156,7 +156,7 @@ Get-Content $out
 | --- | --- |
 | 前端 | `index.html`、`assets\js\*.js` |
 | 网关 | `gateway\rpa-gateway.js`、`gateway\start-rpa-gateway.ps1` |
-| 启动脚本 | `启动脚本\00_register_sap_gui_components.cmd`、`00_register_sap_gui_components.ps1`、`start_sap_rpa_services.cmd`、`check_sap_rpa_services.cmd`、`01_start_sap_rpa_services.ps1`、`02_check_sap_rpa_services.ps1`、`gitnexus.cmd`、`gitnexus.ps1` |
+| 启动脚本 | `启动脚本\00_register_sap_gui_components.cmd`、`00_register_sap_gui_components.ps1`、`start_sap_rpa_services.cmd`、`check_sap_rpa_services.cmd`、`01_start_sap_rpa_services.ps1`、`02_check_sap_rpa_services.ps1`、`04_monitor_sap_rpa_services.ps1`、`05_register_sap_rpa_startup_monitor.ps1`、`gitnexus.cmd`、`gitnexus.ps1` |
 | NCo 依赖源 | `依赖\SapNco\sapnco.dll`、`sapnco_utils.dll`、`ijwhost.dll`、`cpc4n.dll` |
 | 后端 | `dotnet publish` 后的全部输出复制到 `D:\RPA\bin\`，不能只替换 `SapWebLauncher.exe` 或单个 dll；否则 NCo、Excel 文件处理或后续报表处理依赖可能缺失 |
 | 事务脚本 | `网页启动登录\transactions\*.vbs` 和 `transaction-config.json` 复制到 `D:\RPA\transactions\` |
@@ -211,6 +211,27 @@ powershell -ExecutionPolicy Bypass -File "D:\RPA\gateway\start-rpa-gateway.ps1"
 ```text
 D:\RPA\启动脚本\start_sap_rpa_services.cmd
 ```
+
+## 服务器启动任务与堡垒机登录边界
+
+API 和网关不应依赖堡垒机用户登录。首次上线或调整固定执行账号后，使用管理员 PowerShell 运行：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\RPA\启动脚本\05_register_sap_rpa_startup_monitor.ps1" -RunAsUser "域\SAP执行账号" -HttpCompatibilityHost 10.0.2.120
+```
+
+脚本默认将 `SAP_RPA_AutoStart`、`SAP_RPA_StartupMonitor` 注册为固定 `marcus` 账号的 `AtLogon + Interactive + Limited` 任务。服务器重启后，`marcus` 登录堡垒机时 API、网关、监控和 SAP GUI 在可视桌面启动；其他堡垒机账号登录、退出或切换不会重启或接管它。需要无人登录运行时，才显式使用 `-TriggerMode AtStartup`，接受 Session 0 中 GUI 窗口不可见。这个账号必须和生成 `%LOCALAPPDATA%\SapWebLauncher\config.json` 的账号一致，因为 SAP 密码由该 Windows 用户的 DPAPI 保护。
+
+启动脚本是幂等的：API 已运行则复用，6174/443 已有监听则复用对应网关，不会为了登录或重复执行而停止其他 Node 进程。SAP GUI/VBS 仍需要可交互的 SAP GUI 桌面会话；API/网关的服务器启动不等同于 SAP GUI 已登录。
+
+注册后核对：
+
+```powershell
+schtasks.exe /query /tn SAP_RPA_AutoStart /xml
+schtasks.exe /query /tn SAP_RPA_StartupMonitor /xml
+```
+
+XML 中必须是启动触发器，不得再出现 `LogonTrigger`。服务器重启后检查 `127.0.0.1:8080`、`0.0.0.0:6174` 和 `0.0.0.0:443`，再登录任意堡垒机账号，核对 API 和两个 Node 进程 PID 不发生变化。
 
 启动后检查：
 ```text
