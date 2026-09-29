@@ -546,7 +546,7 @@
             <tr><td>HTTP 兼容入口</td><td><code>http://10.0.2.120:6174/rpa/</code>，仅作内网兼容和排障使用；不替代 HTTPS 正式入口。</td></tr>
             <tr><td>前端启动依赖</td><td>Lucide 图标脚本固定从项目内 <code>assets/vendor/lucide-1.33.0.min.js</code> 加载，不依赖外网 CDN；图标资源异常不得阻断 API 健康检查、配置加载或定时任务保存。保存定时任务时若前端状态暂时离线，页面先自动重新检查执行服务器 API，确认仍不可用才拒绝保存。</td></tr>
             <tr><td>本机 API</td><td><code>SapWebLauncher.exe --serve</code> 仅监听 <code>127.0.0.1:8080</code>，gateway 将 <code>/rpa/api/*</code> 转发给该本机 API。</td></tr>
-            <tr><td>服务器启动恢复</td><td>生产默认模式下 <code>SAP_RPA_AutoStart</code> 和 <code>SAP_RPA_StartupMonitor</code> 以固定执行账号 <code>marcus</code> 注册为 Windows <code>AtLogon + Interactive + Limited</code> 任务。服务器重启后，<code>marcus</code> 登录堡垒机时 API、网关、监控和 SAP GUI 执行器在该可视桌面启动；监控持续每 10 秒检查本机 API 和 6174 gateway。需要无人登录运行时，才显式使用注册脚本的 <code>-TriggerMode AtStartup</code>。</td></tr>
+            <tr><td>服务器启动恢复</td><td>生产默认模式下 <code>SAP_RPA_AutoStart</code> 和 <code>SAP_RPA_StartupMonitor</code> 以固定执行账号 <code>marcus</code> 注册为 Windows <code>AtLogon + Interactive + Limited</code> 任务。服务器重启后，<code>marcus</code> 登录堡垒机时 API、网关、监控和 SAP GUI 执行器在该可视桌面启动；监控持续每 10 秒检查本机 API 和 6174 gateway。其他堡垒机账号登录、退出或切换不会启动、重启或接管 API；只有 marcus 注销会结束 Session 2，锁屏不影响运行。正常修改 marcus 密码不影响任务，强制重置密码或重建用户配置文件后需验证并可能重新配置 DPAPI SAP 登录信息。需要无人登录运行时，才显式使用注册脚本的 <code>-TriggerMode AtStartup</code>。</td></tr>
             <tr><td>SAP GUI 可见性</td><td>默认生产自动化运行在 <code>marcus</code> 登录后的交互式 Windows Session 2，SAP GUI/VBS 窗口可见。其他堡垒机用户登录不会重启或接管 API。若显式使用 <code>AtStartup</code>，则 SAP GUI/VBS 可在 Session 0 执行但窗口不可见；切换模式前必须确认队列为空。</td></tr>
           </tbody>
         </table>
