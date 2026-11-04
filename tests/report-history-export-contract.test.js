@@ -106,7 +106,7 @@ context.bridgeFetch = async path => {
     operatorName: "测试用户",
     scheduleTaskId: runId === "RUN-1" ? "SCH-001" : "",
     scheduleTaskName: runId === "RUN-1" ? "周报任务" : "",
-    scheduleSetter: runId === "RUN-1" ? "MiRO Wang/王淼榕" : "",
+    scheduleSetter: runId === "RUN-1" ? "Test User/测试用户" : "",
     status: "success",
     requestJson,
     durationMs: 1234,
@@ -164,7 +164,7 @@ context.bridgeFetch = async path => {
   assert.match(csv, /定时任务名称/);
   assert.match(csv, /设置人/);
   assert.match(csv, /SCH-001/);
-  assert.match(csv, /MiRO Wang\/王淼榕/);
+  assert.match(csv, /Test User\/测试用户/);
   assert.match(csv, /执行参数/);
   assert.match(csv, /1022,1032/);
   assert.match(csv, /2900,9200/);

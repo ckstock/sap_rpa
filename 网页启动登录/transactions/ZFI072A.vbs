@@ -411,16 +411,6 @@ Function WaitForPostExecuteReady(timeoutMs)
             End If
          End If
          Err.Clear
-         If ObjectIsEnabled("wnd[0]/tbar[1]/btn[14]") Then
-            WScript.Echo "INFO: SAP execute processing finished, save button is enabled"
-            WaitForPostExecuteReady = True
-            Exit Function
-         End If
-         If ObjectIsEnabled("wnd[0]/tbar[1]/btn[11]") Then
-            WScript.Echo "INFO: SAP execute processing finished, alternate save button is enabled"
-            WaitForPostExecuteReady = True
-            Exit Function
-         End If
           If ObjectIsEnabled("wnd[0]/tbar[1]/btn[43]") Then
              WScript.Echo "INFO: SAP execute processing finished, ALV export button is enabled"
              WaitForPostExecuteReady = True
@@ -451,13 +441,71 @@ Function WaitForPostExecuteReady(timeoutMs)
 End Function
 
 Function PressSaveAfterReady(timeoutMs)
+   Dim saveButtonIds, waited
+   saveButtonIds = Array("wnd[0]/tbar[1]/btn[14]")
    PressSaveAfterReady = False
-   If Not WaitForAnyEnabledObject("save button", Array("wnd[0]/tbar[1]/btn[14]", "wnd[0]/tbar[1]/btn[11]"), timeoutMs) Then
-      EmitError "save button not enabled after SAP execute processing"
-      EchoSessionContext "ERROR_CONTEXT"
+   waited = 0
+   Do While waited <= timeoutMs
+      If WaitForAnyObject("save button", saveButtonIds, 0) Then
+         If WaitForSessionReady(1000) Then
+            EchoSaveButtonProperties "wnd[0]/tbar[1]/btn[14]"
+            WScript.Echo "INFO: save button object exists; attempting recorded SAP press without Enabled gate"
+            If PressButtonByCandidates("save", saveButtonIds) Then
+               PressSaveAfterReady = True
+               Exit Function
+            End If
+         End If
+      End If
+      Err.Clear
+      WScript.Sleep 200
+      waited = waited + 200
+   Loop
+   EmitError "SAP save button could not be pressed after ALV export"
+   EchoSessionContext "ERROR_CONTEXT"
+End Function
+
+Sub EchoSaveButtonProperties(id)
+   Dim obj, propertyValue
+   On Error Resume Next
+   WScript.Echo "INFO: recorded save control id=" & CStr(id)
+   Set obj = session.findById(CStr(id))
+   If Err.Number <> 0 Or Not IsObject(obj) Then
+      WScript.Echo "INFO: recorded save control lookup failed"
+      Err.Clear
+      Exit Sub
+   End If
+   For Each propertyValue In Array("Text", "Tooltip", "IconName", "Enabled", "Visible")
+      Err.Clear
+      Select Case CStr(propertyValue)
+         Case "Text": WScript.Echo "INFO: recorded save control Text=" & CStr(obj.Text)
+         Case "Tooltip": WScript.Echo "INFO: recorded save control Tooltip=" & CStr(obj.Tooltip)
+         Case "IconName": WScript.Echo "INFO: recorded save control IconName=" & CStr(obj.IconName)
+         Case "Enabled": WScript.Echo "INFO: recorded save control Enabled=" & CStr(obj.Enabled)
+         Case "Visible": WScript.Echo "INFO: recorded save control Visible=" & CStr(obj.Visible)
+      End Select
+      If Err.Number <> 0 Then
+         WScript.Echo "INFO: recorded save control " & CStr(propertyValue) & "=<unavailable>"
+         Err.Clear
+      End If
+   Next
+End Sub
+
+Function IsExplicitSaveSuccessText(value)
+   Dim text
+   text = LCase(Trim(CStr(value)))
+   IsExplicitSaveSuccessText = False
+   If text = "" Then Exit Function
+   If InStr(text, LCase(ChrW(&H5BFC) & ChrW(&H5165) & ChrW(&H6210) & ChrW(&H529F))) > 0 Then
+      IsExplicitSaveSuccessText = True
       Exit Function
    End If
-   PressSaveAfterReady = PressButtonByCandidates("save", Array("wnd[0]/tbar[1]/btn[14]", "wnd[0]/tbar[1]/btn[11]"))
+   If InStr(text, LCase(ChrW(&H4FDD) & ChrW(&H5B58) & ChrW(&H6210) & ChrW(&H529F))) > 0 Then
+      IsExplicitSaveSuccessText = True
+      Exit Function
+   End If
+   If InStr(text, "save successful") > 0 Or InStr(text, "saved successfully") > 0 Then
+      IsExplicitSaveSuccessText = True
+   End If
 End Function
 
 Function WaitForSaveComplete(timeoutMs)
@@ -478,11 +526,16 @@ Function WaitForSaveComplete(timeoutMs)
                Err.Clear
                Exit Function
             End If
+            If Not IsExplicitSaveSuccessText(statusText) Then
+               WScript.Echo "INFO: SAP save status is not an explicit success message yet"
+               Err.Clear
+            Else
+               WaitForSaveComplete = True
+               Exit Function
+            End If
          Else
             Err.Clear
          End If
-         WaitForSaveComplete = True
-         Exit Function
       End If
       WScript.Sleep 1000
       waited = waited + 1000
@@ -1073,7 +1126,6 @@ Sub EchoSessionContext(prefix)
    WScript.Echo prefix & ": screen=" & SafeSessionValue(session, "ScreenNumber")
    WScript.Echo prefix & ": btn43=" & SafeSessionObjectEnabled("wnd[0]/tbar[1]/btn[43]")
    WScript.Echo prefix & ": btn14=" & SafeSessionObjectEnabled("wnd[0]/tbar[1]/btn[14]")
-   WScript.Echo prefix & ": btn11=" & SafeSessionObjectEnabled("wnd[0]/tbar[1]/btn[11]")
 End Sub
 
 Sub EmitSapGuiDiagnostics(reason)
@@ -1517,7 +1569,18 @@ Else
       StopIfFatal "after missing ALV ready marker"
       WScript.Quit fatalExitCode
    End If
-   WScript.Echo "INFO: ALV export completed; skip SAP save for ZFI072A report output"
+   WScript.Echo "INFO: ALV export completed; press SAP save for ZFI072A report output"
+   If Not PressSaveAfterReady(saveButtonTimeoutMs) Then
+      If Not fatalError Then FailAndQuit "SAP save button could not be pressed after ALV export", 8
+      WScript.Quit fatalExitCode
+   End If
+   StopIfFatal "after PressSaveAfterReady"
+   If fatalError Then WScript.Quit fatalExitCode
+   If Not WaitForSaveComplete(saveTimeoutMs) Then
+      If Not fatalError Then FailAndQuit "SAP save did not complete after ALV export", 8
+      WScript.Quit fatalExitCode
+   End If
+   WScript.Echo "INFO: SAP save completed for ZFI072A report output"
 End If
 
 If Not noDataResult Then

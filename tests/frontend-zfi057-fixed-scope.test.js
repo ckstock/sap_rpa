@@ -178,7 +178,7 @@ async function runInPortal(code) {
   assert.equal(result.normalizedMonthly.weekday, "friday");
   assert.equal(result.normalizedMonthly.frequency, "\u6BCF\u6708\u9996\u4E2A\u5468\u4E94");
   assert.equal(result.normalizedMonthly.time, "20:00");
-  assert.equal(await runInPortal('return isSaveActionTransaction({ code: "ZFI057", name: "产值拆分" })'), true);
+  assert.equal(await runInPortal('return isSaveActionTransaction({ code: "ZFI057", name: "产值拆分" })'), false);
 
   const monthlyPayload = await runInPortal(`
     state.scheduleForm = {

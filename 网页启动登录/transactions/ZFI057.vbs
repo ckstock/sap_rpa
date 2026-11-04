@@ -238,6 +238,7 @@ End Function
 Sub ResolveZfi057DateWindows()
    Dim parsedStart, parsedEnd, defaultStart, defaultEnd
    Dim firstOfStartMonth, firstOfEndMonth, releaseMonthStart, currentMonthStart, currentMonthEnd
+   Dim windowHigh, kadatWindowStart
    defaultStart = DateAdd("d", -7, WeekStart(Date))
    defaultEnd = DateAdd("d", 6, defaultStart)
    parsedStart = ParseDateOrEmpty(periodValue)
@@ -254,26 +255,36 @@ Sub ResolveZfi057DateWindows()
    firstOfEndMonth = DateSerial(Year(parsedEnd), Month(parsedEnd), 1)
    If Year(parsedStart) = Year(parsedEnd) And Month(parsedStart) = Month(parsedEnd) Then
       runCount = 1
+      If parsedEnd = firstOfStartMonth Then
+         kadatWindowStart = firstOfStartMonth
+      Else
+         kadatWindowStart = DateAdd("d", 1, firstOfStartMonth)
+      End If
       kadkyLow(1) = FormatSapDate(firstOfStartMonth)
       kadkyHigh(1) = FormatSapDate(parsedEnd)
-      kadatLow(1) = FormatSapDate(DateAdd("d", 1, firstOfStartMonth))
+      kadatLow(1) = FormatSapDate(kadatWindowStart)
       kadatHigh(1) = FormatSapDate(parsedEnd)
    Else
       runCount = 0
       releaseMonthStart = PreviousReleaseMonthStart(parsedEnd)
       currentMonthStart = releaseMonthStart
       Do While currentMonthStart <= firstOfEndMonth
-         runCount = runCount + 1
          currentMonthEnd = DateAdd("d", -1, DateAdd("m", 1, currentMonthStart))
-         kadkyLow(runCount) = FormatSapDate(currentMonthStart)
          If Year(currentMonthStart) = Year(firstOfEndMonth) And Month(currentMonthStart) = Month(firstOfEndMonth) Then
-            kadkyHigh(runCount) = FormatSapDate(parsedEnd)
-            kadatHigh(runCount) = FormatSapDate(parsedEnd)
+            windowHigh = parsedEnd
          Else
-            kadkyHigh(runCount) = FormatSapDate(currentMonthEnd)
-            kadatHigh(runCount) = FormatSapDate(currentMonthEnd)
+            windowHigh = currentMonthEnd
          End If
-         kadatLow(runCount) = FormatSapDate(DateAdd("d", 1, currentMonthStart))
+         If windowHigh = currentMonthStart Then
+            kadatWindowStart = currentMonthStart
+         Else
+            kadatWindowStart = DateAdd("d", 1, currentMonthStart)
+         End If
+         runCount = runCount + 1
+         kadkyLow(runCount) = FormatSapDate(currentMonthStart)
+         kadkyHigh(runCount) = FormatSapDate(windowHigh)
+         kadatLow(runCount) = FormatSapDate(kadatWindowStart)
+         kadatHigh(runCount) = FormatSapDate(windowHigh)
          currentMonthStart = DateAdd("m", 1, currentMonthStart)
       Loop
    End If
@@ -411,15 +422,25 @@ Sub SetClipboardText(value, expectedLineCount, label)
    psScript = "param([string]$Path)" & vbCrLf & _
       "Add-Type -AssemblyName System.Windows.Forms" & vbCrLf & _
       "$text = [System.IO.File]::ReadAllText($Path, [System.Text.Encoding]::Unicode)" & vbCrLf & _
-      "[System.Windows.Forms.Clipboard]::SetText($text, [System.Windows.Forms.TextDataFormat]::UnicodeText)" & vbCrLf & _
-      "Start-Sleep -Milliseconds 200" & vbCrLf & _
-      "$actual = [System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::UnicodeText)" & vbCrLf & _
-      "if ($actual -ne $text) {" & vbCrLf & _
-      "  [Console]::Error.WriteLine(('clipboard verify failed; expectedLength={0}; actualLength={1}' -f $text.Length, $actual.Length))" & vbCrLf & _
-      "  exit 2" & vbCrLf & _
+      "$lastError = ''" & vbCrLf & _
+      "for ($attempt = 1; $attempt -le 6; $attempt++) {" & vbCrLf & _
+      "  try {" & vbCrLf & _
+      "    [System.Windows.Forms.Clipboard]::SetDataObject($text, $true, 8, 100)" & vbCrLf & _
+      "    Start-Sleep -Milliseconds (250 + ($attempt * 100))" & vbCrLf & _
+      "    $actual = [System.Windows.Forms.Clipboard]::GetText([System.Windows.Forms.TextDataFormat]::UnicodeText)" & vbCrLf & _
+      "    if ($actual -ceq $text) {" & vbCrLf & _
+      "      $lineCount = (($actual -split ""`r?`n"") | Where-Object { $_.Trim().Length -gt 0 }).Count" & vbCrLf & _
+      "      [Console]::Out.WriteLine(('clipboard verified length={0}; lines={1}; attempts={2}' -f $text.Length, $lineCount, $attempt))" & vbCrLf & _
+      "      exit 0" & vbCrLf & _
+      "    }" & vbCrLf & _
+      "    $lastError = ('clipboard verify failed; attempt={0}; expectedLength={1}; actualLength={2}' -f $attempt, $text.Length, $actual.Length)" & vbCrLf & _
+      "  } catch {" & vbCrLf & _
+      "    $lastError = ('clipboard operation failed; attempt={0}; error={1}' -f $attempt, $_.Exception.Message)" & vbCrLf & _
+      "  }" & vbCrLf & _
+      "  Start-Sleep -Milliseconds (150 + ($attempt * 100))" & vbCrLf & _
       "}" & vbCrLf & _
-      "$lineCount = (($actual -split ""`r?`n"") | Where-Object { $_.Trim().Length -gt 0 }).Count" & vbCrLf & _
-      "[Console]::Out.WriteLine(('clipboard verified length={0}; lines={1}' -f $text.Length, $lineCount))" & vbCrLf
+      "[Console]::Error.WriteLine($lastError)" & vbCrLf & _
+      "exit 2" & vbCrLf
    Set scriptStream = fso.OpenTextFile(scriptFile, 2, True, False)
    scriptStream.Write psScript
    scriptStream.Close

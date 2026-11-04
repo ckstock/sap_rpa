@@ -482,17 +482,9 @@
     }
 
     function isSaveActionTransaction(item) {
-      const saveActionCodes = new Set(["ZFI072A", "ZFI072N", "ZFI080", "ZFI080B", "ZCO019", "ZFI019NA", "ZFI019NL", "ZFI057", "ZFI148", "ZFIR034"]);
+      const saveActionCodes = new Set(["ZFI072A", "ZFI072N", "ZFI080", "ZFI080B", "ZCO019", "ZFI019NA", "ZFI019NL", "ZFI148"]);
       const code = String(item.runCode || item.code || "").trim().toUpperCase();
-      const text = [
-        item.name,
-        item.displayName,
-        item.dashboardNote,
-        item.factoryRule,
-        item.script,
-        item.scriptFile
-      ].filter(Boolean).join(" ");
-      return saveActionCodes.has(code) || /保存|导出|save\/export|save button|export/i.test(text);
+      return saveActionCodes.has(code);
     }
 
     function quickAction(code, desc, moduleName, iconName) {

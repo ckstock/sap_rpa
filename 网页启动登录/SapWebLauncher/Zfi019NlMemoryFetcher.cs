@@ -108,6 +108,15 @@ internal sealed class Zfi019NlFetchResult
     public bool DongtaiOnly800 { get; init; }
 }
 
+internal sealed class Zfi019NlCompanyCodeResolution
+{
+    public bool Success { get; init; }
+    public bool Applies { get; init; }
+    public string BusinessArea { get; init; } = "";
+    public string CompanyCode { get; init; } = "";
+    public string Message { get; init; } = "";
+}
+
 internal sealed class SapJobStatusQuery
 {
     public string JobName { get; init; } = "";
@@ -428,8 +437,15 @@ internal sealed class Zfi019NlMemoryFetcher
 
     private const string SapApiGatewayFunctionName = "ZFI_SAP_API_GATEWAY";
     private const string ReportSource = "ZFI019NL";
+    private const string BusinessAreaCompanyCodeTable = "ZFIT_RPA_BUKRS";
+    private const string CompanyCodeField = "BUKRS";
 
     private static readonly string[] BusinessAreaNames = { "GSBER", "S_GSBER", "业务范围" };
+    private static readonly string[] CompanyCodeNames = { "BUKRS", "S_BUKRS", "公司代码" };
+    private static readonly HashSet<string> CompanyCodeRequiredBusinessAreas = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "1440", "1180", "4330"
+    };
     private static readonly string[] PostingDateNames = { "S_BUDAT", "BUDAT", "过账日期" };
     private static readonly string[] ProductMaterialNames = { "SMATNR", "所属成品" };
     private static readonly string[] InboundMaterialNames = { "MATNR", FinalMaterialColumn };
@@ -450,7 +466,11 @@ internal sealed class Zfi019NlMemoryFetcher
 
         try
         {
-            options = BuildOptions(request, memoryId, memoryName);
+            var companyCode = ResolveSpecialCompanyCode(connectionConfig, GetRequestedBusinessAreas(request));
+            if (!companyCode.Success)
+                return Error(4, companyCode.Message, "RFC_READ_TABLE", options);
+
+            options = BuildOptions(request, memoryId, memoryName, companyCode.CompanyCode);
             var input = JsonSerializer.Serialize(new
             {
                 method = "MEMORY_EXPORT",
@@ -576,7 +596,7 @@ internal sealed class Zfi019NlMemoryFetcher
         }
     }
 
-    private static string BuildOptions(Zfi019NlFetchRequest request, string memoryId, string memoryName)
+    private static string BuildOptions(Zfi019NlFetchRequest request, string memoryId, string memoryName, string companyCode)
     {
         var tokens = new List<string> { $"MEMORY_ID={Check(memoryId)}", $"MEMORY_NAME={Check(memoryName)}" };
         var conditions = request.Conditions.ToList();
@@ -590,6 +610,18 @@ internal sealed class Zfi019NlMemoryFetcher
                 Sign = "I",
                 Option = "EQ"
             }));
+        }
+        if (!string.IsNullOrWhiteSpace(companyCode))
+        {
+            conditions.RemoveAll(x => IsCompanyCode(x.Selname));
+            conditions.Add(new Zfi019NlSelection
+            {
+                Selname = "S_BUKRS",
+                Low = companyCode.Trim(),
+                Kind = "S",
+                Sign = "I",
+                Option = "EQ"
+            });
         }
 
         foreach (var condition in conditions)
@@ -617,6 +649,150 @@ internal sealed class Zfi019NlMemoryFetcher
         }
 
         return string.Join(';', tokens);
+    }
+
+    internal static string BuildOptionsForTest(Zfi019NlFetchRequest request, string companyCode)
+        => BuildOptions(request, "%ZFI019NA%", "GT_ALV", companyCode);
+
+    internal static bool RequiresSpecialCompanyCode(string? businessArea)
+        => CompanyCodeRequiredBusinessAreas.Contains(Normalize(businessArea));
+
+    internal static Zfi019NlCompanyCodeResolution ResolveSpecialCompanyCode(
+        SapNcoConnectionConfig connectionConfig,
+        IEnumerable<string> businessAreas)
+    {
+        ArgumentNullException.ThrowIfNull(connectionConfig);
+
+        string[] areas = businessAreas
+            .Select(Normalize)
+            .Where(value => value.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        string[] specialAreas = areas.Where(RequiresSpecialCompanyCode).ToArray();
+        if (specialAreas.Length == 0)
+        {
+            return new Zfi019NlCompanyCodeResolution
+            {
+                Success = true,
+                Message = $"{BusinessAreaCompanyCodeTable} company-code lookup not required."
+            };
+        }
+
+        if (areas.Length != 1 || specialAreas.Length != 1)
+        {
+            return new Zfi019NlCompanyCodeResolution
+            {
+                Message = "ZFI019NL special company-code lookup requires exactly one S_GSBER business area per execution."
+            };
+        }
+
+        string area = specialAreas[0];
+        if (!connectionConfig.IsComplete(out string configError))
+        {
+            return new Zfi019NlCompanyCodeResolution
+            {
+                Applies = true,
+                BusinessArea = area,
+                Message = $"{BusinessAreaCompanyCodeTable} company-code lookup cannot start: {configError}"
+            };
+        }
+
+        try
+        {
+            var destination = SapRpaNcoDestinationProvider.GetDestination(connectionConfig);
+            var function = destination.Repository.CreateFunction("RFC_READ_TABLE");
+            function.SetValue("QUERY_TABLE", BusinessAreaCompanyCodeTable);
+            function.SetValue("DELIMITER", "|");
+            function.SetValue("ROWCOUNT", 0);
+
+            var options = function.GetTable("OPTIONS");
+            options.Append();
+            options.SetValue("TEXT", $"GSBER = '{EscapeSqlLiteral(area)}'");
+
+            var fields = function.GetTable("FIELDS");
+            foreach (string fieldName in new[] { "GSBER", CompanyCodeField })
+            {
+                fields.Append();
+                fields.SetValue("FIELDNAME", fieldName);
+            }
+
+            function.Invoke(destination);
+
+            var data = function.GetTable("DATA");
+            var rows = new List<string>();
+            for (int row = 0; row < data.RowCount; row++)
+            {
+                data.CurrentIndex = row;
+                rows.Add(data.GetString("WA") ?? "");
+            }
+
+            return ResolveSpecialCompanyCodeFromRowsForTest(new[] { area }, rows);
+        }
+        catch (Exception ex)
+        {
+            return new Zfi019NlCompanyCodeResolution
+            {
+                Applies = true,
+                BusinessArea = area,
+                Message = $"{BusinessAreaCompanyCodeTable} RFC_READ_TABLE failed for GSBER={area}: {ExceptionChain(ex)}"
+            };
+        }
+    }
+
+    internal static Zfi019NlCompanyCodeResolution ResolveSpecialCompanyCodeFromRowsForTest(
+        IEnumerable<string> businessAreas,
+        IEnumerable<string> rows)
+    {
+        string[] areas = businessAreas
+            .Select(Normalize)
+            .Where(value => value.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        string[] specialAreas = areas.Where(RequiresSpecialCompanyCode).ToArray();
+        if (specialAreas.Length == 0)
+        {
+            return new Zfi019NlCompanyCodeResolution
+            {
+                Success = true,
+                Message = $"{BusinessAreaCompanyCodeTable} company-code lookup not required."
+            };
+        }
+        if (areas.Length != 1 || specialAreas.Length != 1)
+        {
+            return new Zfi019NlCompanyCodeResolution
+            {
+                Message = "ZFI019NL special company-code lookup requires exactly one S_GSBER business area per execution."
+            };
+        }
+
+        string area = specialAreas[0];
+        string[] companyCodes = rows
+            .Select(row => (row ?? "").Split('|'))
+            .Where(values => values.Length >= 2 && Normalize(values[0]).Equals(area, StringComparison.OrdinalIgnoreCase))
+            .Select(values => Normalize(values[1]))
+            .Where(value => value.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (companyCodes.Length != 1)
+        {
+            string detail = companyCodes.Length == 0 ? "no BUKRS" : $"multiple BUKRS values ({string.Join(",", companyCodes)})";
+            return new Zfi019NlCompanyCodeResolution
+            {
+                Applies = true,
+                BusinessArea = area,
+                Message = $"{BusinessAreaCompanyCodeTable} must map GSBER={area} to exactly one BUKRS; {detail}."
+            };
+        }
+
+        return new Zfi019NlCompanyCodeResolution
+        {
+            Success = true,
+            Applies = true,
+            BusinessArea = area,
+            CompanyCode = companyCodes[0],
+            Message = $"{BusinessAreaCompanyCodeTable} mapped GSBER={area} to BUKRS={companyCodes[0]}."
+        };
     }
 
     private static (List<string> Headers, List<string[]> Rows, List<string> Warnings) ParseTable(IEnumerable<string> rawLines)
@@ -1092,6 +1268,8 @@ internal sealed class Zfi019NlMemoryFetcher
     }
 
     private static bool IsBusinessArea(string name) => BusinessAreaNames.Any(x => Normalize(x).Equals(Normalize(name), StringComparison.OrdinalIgnoreCase));
+
+    private static bool IsCompanyCode(string name) => CompanyCodeNames.Any(x => Normalize(x).Equals(Normalize(name), StringComparison.OrdinalIgnoreCase));
 
     private static bool IsExactIncluded(Zfi019NlSelection x)
         => x.Sign.Equals("I", StringComparison.OrdinalIgnoreCase) &&

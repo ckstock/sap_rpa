@@ -20,6 +20,50 @@ for (const fileName of ["ZFI148.vbs", "ZFIR034.vbs"]) {
   assert.match(script, /ExportAlvResult "execute"/, `${fileName} must export immediately after execution.`);
 }
 
+const sapSaveContracts = {
+  "ZFI072A.vbs": [[
+    "alvResult = ExportAlvIfConfigured(alvExportDir, alvExportFilename, exportTimeoutMs)",
+    "If Not PressSaveAfterReady(saveButtonTimeoutMs) Then",
+    "If Not WaitForSaveComplete(saveTimeoutMs) Then"
+  ]],
+  "ZFI072N.vbs": [[
+    "If Not ExportAlvIfConfigured(alvExportDir, currentWindowExportFileName, exportTimeoutMs) Then",
+    "SelectAllGrid",
+    'PressToolbarButton "wnd[0]/tbar[1]/btn[14]"'
+  ]],
+  "ZFI080.vbs": [["ExportAlvBeforeSave \"save selected columns\"", 'PressToolbarButton "wnd[0]/tbar[1]/btn[16]"']],
+  "ZFI080B.vbs": [["ExportAlvBeforeSave \"save selected rows\"", 'PressToolbarButton "wnd[0]/tbar[1]/btn[16]"']],
+  "ZCO019.vbs": [
+    ["ExportAlvBeforeSave \"export detail before save\"", 'PressToolbarButton "wnd[0]/tbar[1]/btn[26]"'],
+    ["ExportAlvBeforeSave \"export summary before save\"", 'PressToolbarButton "wnd[0]/tbar[1]/btn[26]"']
+  ],
+  "ZFI019NA.vbs": [["ExportAlvBeforeSave \"save result\"", 'PressToolbarButton "wnd[0]/tbar[1]/btn[16]"']],
+  "ZFI019NL.vbs": [["ExportAlvBeforeSave \"save result\"", 'PressToolbarButton "wnd[0]/tbar[1]/btn[16]"']],
+  "ZFI148.vbs": [["ExportAlvResult \"execute\"", 'PressToolbarButton "wnd[0]/tbar[1]/btn[16]"', 'PressToolbarButton "wnd[0]/tbar[1]/btn[13]"']]
+};
+
+for (const [fileName, sequences] of Object.entries(sapSaveContracts)) {
+  const script = readTransactionScript(fileName);
+  assert.doesNotMatch(script, /skip SAP save/i, `${fileName} must not unconditionally skip its recorded SAP save action.`);
+  if (fileName === "ZFI072A.vbs") {
+    assert.match(script, /WaitForAnyObject\("save button", saveButtonIds, 0\)/, "ZFI072A must wait for the recorded save control to exist.");
+    assert.doesNotMatch(script, /WaitForAnyEnabledObject\("save button"/, "ZFI072A must not gate the recorded save click on SAP GUI Enabled.");
+    assert.match(script, /saveButtonIds = Array\("wnd\[0\]\/tbar\[1\]\/btn\[14\]"\)/, "ZFI072A must use only the recorded save control.");
+    assert.doesNotMatch(script, /btn\[11\].*save|save.*btn\[11\]/i, "ZFI072A must not fall back to an unrecorded save control.");
+    assert.match(script, /EchoSaveButtonProperties "wnd\[0\]\/tbar\[1\]\/btn\[14\]"/, "ZFI072A must log the recorded save control properties.");
+    assert.match(script, /Function IsExplicitSaveSuccessText\(value\)/, "ZFI072A must require an explicit SAP save success message.");
+    assert.match(script, /If Not IsExplicitSaveSuccessText\(statusText\) Then/, "ZFI072A must not treat an arbitrary S status as save success.");
+  }
+  for (const sequence of sequences) {
+    let cursor = -1;
+    for (const token of sequence) {
+      const index = script.indexOf(token, cursor + 1);
+      assert.ok(index > cursor, `${fileName} must export first and then retain its recorded SAP save action: ${token}`);
+      cursor = index;
+    }
+  }
+}
+
 {
   const script = readTransactionScript("ZFIR034.vbs");
   assert.match(script, /P_GJAHR=/, "ZFIR034 must log the derived fiscal year sent to SAP.");
@@ -76,7 +120,7 @@ for (const script of scripts) {
   vm.runInContext(fs.readFileSync(path.join(repoRoot, script), "utf8"), context, { filename: script });
 }
 
-for (const code of ["ZFI148", "ZFIR034"]) {
+for (const code of ["ZFI072A", "ZFI072N", "ZFI080", "ZFI080B", "ZCO019", "ZFI019NA", "ZFI019NL", "ZFI148"]) {
   const isSaveAction = vm.runInContext(`isSaveActionTransaction({ code: "${code}", name: "plain card name" })`, context);
   assert.equal(isSaveAction, true, `${code} must render as a save/export card.`);
   const displayName = vm.runInContext(`{
@@ -84,6 +128,11 @@ for (const code of ["ZFI148", "ZFIR034"]) {
     renderSaveName(isSaveActionTransaction({ code: "${code}", name: label }) && !/保存/.test(label) ? label + "（保存）" : label);
   }`, context);
   assert.match(displayName, /（<span class="transaction-save-word">保存<\/span>）/, `${code} must append the save marker when the name has no save text.`);
+}
+
+for (const code of ["ZFIR034", "ZFI057"]) {
+  const isSaveAction = vm.runInContext(`isSaveActionTransaction({ code: "${code}", name: "${code}" })`, context);
+  assert.equal(isSaveAction, false, `${code} must not be marked as SAP save when it only exports/workflows data.`);
 }
 
 console.log("ALV_SAVE_EXPORT_CONTRACT_OK");

@@ -372,8 +372,27 @@ static class Program
         Directory.CreateDirectory(LogDirectory);
         Directory.CreateDirectory(OutputDirectory);
         Directory.CreateDirectory(RuntimeTransactionsDirectory);
-        Directory.CreateDirectory(AlvExportDataDirectory);
         Directory.CreateDirectory(AlvExportStagingDirectory);
+
+        // A network archive may be unavailable during server boot. It is required
+        // when an ALV export is archived, but it must not prevent the local API/DB
+        // from starting and serving the page.
+        try
+        {
+            Directory.CreateDirectory(AlvExportDataDirectory);
+        }
+        catch (Exception ex)
+        {
+            string warning = $"ALV export archive is currently unavailable; startup continues. path={AlvExportDataDirectory}, error={ex.Message}";
+            try
+            {
+                File.AppendAllText(LogFilePath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {warning}{Environment.NewLine}", Encoding.UTF8);
+            }
+            catch
+            {
+                Console.Error.WriteLine(warning);
+            }
+        }
     }
 
     static void MigrateLegacyDatabaseIfNeeded()
@@ -872,9 +891,13 @@ static class Program
 
         if (start.Year == end.Year && start.Month == end.Month)
         {
+            DateTime kadatLow = end == firstOfStartMonth
+                ? firstOfStartMonth
+                : firstOfStartMonth.AddDays(1);
+
             return new List<Zfi057Step2DateWindow>
             {
-                new(1, FormatSapDate(firstOfStartMonth), FormatSapDate(end), FormatSapDate(firstOfStartMonth.AddDays(1)), FormatSapDate(end))
+                new(1, FormatSapDate(firstOfStartMonth), FormatSapDate(end), FormatSapDate(kadatLow), FormatSapDate(end))
             };
         }
 
@@ -887,11 +910,14 @@ static class Program
         {
             DateTime currentMonthEnd = currentMonthStart.AddMonths(1).AddDays(-1);
             DateTime windowHigh = currentMonthStart.Year == end.Year && currentMonthStart.Month == end.Month ? end : currentMonthEnd;
+            DateTime kadatLow = windowHigh == currentMonthStart
+                ? currentMonthStart
+                : currentMonthStart.AddDays(1);
             windows.Add(new Zfi057Step2DateWindow(
                 index++,
                 FormatSapDate(currentMonthStart),
                 FormatSapDate(windowHigh),
-                FormatSapDate(currentMonthStart.AddDays(1)),
+                FormatSapDate(kadatLow),
                 FormatSapDate(windowHigh)));
             currentMonthStart = currentMonthStart.AddMonths(1);
         }
@@ -1813,6 +1839,7 @@ WHERE t.tcode=$tcode AND t.enabled=1;
                 context.Request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase))
             {
                 var item = ReadJson<ScheduleTaskRequest>(context.Request);
+                ValidateScheduleResponsibility(item, isUpdate: false);
                 string id = UpsertScheduleTask(item, routeId: "", allocateNewId: true);
                 WriteJson(context.Response, new { ok = true, id, schedule = LoadScheduleTask(id) });
                 return;
@@ -1837,6 +1864,7 @@ WHERE t.tcode=$tcode AND t.enabled=1;
                 context.Request.HttpMethod.Equals("PUT", StringComparison.OrdinalIgnoreCase))
             {
                 var item = ReadJson<ScheduleTaskRequest>(context.Request);
+                ValidateScheduleResponsibility(item, isUpdate: true);
                 string routeId = SanitizeConfigId(scheduleMatch.Groups[1].Value, "schedule id");
                 if (!string.IsNullOrWhiteSpace(item.Id) &&
                     !item.Id.Trim().Equals(routeId, StringComparison.OrdinalIgnoreCase))
@@ -2327,6 +2355,7 @@ VALUES
             EnsureScheduleColumns(connection);
             EnsureBasicConfigColumns(connection);
             MigrateZfi019NaToBusinessAreaScope(connection);
+            CleanupSelfTestScheduleTasks(connection);
 
         if (seedFromScripts)
         {
@@ -4645,6 +4674,29 @@ WHERE id=$id;
             plantsCsv = NormalizePlantCodesCsv(plantsCsv);
             string plantsJson = PlantCodesToJsonArray(plantsCsv);
             string paramsJson = BuildScheduleParamsJson(item, tcode, defaultBusinessScope, plantsCsv, businessAreasCsv, applyConfiguredScope: !isExistingSchedule);
+            if (isExistingSchedule)
+            {
+                var nextParams = ParseScheduleParams(paramsJson);
+                string nextOperatorId = FirstNonEmpty(
+                    GetParamValue(nextParams, "operatorId"),
+                    GetParamValue(nextParams, "personnelNumber"),
+                    GetParamValue(nextParams, "pernr"),
+                    GetParamValue(nextParams, "employeeId"));
+                if (string.IsNullOrWhiteSpace(nextOperatorId))
+                {
+                    var previousParams = ParseScheduleParams(existingSnapshot!.ParamsJson);
+                    string previousOperatorId = FirstNonEmpty(
+                        GetParamValue(previousParams, "operatorId"),
+                        GetParamValue(previousParams, "personnelNumber"),
+                        GetParamValue(previousParams, "pernr"),
+                        GetParamValue(previousParams, "employeeId"));
+                    if (!string.IsNullOrWhiteSpace(previousOperatorId))
+                    {
+                        nextParams["operatorId"] = previousOperatorId;
+                        paramsJson = JsonSerializer.Serialize(nextParams, JsonOptions);
+                    }
+                }
+            }
             paramsJson = AddScheduleExecutionSnapshot(
                 connection,
                 tcode,
@@ -4724,6 +4776,37 @@ ON CONFLICT(id) DO UPDATE SET
                 RollbackImmediateTransaction(connection);
             throw;
         }
+    }
+
+    static void ValidateScheduleResponsibility(ScheduleTaskRequest item, bool isUpdate)
+    {
+        string createdBy = (item.CreatedBy ?? "").Trim();
+        string updatedBy = (item.UpdatedBy ?? "").Trim();
+        if (IsTechnicalScheduleOwner(createdBy) || IsTechnicalScheduleOwner(updatedBy))
+        {
+            throw new ApiRequestException(400,
+                "定时任务设置人不能使用 selftest、api、portal、system 或 scope-migration 等技术占位值");
+        }
+
+        if (isUpdate)
+        {
+            if (string.IsNullOrWhiteSpace(updatedBy))
+                throw new ApiRequestException(400, "编辑定时任务时必须提交当前网页登录人的姓名");
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(FirstNonEmpty(createdBy, updatedBy)))
+            throw new ApiRequestException(400, "新增定时任务时必须提交当前网页登录人的姓名");
+    }
+
+    static bool IsTechnicalScheduleOwner(string value)
+    {
+        string normalized = (value ?? "").Trim();
+        return normalized.Equals("selftest", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("api", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("portal", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("system", StringComparison.OrdinalIgnoreCase) ||
+               normalized.Equals("scope-migration", StringComparison.OrdinalIgnoreCase);
     }
 
     static void EnsureScheduleTaskUpdateOwner(SqliteConnection connection, string id, ScheduleTaskRequest item)
@@ -4912,6 +4995,56 @@ ON CONFLICT(id) DO UPDATE SET
         return $"SCH-{DateTime.Now:yyyyMMddHHmmss}";
     }
 
+    static int CleanupSelfTestScheduleTasks(SqliteConnection connection)
+    {
+        var taskIds = new List<string>();
+        bool transactionStarted = false;
+        try
+        {
+            BeginImmediateTransaction(connection);
+            transactionStarted = true;
+
+            using (var select = connection.CreateCommand())
+            {
+                select.CommandText = """
+SELECT id
+FROM schedule_tasks
+WHERE (lower(trim(created_by))='selftest'
+    OR lower(trim(updated_by))='selftest')
+ORDER BY id;
+""";
+                using var reader = select.ExecuteReader();
+                while (reader.Read())
+                    taskIds.Add(reader.GetString(0));
+            }
+
+            foreach (string taskId in taskIds)
+            {
+                DeleteQueuedRunsForSchedule(connection, taskId);
+                DeletePendingScheduleTaskRuns(connection, taskId);
+
+                using var delete = connection.CreateCommand();
+                delete.CommandText = "DELETE FROM schedule_tasks WHERE id=$id";
+                delete.Parameters.AddWithValue("$id", taskId);
+                delete.ExecuteNonQuery();
+            }
+
+            CommitImmediateTransaction(connection);
+            transactionStarted = false;
+        }
+        catch
+        {
+            if (transactionStarted)
+                RollbackImmediateTransaction(connection);
+            throw;
+        }
+
+        if (taskIds.Count > 0)
+            Log($"removed self-test schedule tasks: {string.Join(",", taskIds)}");
+
+        return taskIds.Count;
+    }
+
     static string ResolveSchedulePlantsCsvFromRequest(ScheduleTaskRequest item)
     {
         return FirstNonEmpty(
@@ -5009,9 +5142,13 @@ WHERE task_id=$taskId
     static int DeleteQueuedRunsForSchedule(SqliteConnection connection, string scheduleId)
     {
         const string tempTableName = "queued_schedule_delete_runs";
+        const string parentTableName = "affected_schedule_delete_parents";
         using (var create = connection.CreateCommand())
         {
-            create.CommandText = $"CREATE TEMP TABLE {tempTableName} (run_id TEXT PRIMARY KEY);";
+            create.CommandText = $"""
+CREATE TEMP TABLE {tempTableName} (run_id TEXT PRIMARY KEY);
+CREATE TEMP TABLE {parentTableName} (run_id TEXT PRIMARY KEY);
+""";
             create.ExecuteNonQuery();
         }
 
@@ -5055,6 +5192,19 @@ WHERE current.status='queued'
             if (removedCount == 0)
                 return 0;
 
+            string canceledAt = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            using (var selectParents = connection.CreateCommand())
+            {
+                selectParents.CommandText = $"""
+INSERT OR IGNORE INTO {parentTableName}(run_id)
+SELECT DISTINCT parent_run_id
+FROM runs
+WHERE run_id IN (SELECT run_id FROM {tempTableName})
+  AND parent_run_id<>'';
+""";
+                selectParents.ExecuteNonQuery();
+            }
+
             foreach (string table in new[] { "run_params", "run_result_logs", "run_files", "run_logs" })
             {
                 using var deleteDetails = connection.CreateCommand();
@@ -5062,12 +5212,26 @@ WHERE current.status='queued'
                 deleteDetails.ExecuteNonQuery();
             }
 
+            using (var cancelBatchItems = connection.CreateCommand())
+            {
+                cancelBatchItems.CommandText = $"""
+UPDATE run_batch_items
+SET status='canceled',
+    message='Scheduled task deleted before execution',
+    finished_at=$finishedAt,
+    updated_at=$finishedAt
+WHERE child_run_id IN (SELECT run_id FROM {tempTableName})
+  AND parent_run_id NOT IN (SELECT run_id FROM {tempTableName});
+""";
+                cancelBatchItems.Parameters.AddWithValue("$finishedAt", canceledAt);
+                cancelBatchItems.ExecuteNonQuery();
+            }
+
             using (var deleteBatchItems = connection.CreateCommand())
             {
                 deleteBatchItems.CommandText = $"""
 DELETE FROM run_batch_items
-WHERE child_run_id IN (SELECT run_id FROM {tempTableName})
-   OR parent_run_id IN (SELECT run_id FROM {tempTableName});
+WHERE parent_run_id IN (SELECT run_id FROM {tempTableName});
 """;
                 deleteBatchItems.ExecuteNonQuery();
             }
@@ -5078,12 +5242,37 @@ WHERE child_run_id IN (SELECT run_id FROM {tempTableName})
                 deleteRuns.ExecuteNonQuery();
             }
 
+            using (var cancelParents = connection.CreateCommand())
+            {
+                cancelParents.CommandText = $"""
+UPDATE runs
+SET status='canceled',
+    message='Scheduled task deleted; queued batch items canceled',
+    finished_at=$finishedAt,
+    locked_by='',
+    locked_at=''
+WHERE run_id IN (SELECT run_id FROM {parentTableName})
+  AND status IN ('queued', 'running')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM runs child
+      WHERE child.parent_run_id=runs.run_id
+        AND child.status IN ('queued', 'running')
+  );
+""";
+                cancelParents.Parameters.AddWithValue("$finishedAt", canceledAt);
+                cancelParents.ExecuteNonQuery();
+            }
+
             return removedCount;
         }
         finally
         {
             using var drop = connection.CreateCommand();
-            drop.CommandText = $"DROP TABLE IF EXISTS {tempTableName};";
+            drop.CommandText = $"""
+DROP TABLE IF EXISTS {parentTableName};
+DROP TABLE IF EXISTS {tempTableName};
+""";
             drop.ExecuteNonQuery();
         }
     }
@@ -5106,6 +5295,11 @@ WHERE child_run_id IN (SELECT run_id FROM {tempTableName})
             GetParamValue(scheduleParams, "businessArea"),
             GetParamValue(scheduleParams, "businessAreaList"),
             GetParamValue(scheduleParams, "gsber")));
+        string operatorId = FirstNonEmpty(
+            GetParamValue(scheduleParams, "operatorId"),
+            GetParamValue(scheduleParams, "personnelNumber"),
+            GetParamValue(scheduleParams, "pernr"),
+            GetParamValue(scheduleParams, "employeeId"));
         string nextRunAt = enabled ? CalculateNextScheduleRunAt(frequency, runTime, createdAt, weekday) : "";
         return new
         {
@@ -5143,6 +5337,8 @@ WHERE child_run_id IN (SELECT run_id FROM {tempTableName})
                 onFailure = reader.GetInt32(13) == 1,
                 target = reader.GetString(14)
             },
+            operatorId,
+            personnelNumber = operatorId,
             paramsJson,
             createdAt,
             updatedAt,
@@ -5214,6 +5410,23 @@ WHERE id=$id AND enabled=1;
                 if (!string.IsNullOrWhiteSpace(value))
                     values[prop.Name] = value;
             }
+        }
+
+        string operatorId = FirstNonEmpty(
+            item.OperatorId,
+            item.PersonnelNumber,
+            item.Pernr,
+            item.EmployeeId,
+            GetParamValue(values, "operatorId"),
+            GetParamValue(values, "personnelNumber"),
+            GetParamValue(values, "pernr"),
+            GetParamValue(values, "employeeId")).Trim();
+        if (!string.IsNullOrWhiteSpace(operatorId))
+        {
+            values["operatorId"] = operatorId;
+            values.Remove("personnelNumber");
+            values.Remove("pernr");
+            values.Remove("employeeId");
         }
 
         string plants = NormalizePlantCodesCsv(FirstNonEmpty(
@@ -8424,14 +8637,10 @@ WHERE run_id=$runId;
 
     static bool IsZfi057Step2NoDataResult(RunResultRequest result)
     {
-        var candidates = new List<string>
-        {
-            result.Message ?? "",
-            result.SapStatusText ?? ""
-        };
-        candidates.AddRange(result.Logs.Select(line => line.Message ?? ""));
+        if (IsNoDataRunStatus(result.Status))
+            return true;
 
-        return candidates.Any(IsZfi057NoDataText);
+        return IsExplicitNoDataResult(result);
     }
 
     static bool IsZco020FilteredNoDataResult(RunResultRequest result)
@@ -14172,6 +14381,7 @@ WScript.Quit 0
         var started = DateTime.UtcNow;
         string template = ReadTransactionScript(p, out string scriptDirectory);
         string effectivePlants = p.Plants;
+        string companyCode = "";
         string scriptFixedPlants = ExtractScriptMetadataValue(template, "fixedPlants");
         if (!p.TCode.Equals("ZFI072A", StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrWhiteSpace(effectivePlants) &&
@@ -14179,6 +14389,21 @@ WScript.Quit 0
         {
             effectivePlants = NormalizeCsvPreserveOrder(scriptFixedPlants);
             Log($"script fixedPlants metadata used because request plants are empty: {effectivePlants}");
+        }
+
+        if (p.TCode.Equals("ZFI019NL", StringComparison.OrdinalIgnoreCase))
+        {
+            string businessArea = NormalizeStringArray(FirstNonEmpty(p.BusinessAreas, p.BusinessArea)).FirstOrDefault() ?? "";
+            if (Zfi019NlMemoryFetcher.RequiresSpecialCompanyCode(businessArea))
+            {
+                var resolution = Zfi019NlMemoryFetcher.ResolveSpecialCompanyCode(
+                    BuildSapNcoConnectionConfig(p),
+                    new[] { businessArea });
+                if (!resolution.Success)
+                    return FailedRunResult(resolution.Message, started);
+                companyCode = resolution.CompanyCode;
+                Log(resolution.Message);
+            }
         }
 
         string materialPlaceholder = p.Materials;
@@ -14211,7 +14436,8 @@ WScript.Quit 0
             .Replace("{FIELD2_NAME}", VbsEscape(p.Field2Name))
             .Replace("{FIELD2_VALUE}", VbsEscape(p.Field2Value))
             .Replace("{PLANTS}", VbsEscape(effectivePlants))
-            .Replace("{BUSINESS_AREAS}", VbsEscape(p.BusinessAreas))
+            .Replace("{BUSINESS_AREAS}", VbsEscape(FirstNonEmpty(p.BusinessAreas, p.BusinessArea)))
+            .Replace("{COMPANY_CODE}", VbsEscape(companyCode))
             .Replace("{MATERIALS}", VbsEscape(materialPlaceholder))
             .Replace("{FACTORY_GROUP}", VbsEscape(p.FactoryGroup))
             .Replace("{RUN_STRATEGY}", VbsEscape(p.RunStrategy))
@@ -14810,6 +15036,52 @@ WScript.Quit 0
         }
 
         {
+            bool selfTestOwnerRejected = false;
+            bool missingUpdateOwnerRejected = false;
+            try
+            {
+                ValidateScheduleResponsibility(new ScheduleTaskRequest
+                {
+                    CreatedBy = "selftest",
+                    UpdatedBy = "Portal User/测试用户"
+                }, isUpdate: false);
+            }
+            catch (ApiRequestException ex) when (ex.StatusCode == 400)
+            {
+                selfTestOwnerRejected = true;
+            }
+
+            try
+            {
+                ValidateScheduleResponsibility(new ScheduleTaskRequest
+                {
+                    CreatedBy = "Portal User/测试用户"
+                }, isUpdate: true);
+            }
+            catch (ApiRequestException ex) when (ex.StatusCode == 400)
+            {
+                missingUpdateOwnerRejected = true;
+            }
+
+            bool realOwnerAccepted = true;
+            try
+            {
+                ValidateScheduleResponsibility(new ScheduleTaskRequest
+                {
+                    CreatedBy = "Portal User/测试用户",
+                    UpdatedBy = "Portal User/测试用户"
+                }, isUpdate: false);
+            }
+            catch
+            {
+                realOwnerAccepted = false;
+            }
+
+            Check("schedule API rejects untraceable responsibility", selfTestOwnerRejected && missingUpdateOwnerRejected && realOwnerAccepted,
+                $"selftestRejected={selfTestOwnerRejected}; missingUpdateOwnerRejected={missingUpdateOwnerRejected}; realOwnerAccepted={realOwnerAccepted}");
+        }
+
+        {
             string uri = "sap-rpa://run?action=run&tcode=ZFI019NL&script=openOnly&plants=1022,1024&businessAreas=2900,3960";
             var q = ParseUri(uri);
             Check("新协议URI", q["action"] == "run" && q["tcode"] == "ZFI019NL" && q["plants"] == "1022,1024" && q["businessareas"] == "2900,3960", uri);
@@ -15130,71 +15402,180 @@ WScript.Quit 0
             }
 
         {
-            var createRequest = new ScheduleTaskRequest
+            try
             {
-                Id = "SCH-777",
-                Name = "ZFI148 - 推送大数据平台",
-                TCode = "ZFI148",
-                PlantsCsv = "1022",
-                FactoryGroup = "PINGHU_ALL",
-                Frequency = "weekly",
-                Weekday = "tuesday",
-                Time = "08:00",
-                CreatedBy = "selftest",
-                UpdatedBy = "selftest",
-                NotifyStart = false,
-                NotifySuccess = false,
-                NotifyFail = false,
-                Enabled = true
-            };
-            string firstId = UpsertScheduleTask(createRequest, routeId: "", allocateNewId: true);
-            string secondId = UpsertScheduleTask(createRequest, routeId: "", allocateNewId: true);
-            var updateRequest = new ScheduleTaskRequest
-            {
-                Id = firstId,
-                Name = "ZFI148 - 推送大数据平台",
-                TCode = "ZFI148",
-                PlantsCsv = "1022",
-                FactoryGroup = "PINGHU_ALL",
-                Frequency = "weekly",
-                Weekday = "wednesday",
-                Time = "20:00",
-                CreatedBy = "selftest",
-                UpdatedBy = "selftest",
-                NotifyStart = false,
-                NotifySuccess = false,
-                NotifyFail = false,
-                Enabled = true
-            };
-            _ = UpsertScheduleTask(updateRequest, routeId: firstId);
-            using var scheduleIdConnection = OpenDatabaseConnection();
-            using var command = scheduleIdConnection.CreateCommand();
-            command.CommandText = "SELECT run_time, weekday FROM schedule_tasks WHERE id=$id";
-            command.Parameters.AddWithValue("$id", firstId);
-            using var reader = command.ExecuteReader();
-            string storedRunTime = "";
-            string storedWeekday = "";
-            if (reader.Read())
-            {
-                storedRunTime = reader.GetString(0);
-                storedWeekday = reader.GetString(1);
-            }
-            using var countCommand = scheduleIdConnection.CreateCommand();
-            countCommand.CommandText = "SELECT COUNT(*) FROM schedule_tasks WHERE id IN ($first, $second, 'SCH-777')";
-            countCommand.Parameters.AddWithValue("$first", firstId);
-            countCommand.Parameters.AddWithValue("$second", secondId);
-            long storedScheduleRows = Convert.ToInt64(countCommand.ExecuteScalar() ?? 0L);
+                var createRequest = new ScheduleTaskRequest
+                {
+                    Id = "SCH-777",
+                    Name = "ZFI148 - 推送大数据平台",
+                    TCode = "ZFI148",
+                    PlantsCsv = "1022",
+                    FactoryGroup = "PINGHU_ALL",
+                    Frequency = "weekly",
+                    Weekday = "tuesday",
+                    Time = "08:00",
+                    OperatorId = "90000001",
+                    CreatedBy = "selftest",
+                    UpdatedBy = "selftest",
+                    NotifyStart = false,
+                    NotifySuccess = false,
+                    NotifyFail = false,
+                    Enabled = false
+                };
+                string firstId = UpsertScheduleTask(createRequest, routeId: "", allocateNewId: true);
+                string secondId = UpsertScheduleTask(createRequest, routeId: "", allocateNewId: true);
+                var updateRequest = new ScheduleTaskRequest
+                {
+                    Id = firstId,
+                    Name = "ZFI148 - 推送大数据平台",
+                    TCode = "ZFI148",
+                    PlantsCsv = "1022",
+                    FactoryGroup = "PINGHU_ALL",
+                    Frequency = "weekly",
+                    Weekday = "wednesday",
+                    Time = "20:00",
+                    CreatedBy = "selftest",
+                    UpdatedBy = "selftest",
+                    NotifyStart = false,
+                    NotifySuccess = false,
+                    NotifyFail = false,
+                    Enabled = false
+                };
+                _ = UpsertScheduleTask(updateRequest, routeId: firstId);
+                using var scheduleIdConnection = OpenDatabaseConnection();
+                using var command = scheduleIdConnection.CreateCommand();
+                command.CommandText = "SELECT run_time, weekday, params_json FROM schedule_tasks WHERE id=$id";
+                command.Parameters.AddWithValue("$id", firstId);
+                using var reader = command.ExecuteReader();
+                string storedRunTime = "";
+                string storedWeekday = "";
+                string storedOperatorId = "";
+                if (reader.Read())
+                {
+                    storedRunTime = reader.GetString(0);
+                    storedWeekday = reader.GetString(1);
+                    storedOperatorId = GetParamValue(ParseScheduleParams(reader.GetString(2)), "operatorId");
+                }
+                using var countCommand = scheduleIdConnection.CreateCommand();
+                countCommand.CommandText = "SELECT COUNT(*) FROM schedule_tasks WHERE id IN ($first, $second, 'SCH-777')";
+                countCommand.Parameters.AddWithValue("$first", firstId);
+                countCommand.Parameters.AddWithValue("$second", secondId);
+                long storedScheduleRows = Convert.ToInt64(countCommand.ExecuteScalar() ?? 0L);
+                using var disabledCountCommand = scheduleIdConnection.CreateCommand();
+                disabledCountCommand.CommandText = "SELECT COUNT(*) FROM schedule_tasks WHERE id IN ($first, $second) AND enabled=0";
+                disabledCountCommand.Parameters.AddWithValue("$first", firstId);
+                disabledCountCommand.Parameters.AddWithValue("$second", secondId);
+                long disabledScheduleRows = Convert.ToInt64(disabledCountCommand.ExecuteScalar() ?? 0L);
 
-            bool ok = Regex.IsMatch(firstId, @"^SCH-\d{3,}$", RegexOptions.IgnoreCase) &&
-                      Regex.IsMatch(secondId, @"^SCH-\d{3,}$", RegexOptions.IgnoreCase) &&
-                      !firstId.Equals(secondId, StringComparison.OrdinalIgnoreCase) &&
-                      !firstId.Equals("SCH-777", StringComparison.OrdinalIgnoreCase) &&
-                      !secondId.Equals("SCH-777", StringComparison.OrdinalIgnoreCase) &&
-                      storedScheduleRows == 2 &&
-                      storedRunTime.Equals("20:00", StringComparison.Ordinal) &&
-                      storedWeekday.Equals("wednesday", StringComparison.OrdinalIgnoreCase);
-            Check("schedule create allocates unique ids and edit updates run time", ok,
-                $"first={firstId}; second={secondId}; rows={storedScheduleRows}; runTime={storedRunTime}; weekday={storedWeekday}");
+                bool ok = Regex.IsMatch(firstId, @"^SCH-\d{3,}$", RegexOptions.IgnoreCase) &&
+                          Regex.IsMatch(secondId, @"^SCH-\d{3,}$", RegexOptions.IgnoreCase) &&
+                          !firstId.Equals(secondId, StringComparison.OrdinalIgnoreCase) &&
+                          !firstId.Equals("SCH-777", StringComparison.OrdinalIgnoreCase) &&
+                          !secondId.Equals("SCH-777", StringComparison.OrdinalIgnoreCase) &&
+                          storedScheduleRows == 2 &&
+                          disabledScheduleRows == 2 &&
+                          storedRunTime.Equals("20:00", StringComparison.Ordinal) &&
+                          storedWeekday.Equals("wednesday", StringComparison.OrdinalIgnoreCase) &&
+                          storedOperatorId.Equals("90000001", StringComparison.Ordinal);
+                Check("schedule create allocates unique ids and edit updates run time", ok,
+                    $"first={firstId}; second={secondId}; rows={storedScheduleRows}; disabledRows={disabledScheduleRows}; runTime={storedRunTime}; weekday={storedWeekday}; operatorId={storedOperatorId}");
+
+                using var responsibilityVariantCommand = scheduleIdConnection.CreateCommand();
+                responsibilityVariantCommand.CommandText = """
+UPDATE schedule_tasks SET created_by='api' WHERE id=$first;
+UPDATE schedule_tasks SET updated_by='scope-migration' WHERE id=$second;
+""";
+                responsibilityVariantCommand.Parameters.AddWithValue("$first", firstId);
+                responsibilityVariantCommand.Parameters.AddWithValue("$second", secondId);
+                responsibilityVariantCommand.ExecuteNonQuery();
+            }
+            finally
+            {
+                try
+                {
+                    using var cleanupConnection = OpenDatabaseConnection();
+                    int removed = CleanupSelfTestScheduleTasks(cleanupConnection);
+                    using var remainingCommand = cleanupConnection.CreateCommand();
+                    remainingCommand.CommandText = """
+SELECT COUNT(*)
+FROM schedule_tasks
+WHERE (lower(trim(created_by))='selftest'
+    OR lower(trim(updated_by))='selftest');
+""";
+                    long remaining = Convert.ToInt64(remainingCommand.ExecuteScalar() ?? 0L);
+                    Check("schedule self-test data cleanup", removed == 2 && remaining == 0,
+                        $"removed={removed}; remaining={remaining}");
+                }
+                catch (Exception ex)
+                {
+                    Check("schedule self-test data cleanup", false, ex.Message);
+                }
+            }
+        }
+
+        {
+            using var connection = new SqliteConnection("Data Source=:memory:");
+            connection.Open();
+            using (var setup = connection.CreateCommand())
+            {
+                setup.CommandText = """
+CREATE TABLE runs(
+    run_id TEXT PRIMARY KEY,
+    source TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT '',
+    parent_run_id TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL DEFAULT '',
+    finished_at TEXT NOT NULL DEFAULT '',
+    locked_by TEXT NOT NULL DEFAULT '',
+    locked_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE run_batch_items(
+    parent_run_id TEXT NOT NULL,
+    child_run_id TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT '',
+    message TEXT NOT NULL DEFAULT '',
+    finished_at TEXT NOT NULL DEFAULT '',
+    updated_at TEXT NOT NULL DEFAULT ''
+);
+CREATE TABLE run_params(run_id TEXT NOT NULL);
+CREATE TABLE run_result_logs(run_id TEXT NOT NULL);
+CREATE TABLE run_files(run_id TEXT NOT NULL);
+CREATE TABLE run_logs(run_id TEXT NOT NULL);
+
+INSERT INTO runs(run_id, source, status) VALUES
+('P-CANCEL', 'schedule:SCH-DELETE', 'running'),
+('P-ACTIVE', 'schedule:SCH-DELETE', 'running');
+INSERT INTO runs(run_id, status, parent_run_id) VALUES
+('C-Q1', 'queued', 'P-CANCEL'),
+('C-Q2', 'queued', 'P-CANCEL'),
+('C-RUNNING', 'running', 'P-ACTIVE'),
+('C-Q3', 'queued', 'P-ACTIVE');
+INSERT INTO run_batch_items(parent_run_id, child_run_id, status) VALUES
+('P-CANCEL', 'C-Q1', 'queued'),
+('P-CANCEL', 'C-Q2', 'queued'),
+('P-ACTIVE', 'C-RUNNING', 'running'),
+('P-ACTIVE', 'C-Q3', 'queued');
+""";
+                setup.ExecuteNonQuery();
+            }
+
+            int removed = DeleteQueuedRunsForSchedule(connection, "SCH-DELETE");
+            string ScalarText(string sql)
+            {
+                using var command = connection.CreateCommand();
+                command.CommandText = sql;
+                return command.ExecuteScalar()?.ToString() ?? "";
+            }
+
+            bool deleteQueueOk =
+                removed == 3 &&
+                ScalarText("SELECT status FROM runs WHERE run_id='P-CANCEL'") == "canceled" &&
+                ScalarText("SELECT status FROM runs WHERE run_id='P-ACTIVE'") == "running" &&
+                ScalarText("SELECT COUNT(*) FROM runs WHERE run_id IN ('C-Q1','C-Q2','C-Q3')") == "0" &&
+                ScalarText("SELECT COUNT(*) FROM run_batch_items WHERE status='canceled'") == "3" &&
+                ScalarText("SELECT COUNT(*) FROM run_batch_items WHERE child_run_id='C-RUNNING' AND status='running'") == "1";
+            Check("schedule deletion cancels queued batch work without stopping active child", deleteQueueOk,
+                $"removed={removed}; canceledParent={ScalarText("SELECT status FROM runs WHERE run_id='P-CANCEL'")}; activeParent={ScalarText("SELECT status FROM runs WHERE run_id='P-ACTIVE'")}");
         }
 
         DateTime scheduleNow = new(2026, 8, 14, 9, 0, 0);
@@ -15647,6 +16028,48 @@ INSERT INTO schedule_tasks(id, weekday, created_at) VALUES('stored-fri', 'friday
         }
 
         {
+            var special = Zfi019NlMemoryFetcher.ResolveSpecialCompanyCodeFromRowsForTest(
+                new[] { "1440" },
+                new[] { "1440|5090", "1440|5090" });
+            var normal = Zfi019NlMemoryFetcher.ResolveSpecialCompanyCodeFromRowsForTest(
+                new[] { "2800" },
+                new[] { "2800|2030" });
+            var ambiguous = Zfi019NlMemoryFetcher.ResolveSpecialCompanyCodeFromRowsForTest(
+                new[] { "1180" },
+                new[] { "1180|5090", "1180|6090" });
+            bool ok = special.Success && special.Applies && special.CompanyCode == "5090" &&
+                      normal.Success && !normal.Applies && string.IsNullOrWhiteSpace(normal.CompanyCode) &&
+                      !ambiguous.Success && ambiguous.Applies;
+            Check("ZFI019NL special GSBER resolves one BUKRS from ZFIT_RPA_BUKRS", ok,
+                $"special={special.CompanyCode}; normalApplies={normal.Applies}; ambiguous={ambiguous.Message}");
+        }
+
+        {
+            var request = BuildZfi019NlMemoryRequest(new SapRunParams
+            {
+                TCode = "ZFI057",
+                BusinessAreas = "1440",
+                Period = "2026.06.29",
+                WeekEnd = "2026.07.05"
+            }, "1440", Array.Empty<string>());
+            request.Conditions.Add(new Zfi019NlSelection
+            {
+                Selname = "S_BUKRS",
+                Sign = "I",
+                Option = "EQ",
+                Low = "OLD"
+            });
+            string specialOptions = Zfi019NlMemoryFetcher.BuildOptionsForTest(request, "5090");
+            string normalOptions = Zfi019NlMemoryFetcher.BuildOptionsForTest(request, "");
+            bool ok = specialOptions.Contains("S_GSBER=I:EQ:1440:", StringComparison.OrdinalIgnoreCase) &&
+                      specialOptions.Contains("S_BUKRS=I:EQ:5090:", StringComparison.OrdinalIgnoreCase) &&
+                      !specialOptions.Contains("S_BUKRS=I:EQ:OLD:", StringComparison.OrdinalIgnoreCase) &&
+                      normalOptions.Contains("S_BUKRS=I:EQ:OLD:", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI019NL MEMORY_EXPORT adds S_BUKRS only when resolved", ok,
+                $"special={specialOptions}; normal={normalOptions}");
+        }
+
+        {
             bool east = Zfi019NlMemoryFetcher.IsDongtaiZsbuDescription("东台一厂");
             bool normal = !Zfi019NlMemoryFetcher.IsDongtaiZsbuDescription("平湖一厂");
             bool blank = !Zfi019NlMemoryFetcher.IsDongtaiZsbuDescription(null);
@@ -15780,8 +16203,36 @@ INSERT INTO schedule_tasks(id, weekday, created_at) VALUES('stored-fri', 'friday
                 SapStatusText = "SAP GUI scripting error",
                 Message = "open transaction failed"
             };
-            bool ok = IsZfi057Step2NoDataResult(noData) && !IsZfi057Step2NoDataResult(realFailure);
-            Check("ZFI057 step2 no-data skip detection", ok, $"noData={IsZfi057Step2NoDataResult(noData)}, realFailure={IsZfi057Step2NoDataResult(realFailure)}");
+            var mixedFailure = new RunResultRequest
+            {
+                Status = "failed",
+                SapStatusType = "E",
+                SapStatusText = "SAP status error after open S_MATNR multiple selection - 下限比上限大",
+                Message = "SAP status error after open S_MATNR multiple selection - 下限比上限大",
+                Logs =
+                {
+                    new RunLogLine { Level = "WARN", Message = "execute ZFI057 group #1 returned no data; continuing remaining windows" },
+                    new RunLogLine { Level = "ERROR", Message = "SAP status error after open S_MATNR multiple selection - 下限比上限大" }
+                }
+            };
+            bool ok = IsZfi057Step2NoDataResult(noData) &&
+                      !IsZfi057Step2NoDataResult(realFailure) &&
+                      !IsZfi057Step2NoDataResult(mixedFailure);
+            Check("ZFI057 step2 no-data skip detection", ok,
+                $"noData={IsZfi057Step2NoDataResult(noData)}, realFailure={IsZfi057Step2NoDataResult(realFailure)}, mixedFailure={IsZfi057Step2NoDataResult(mixedFailure)}");
+
+            var parsedMixedFailure = BuildRunResultFromVbs(
+                "WARN: execute ZFI057 group #1 returned no data; continuing remaining windows\n" +
+                "STATUS_TYPE=E\n" +
+                "STATUS_TEXT=SAP status error after open S_MATNR multiple selection - 下限比上限大\n" +
+                "ERROR=SAP status error after open S_MATNR multiple selection - 下限比上限大",
+                "",
+                6,
+                DateTime.UtcNow);
+            bool parsedMixedOk = NormalizeRunStatus(parsedMixedFailure.Status).Equals("failed", StringComparison.OrdinalIgnoreCase) &&
+                                 !IsZfi057Step2NoDataResult(parsedMixedFailure);
+            Check("ZFI057 VBS mixed no-data and real error remains failed", parsedMixedOk,
+                $"status={parsedMixedFailure.Status}; noData={IsZfi057Step2NoDataResult(parsedMixedFailure)}; message={parsedMixedFailure.Message}");
 
             bool step1NoDataText = IsExplicitNoDataText("没有可用的 MATNR/入库料号结果。");
             Check("ZFI019NL no-material text is recognized as no-data", step1NoDataText, $"recognized={step1NoDataText}");
@@ -16026,6 +16477,43 @@ INSERT INTO schedule_tasks(id, weekday, created_at) VALUES('stored-fri', 'friday
                       juneJulyWindows[2].KadkyLow.Equals("2026.07.01", StringComparison.OrdinalIgnoreCase) &&
                       juneJulyWindows[2].KadatLow.Equals("2026.07.02", StringComparison.OrdinalIgnoreCase);
             Check("ZFI057 release-month split starts from May when weekEnd is July", ok, string.Join(" | ", juneJulyWindows.Select(w => $"{w.Index}:{w.KadkyLow}~{w.KadkyHigh}/{w.KadatLow}~{w.KadatHigh}")));
+        }
+
+        {
+            var firstDayCutoffWindows = ResolveZfi057Step2DateWindows("2026.10.26", "2026.11.01");
+            bool ok = firstDayCutoffWindows.Count == 3 &&
+                      firstDayCutoffWindows[0].KadkyLow.Equals("2026.09.01", StringComparison.OrdinalIgnoreCase) &&
+                      firstDayCutoffWindows[1].KadkyLow.Equals("2026.10.01", StringComparison.OrdinalIgnoreCase) &&
+                      firstDayCutoffWindows[1].KadatHigh.Equals("2026.10.31", StringComparison.OrdinalIgnoreCase) &&
+                      firstDayCutoffWindows[2].KadkyLow.Equals("2026.11.01", StringComparison.OrdinalIgnoreCase) &&
+                      firstDayCutoffWindows[2].KadkyHigh.Equals("2026.11.01", StringComparison.OrdinalIgnoreCase) &&
+                      firstDayCutoffWindows[2].KadatLow.Equals("2026.11.01", StringComparison.OrdinalIgnoreCase) &&
+                      firstDayCutoffWindows[2].KadatHigh.Equals("2026.11.01", StringComparison.OrdinalIgnoreCase) &&
+                      firstDayCutoffWindows.All(window => string.CompareOrdinal(window.KadatLow, window.KadatHigh) <= 0);
+            Check("ZFI057 uses day 1 for a cutoff-month one-day window", ok, string.Join(" | ", firstDayCutoffWindows.Select(w => $"{w.Index}:{w.KadkyLow}~{w.KadkyHigh}/{w.KadatLow}~{w.KadatHigh}")));
+        }
+
+        {
+            var crossYearFirstDayWindows = ResolveZfi057Step2DateWindows("2026.12.28", "2027.01.01");
+            bool ok = crossYearFirstDayWindows.Count == 3 &&
+                      crossYearFirstDayWindows[0].KadkyLow.Equals("2026.11.01", StringComparison.OrdinalIgnoreCase) &&
+                      crossYearFirstDayWindows[1].KadkyLow.Equals("2026.12.01", StringComparison.OrdinalIgnoreCase) &&
+                      crossYearFirstDayWindows[2].KadkyLow.Equals("2027.01.01", StringComparison.OrdinalIgnoreCase) &&
+                      crossYearFirstDayWindows[2].KadatLow.Equals("2027.01.01", StringComparison.OrdinalIgnoreCase) &&
+                      crossYearFirstDayWindows[2].KadatHigh.Equals("2027.01.01", StringComparison.OrdinalIgnoreCase) &&
+                      crossYearFirstDayWindows.All(window => string.CompareOrdinal(window.KadatLow, window.KadatHigh) <= 0);
+            Check("ZFI057 cross-year cutoff on day 1 uses January day 1", ok, string.Join(" | ", crossYearFirstDayWindows.Select(w => $"{w.Index}:{w.KadkyLow}~{w.KadkyHigh}/{w.KadatLow}~{w.KadatHigh}")));
+        }
+
+        {
+            var sameMonthFirstDayWindows = ResolveZfi057Step2DateWindows("2026.11.01", "2026.11.01");
+            bool ok = sameMonthFirstDayWindows.Count == 1 &&
+                      sameMonthFirstDayWindows[0].KadkyLow.Equals("2026.11.01", StringComparison.OrdinalIgnoreCase) &&
+                      sameMonthFirstDayWindows[0].KadkyHigh.Equals("2026.11.01", StringComparison.OrdinalIgnoreCase) &&
+                      sameMonthFirstDayWindows[0].KadatLow.Equals("2026.11.01", StringComparison.OrdinalIgnoreCase) &&
+                      sameMonthFirstDayWindows[0].KadatHigh.Equals("2026.11.01", StringComparison.OrdinalIgnoreCase);
+            Check("ZFI057 same-month day 1 uses a day-1 one-day window", ok,
+                string.Join(" | ", sameMonthFirstDayWindows.Select(w => $"{w.Index}:{w.KadkyLow}~{w.KadkyHigh}/{w.KadatLow}~{w.KadatHigh}")));
         }
 
         {
@@ -16881,16 +17369,16 @@ Item1=test888
 
         {
             string resolved = ResolveDingTalkRecipientId(
-                "10040297",
-                new DingTalkUserIdFetchResult { Success = true, Pernr = "10040297", Ddid = "f-059" },
+                "90000002",
+                new DingTalkUserIdFetchResult { Success = true, Pernr = "90000002", Ddid = "test-ddid-059" },
                 out bool resolvedFallback);
             string fallback = ResolveDingTalkRecipientId(
-                "10040297",
-                new DingTalkUserIdFetchResult { Pernr = "10040297", Ddid = "" },
+                "90000002",
+                new DingTalkUserIdFetchResult { Pernr = "90000002", Ddid = "" },
                 out bool emptyFallback);
-            bool ok = resolved.Equals("f-059", StringComparison.Ordinal) &&
+            bool ok = resolved.Equals("test-ddid-059", StringComparison.Ordinal) &&
                       !resolvedFallback &&
-                      fallback.Equals("10040297", StringComparison.Ordinal) &&
+                      fallback.Equals("90000002", StringComparison.Ordinal) &&
                       emptyFallback;
             Check("DingTalk recipient uses OV_DDID and falls back to webpage personnel number", ok, $"resolved={resolved}; resolvedFallback={resolvedFallback}; fallback={fallback}; emptyFallback={emptyFallback}");
         }
@@ -18374,6 +18862,10 @@ class ScheduleTaskRequest : IRawJsonRequest
     public bool? NotifyOnFailure { get; set; }
     public bool? NotifyFail { get; set; }
     public string NotifyTarget { get; set; } = "";
+    public string OperatorId { get; set; } = "";
+    public string PersonnelNumber { get; set; } = "";
+    public string Pernr { get; set; } = "";
+    public string EmployeeId { get; set; } = "";
     public JsonElement Params { get; set; }
     public string CreatedBy { get; set; } = "";
     public string UpdatedBy { get; set; } = "";

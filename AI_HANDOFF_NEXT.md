@@ -1,6 +1,35 @@
 # SAP RPA V2 下一任 AI 交接文档
 
-更新时间：2026-08-14
+更新时间：2026-11-02
+
+## 2026-11-02 ZFI057 截止日在月初 1 日的边界修复
+
+- 生产 run `RUN-20261102020013-ZFI057-83d18d8550514f32a5edbf262b6db3` 的周期为 `2026.10.26~2026.11.01`。旧逻辑生成第三窗 `S_KADKY=2026.11.01~2026.11.01`、`S_KADAT=2026.11.02~2026.11.01`，9 个工厂均被 SAP 以 `E/下限比上限大` 拒绝，VBS 退出码为 `6`；前两窗实际已经正常执行并导出。
+- 用户确认的最终规则：普通窗口保持 `S_KADAT-LOW=窗口月份 2 日`；若截止月份只覆盖 1 号，则仅最后一个截止月窗口把 `S_KADAT-LOW` 特例改为该月 1 号，不跳过该月。后端 `ResolveZfi057Step2DateWindows`、钉钉日期摘要与 `ZFI057.vbs` 必须一致。本例生成 9 月、10 月、11 月三个窗口，第三窗 `S_KADKY=2026.11.01~2026.11.01`、`S_KADAT=2026.11.01~2026.11.01`；跨年截止到 1 月 1 日同理保留 1 月窗口。
+- 同时收紧 `IsZfi057Step2NoDataResult`：只接受结果状态明确为 `no_data`，或失败结果的全部错误均为明确无数据。历史窗口出现无数据、最终却出现真实错误时不得把整个工厂误判为无数据。新增静态契约和内置自检，覆盖本次月初边界、跨年月初、同月仅 1 日及 VBS 混合错误解析；Release 编译通过，隔离自检为 `118 PASS、2 FAIL`，两条失败仍是既有 payload/钉钉文案断言。
+
+## 2026-10-13 SAP 保存卡片与 Excel 导出边界
+
+- 前台“（保存）”只表示 VBS 中存在真实 SAP 保存动作，不等同于 Excel 导出/组织归档。当前 8 个保存卡片为 `ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`、`ZFI148`；它们必须先导出当前 ALV Excel，再执行各自录制的 SAP 保存按钮并等待完成。SAP 明确无数据时才跳过导出和保存。
+- `ZFI072A` 在 2026-07-27 的 ALV 导出改造中曾错误移除 `PressSaveAfterReady/WaitForSaveComplete` 主流程调用；现已恢复为导出后点击原录制 `btn[14]` 并等待保存完成。`ZFIR034` 与 `ZFI057` 虽有 Excel 导出/归档能力，但自身 VBS 没有独立 SAP 保存动作，不再显示“（保存）”；ZFI057 工作流内部的 ZCO020 保存不等同于 ZFI057 卡片自身保存。
+- `tests/alv-save-export-contract.test.js` 对 8 个保存脚本逐个检查“导出在前、SAP 保存动作在后”，并断言 `ZFIR034/ZFI057` 不显示保存标记。后端 `SupportsAlvExport` 仍可包含 10 个导出/归档入口，不得据此扩展前端保存标记。
+
+## 2026-10-27 selftest 定时任务清理与责任人规则
+
+- `SCH-075`、`SCH-076` 并非业务人员创建，而是 `2026-09-28 18:22:59` 执行 `SapWebLauncher.exe test` 时由内置自检连续写入正式 SQLite；两条记录的 `created_by/updated_by` 都是 `selftest`。`SCH-076` 每周二 08:00 触发 ZFI148，导致无法追溯真实业务设置人。
+- 已通过正式 `DELETE /api/schedules/{id}` 删除两条任务；当时队列为空，`removedQueuedRuns=0`。删除前数据库和任务 JSON 备份位于 `D:\RPA\backups\selftest-schedule-cleanup-20261027-152732`。正式 API 复核 `createdBy/updatedBy=selftest` 数量为 0。
+- 源码新增三重防护：新增/编辑 API 拒绝空设置人和 `selftest/api/portal/system/scope-migration` 等技术占位值；自检任务 `Enabled=false` 且在 `finally` 调用 `CleanupSelfTestScheduleTasks`；数据库初始化会清理 `created_by` 或 `updated_by` 任一字段为 `selftest` 的遗留任务、未完成触发记录及未执行队列。自检同时断言接口责任人校验、新建和更新后的测试任务禁用，以及两种单字段 `selftest` 残留均被删除。Release 编译通过，隔离目录自检为 `114 PASS、2 FAIL`，其中清理项显示 `removed=2; remaining=0`；2 条失败是既有断言，与本次定时任务清理无关。
+- 2026-10-27 16:46 已将本轮 Release 部署到生产 `D:\RPA\bin\SapWebLauncher.dll`，正式文件与源码构建 SHA-256 均为 `904CBEA97ABDC67D0E8CBF49FF440FF5BFBCD45465D192C4B102B06CCDC42C5F`。旧 DLL/PDB 和发布日志保存在 `D:\RPA\deployment-backups\20261027-164414-selftest-guard-deploy`；`SAP_RPA_StartupMonitor` 已恢复为 Running。上线后正式 API 对 `createdBy=selftest` 的保存探针返回 HTTP 400，任务总数仍为 81，探针未落库，`selftest=0`、空责任人=0、队列为空。
+
+## 2026-10-08 定时任务集中管控与 ZFI019NL 特殊公司代码
+
+- 管理员工具源码位于 `tools/schedule-admin`，正式本机入口为 `D:\RPA\管理工具\定时任务集中管理\SAP定时任务集中管理.exe`；单文件 EXE 内置 Python/Tk 运行时，只连接本机回环 API，不调用大模型、不消耗 AI Token，也不得作为无鉴权远程管理工具分发。工具通过 `GET /api/schedules` 读取全部任务，可按设置人、网页人员编号、任务 ID 和事务码筛选并多选删除。删除必须调用 `DELETE /api/schedules/{id}`，由后端在同一事务中清理任务配置、未完成触发记录及来源为该任务的 queued run；批次排队项保留一条 `canceled` 汇总证据，没有运行中子项的父 run 同步结束，真实运行中的子项和已完成历史不删。新建/编辑任务把顶层网页人员编号规范落到唯一权威字段 `paramsJson.operatorId` 并删除旧编号别名；未编辑的旧任务继续按固定优先级兼容 `personnelNumber/pernr/employeeId` 和纯数字通知目标。管理工具按完整编号精确匹配，不从设置人姓名中截取数字，也不得把转换后的钉钉 `OV_DDID`（如 `ddid-example`）当员工号。
+- `ZFI019NL` 仍以业务范围写入 `S_GSBER-LOW`。当业务范围精确为 `1440`、`1180` 或 `4330` 时，后端只读查询 `ZFIT_RPA_BUKRS`，以 `GSBER` 取得唯一 `BUKRS`；表中映射为 `5090` 时，直接 GUI 路径写入 `S_BUKRS-LOW=5090`，ZFI057 步骤一的 `MEMORY_EXPORT` 同步增加 `S_BUKRS=I:EQ:5090`。其他业务范围不附加公司代码；缺映射或存在多个不同 BUKRS 时明确失败，不猜测或硬编码公司代码。
+
+## 2026-10-06 ZFI057 剪贴板复测结论
+
+- `D:\RPA\transactions\ZFI057.vbs` 与源码副本使用持久化剪贴板写入，并在最多 6 次重试中逐次读回校验；日志必须出现 `clipboard verified length=<长度>; lines=<数量>; attempts=<次数>` 后，才允许继续点击 `S_MATNR` 粘贴。最终仍读回为空才返回技术失败（退出码 8）。本次定向复测 `业务范围=2900、工厂=1022` 已验证 1274 个物料、`attempts=1`，原 `actualLength=0` 问题消失。
+- 剪贴板校验成功后，SAP 对各日期窗口返回“没有符合条件数据”属于业务无数据，不属于剪贴板失败；本次 `2900/1022` 两个窗口均按无数据跳过，另一个映射工厂 1032 正常导出，范围最终为“成功（部分工厂无数据）”。复测日期窗口为 `2026.09.01~09.30 / 2026.09.02~09.30` 和 `2026.10.01~10.04 / 2026.10.02~10.04`。
 
 ## 2026-08-14 定时任务月度星期
 
@@ -24,9 +53,9 @@
 - 2026-08-11 已在隔离发布目录完成后端自检（84 PASS，2 条既有钉钉文案断言失败），并通过 `tests\zco020-filtered-no-data-contract.test.js`；未启动 SAP GUI 或打开任何 Excel。两条钉钉断言与本次 ZCO020/TBTCO 改动无关。
 - 2026-08-11 已上线本次 ZFI057/ZCO020 修复：发布包 `D:\RPA\deployment-staging\20260811-zfi057-zco020` 的 `SapWebLauncher.dll` SHA-256 为 `CF5C65429862F81267081112980BDCD0794E79A050076830314BB0A83888CB59`，已复制到 `D:\RPA\bin`；新 `ZCO020.vbs` 已同步到 `D:\RPA\bin\transactions` 与 `D:\RPA\transactions`。升级前备份在 `D:\RPA\deployment-backups\20260811-zfi057-zco020-deploy`。`SAP_RPA_StartupMonitor` 已恢复，以 `marcus` 会话拉起新 `SapWebLauncher.exe --serve`；项目检查脚本确认本机 API、HTTP 兼容入口、HTTPS 页面和 HTTPS API 均为 200。旧 run 的英文历史错误不会被改写，后续新 run 才会使用新中文错误提示。
 
-## 2026-08-10 ZFI057 保存/导出
+## 2026-08-10 ZFI057 保存/导出（历史说明，保存标记已被 2026-10-13 规则取代）
 
-- ZFI057 已纳入保存类 ALV 白名单。工作台名称会自动显示为“产值拆分（保存）”，并只加粗加黑“保存”。
+- ZFI057 当时被纳入 ALV 导出/归档白名单；此前工作台名称自动显示“产值拆分（保存）”的做法已废止。当前仅保留 Excel 导出/归档能力，不再显示 SAP 保存标记。
 - ZFI057 三步流程不变：步骤一通过 NCo 取 ZFI019NL/ZFI_SPLIT 上游物料，步骤二执行 ZFI057.vbs，步骤三执行 ZCO020。步骤二每个成功的日期窗口都会调用 sap_alv_export_helper.vbs 写入本机 ALV 暂存并输出 OUTPUT_FILE；跨月时按发布成本月规则拆成 1 到 3 个窗口，具体是从截止月份往前回推到最近的发布成本月（1/3/5/7/9/11 月），例如 2026.03.30~2026.04.05 跑 3 月和 4 月两窗、2026.06.29~2026.07.05 跑 5 月/6 月/7 月三窗、跨年 1 月则回推到上年 11 月后再跑 11 月/12 月/1 月，后端按分片顺序合并后再归档。
 - ZFI057 不属于 GSBER 路由类报表。它按导出 Excel 的实际 WERKS 逐工厂读取 ZTFI48B-WERKS，按组织、周和事务码合并归档；归档失败保留本机暂存并作为任务失败通知钉钉。不得让 SAP GUI 直接写 UNC 目录，也不得由 Codex 打开导出的 Excel。
 - 本轮仅完成代码和静态/自测验证；尚未在 test888 发起真实 ZFI057 作业。发布时必须同步后端 publish 输出、assets/js/portal-render.js、transactions/ZFI057.vbs 与 transactions/sap_alv_export_helper.vbs 到 D:\RPA，并使用本项目启动脚本重启。

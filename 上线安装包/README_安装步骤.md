@@ -328,7 +328,7 @@ C:\Windows\SysWOW64\regsvr32.exe sapfewse.ocx
 13. 含“保存”的 ALV 导出任务完成后，后端根据导出 Excel 的实际 `WERKS` 或 `GSBER` 读取 SAP 映射，将最终 Excel 写入 `fileStorage.alvExportDataDirectory` 下的 `ZBU\ZSBU\yyyy_WKnn`；没有有效映射时写入 `集采工厂\yyyy_WKnn`。同一组织、周和事务码的工厂数据合并为同一个 Excel，一厂多组织各写一份；父 run 只登记这些最终文件。SAP GUI 始终只写本机 `D:\RPA\临时文件\ALV本地暂存`，后端确认归档成功才清理暂存；映射或网络写入失败时保留暂存并发钉钉失败通知。验收必须检查组织/周目录、Excel 内容和重跑不重复来源行。
 14. 正式页面源代码不得引用外网脚本 CDN；`assets/vendor/lucide-1.33.0.min.js` 必须随包存在并能通过正式域名返回 200。即使图标脚本缺失，页面也必须继续执行 `/rpa/api/health` 和 `/rpa/api/config` 初始化。
 
-当前前台“保存类 ALV 导出”只承诺 7 个事务码：`ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`。`ZFI148`、`ZFIR034`、`ZFI057`、`ZCO020` 不按普通保存类 ALV Excel 归档；旧 `ZFI019NI` 没有生产 VBS 和工作台入口，不作为上线保存卡片。
+当前前台“（保存）”卡片只承诺 8 个事务码：`ZFI072A`、`ZFI072N`、`ZFI080`、`ZFI080B`、`ZCO019`、`ZFI019NA`、`ZFI019NL`、`ZFI148`。每个事务必须先导出 ALV Excel，再继续执行原 VBS 录制的 SAP 保存按钮；Excel 导出成功不能替代 SAP 数据保存。`ZFIR034`、`ZFI057` 虽有 Excel 导出/归档能力，但当前脚本没有独立 SAP 保存动作，因此页面不显示“（保存）”；`ZCO020` 是工作流内部保存步骤，不作为独立保存卡片。旧 `ZFI019NI` 没有生产 VBS 和工作台入口。
 
 ## 最终包真实验收
 

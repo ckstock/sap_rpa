@@ -10,15 +10,16 @@ On Error Resume Next
 
 Dim tcode, businessAreasCsv, factoryGroup
 Dim yearValue, weekValue, periodValue, weekEndValue, dateLowValue, dateHighValue
-Dim businessAreaValue
+Dim businessAreaValue, companyCodeValue
 Dim SapGuiAuto, application, connection, session
 Dim retries, sleepMs, statusType, statusText
-Dim unresolvedOkCodeToken, unresolvedAreasToken, unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
+Dim unresolvedOkCodeToken, unresolvedAreasToken, unresolvedCompanyCodeToken, unresolvedAlvExportDirToken, unresolvedAlvExportFilenameToken
 Dim materialCsv, materialCount
 Dim alvExportDir, alvExportFilename, scriptDir, exportTimeoutMs, alvHelperLoaded
 
 tcode = "{OK_CODE}"
 businessAreasCsv = "{BUSINESS_AREAS}"
+companyCodeValue = "{COMPANY_CODE}"
 factoryGroup = "{FACTORY_GROUP}"
 yearValue = "{YEAR}"
 weekValue = "{WEEK}"
@@ -31,12 +32,14 @@ exportTimeoutMs = 180000
 alvHelperLoaded = False
 unresolvedOkCodeToken = "{" & "OK_CODE" & "}"
 unresolvedAreasToken = "{" & "BUSINESS_AREAS" & "}"
+unresolvedCompanyCodeToken = "{" & "COMPANY_CODE" & "}"
 unresolvedAlvExportDirToken = "{" & "ALV_EXPORT_DIR" & "}"
 unresolvedAlvExportFilenameToken = "{" & "ALV_EXPORT_FILENAME" & "}"
 
 If Trim(CStr(tcode)) = "" Or Trim(CStr(tcode)) = unresolvedOkCodeToken Then tcode = "ZFI019NL"
 If UCase(Trim(CStr(tcode))) <> "ZFI019NL" Then Fail "ZFI019NL script refuses tcode=" & CStr(tcode), 10
 If Trim(CStr(businessAreasCsv)) = unresolvedAreasToken Then businessAreasCsv = ""
+If Trim(CStr(companyCodeValue)) = unresolvedCompanyCodeToken Then companyCodeValue = ""
 If IsPlaceholder(yearValue, "YEAR") Then yearValue = ""
 If IsPlaceholder(weekValue, "WEEK") Then weekValue = ""
 If IsPlaceholder(periodValue, "PERIOD") Then periodValue = ""
@@ -162,11 +165,14 @@ Sub Fail(message, code)
 End Sub
 
 Function IsNoDataStatusText(value)
-   Dim text
-   text = LCase(Replace(Replace(Trim(CStr(value)), " ", ""), "　", ""))
-   IsNoDataStatusText = (InStr(text, "没有符合条件数据") > 0) _
-      Or (InStr(text, "没有符合条件的数据") > 0) _
-      Or (InStr(text, "没有找到符合条件的数据") > 0) _
+   Dim text, noData1, noData2, noData3
+   noData1 = ChrW(27809) & ChrW(26377) & ChrW(31526) & ChrW(21512) & ChrW(26465) & ChrW(20214) & ChrW(25968) & ChrW(25454)
+   noData2 = ChrW(27809) & ChrW(26377) & ChrW(31526) & ChrW(21512) & ChrW(26465) & ChrW(20214) & ChrW(30340) & ChrW(25968) & ChrW(25454)
+   noData3 = ChrW(27809) & ChrW(26377) & ChrW(25214) & ChrW(21040) & ChrW(31526) & ChrW(21512) & ChrW(26465) & ChrW(20214) & ChrW(30340) & ChrW(25968) & ChrW(25454)
+   text = LCase(Replace(Replace(Trim(CStr(value)), " ", ""), ChrW(12288), ""))
+   IsNoDataStatusText = (InStr(text, noData1) > 0) _
+      Or (InStr(text, noData2) > 0) _
+      Or (InStr(text, noData3) > 0) _
       Or (InStr(text, "nodatafound") > 0) _
       Or (InStr(text, "norecordsfound") > 0)
 End Function
@@ -440,6 +446,7 @@ CheckSapStatus "open transaction"
 SetField "budat-low", "wnd[0]/usr/ctxtS_BUDAT-LOW", dateLowValue
 SetField "budat-high", "wnd[0]/usr/ctxtS_BUDAT-HIGH", dateHighValue
 SetField "gsber-low", "wnd[0]/usr/ctxtS_GSBER-LOW", businessAreaValue
+If Trim(CStr(companyCodeValue)) <> "" Then SetField "bukrs-low", "wnd[0]/usr/ctxtS_BUKRS-LOW", companyCodeValue
 PressExecute
 WaitReady 600000
 EmitMaterialListFromGrid
