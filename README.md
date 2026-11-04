@@ -42,3 +42,12 @@ D:\RPA\RpaProject\网页启动登录
 
 - ZFI057 step 2 ALV archive row modify key: `BUKRS` + `WERKS` + `KADKY` + `SMATNR/PMATNR` + `STUFE` + `MATNR`. Same organization/week/workbook and identical six-field key modifies the existing row; a different key preserves existing rows and appends a new row.
 - Generated ALV workbooks use the logged-in webpage user's personnel number and name as the worksheet name, joined with `_` (for example `10000001_Test User_测试用户`). The source is the webpage login identity, never the DingTalk `OV_DDID` recipient value. Excel-invalid characters are replaced, the name is limited to 31 characters, and missing identity falls back to `ALV`. This changes only the worksheet label; file names, organization routing, source-key merge behavior, and ZFI057-specific modify rules are unchanged.
+
+## 运维、管理与交接
+
+- 定时任务集中管理：`tools/schedule-admin/`
+- AI 交接文档：`docs/AI交接文档.md`
+- SAP 服务器组与启动模式：`docs/SAP服务器组与启动模式说明.md`
+- 功能说明书：`SapRpa_V2_功能说明书.html`
+- 项目复盘：`反思.md`
+- 可视化/后台切换：`启动脚本/start_sap_rpa_interactive.*`、`启动脚本/restore_sap_rpa_background.*`
