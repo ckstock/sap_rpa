@@ -6,6 +6,14 @@
 2. 必要脚本：生成上线包、配置 SAP 登录信息。
 3. 发布产物：`SapWebLauncher`、前端页面、VBS 事务脚本、本机配置模板。
 
+## 跨电脑完整迁移包
+
+运行 `00_生成上线安装包.cmd` 后会同时生成完整目录和同名 ZIP。打包脚本会读取 `网页启动登录/transactions/transaction-config.json`，强制检查所有 `automation=script` 的卡片都存在对应 VBS；`openOnly` 卡片只打开 SAP 事务，不需要伪造 VBS。当前 11 个可执行卡片脚本、1 个 ALV 公共助手、`transaction-config.json` 会统一进入安装包根目录的 `transactions/`。
+
+迁移包还包括前端、网关、`bin/SapWebLauncher`、随包 .NET 运行时、启动脚本、定时任务集中管理源码/构建脚本、功能说明书、AI 交接文档、反思文档和 SHA-256 文件清单 `PACKAGE_MANIFEST.json`。真实密码、Token、`config.local.json`、数据库、日志、证书和导出报表不会进入普通迁移包，到目标电脑后必须按本机环境重新配置。
+
+生成安装包时会优先使用本机 NuGet 缓存，并忽略暂时不可访问的软件源；如果目标构建机从未缓存所需依赖，仍需临时开放软件源完成一次还原。已经生成的 ZIP 自带 `.dotnet` 运行时，解压到 `D:RPA` 后不需要安装 .NET SDK 或 .NET Runtime。
+
 ## 正式切换前清理统计报表历史
 
 正式上线使用全新数据时，只清理测试运行历史和上线前遗留的定时任务，不删除通用配置。操作前确认 `/api/queue/status` 返回 `runningRunId` 为空、`queuedCount=0`，暂停启动监控并停止本项目 API，完整备份 `D:\RPA\data\sap-rpa-config.db` 以及同目录的 `-wal`、`-shm` 文件。备份后在 SQLite 事务中清理 `runs`、`run_batch_items`、`run_params`、`run_result_logs`、`run_files`、`run_logs`、`schedule_task_runs` 和 `schedule_tasks`；不要删除 `transactions`、`plants`、`plant_groups`、`plant_group_members`、`transaction_plant_rules`、`notification_robots`、`notification_robot_bindings`、`config_delete_markers` 或 `app_settings`。重启 API、网关和启动监控后，验证统计报表查询为 0 条、定时任务列表为空、基础配置仍可读取；清理前备份路径必须记录在上线交接记录中。

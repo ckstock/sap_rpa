@@ -375,6 +375,7 @@
         <button class="nav-main" type="button" data-target="handoff"><span class="num">9</span><span class="title">交接事项</span><span class="chev">›</span></button>
         <div class="nav-sub">
           <a href="#handoff-files">关键文件</a>
+          <a href="#handoff-package">跨电脑迁移包</a>
           <a href="#handoff-next">后续优先级</a>
         </div>
       </div>
@@ -844,6 +845,23 @@
           </tbody>
         </table>
       </div>
+      <h3 id="handoff-package">跨电脑迁移包</h3>
+      <div class="solution-box">
+        <strong>生成入口：</strong>运行 <code>上线安装包\00_生成上线安装包.cmd</code>，或直接执行 <code>上线安装包\scripts\make_package.ps1</code>。产物为完整目录和同名 ZIP，目录结构可直接覆盖到目标电脑 <code>D:\RPA</code> 的程序区域。
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>交付内容</th><th>规则</th></tr></thead>
+          <tbody>
+            <tr><td><code>bin\</code> 与 <code>.dotnet\</code></td><td>后端发布产物和随包 .NET 8 运行时。目标电脑不需要另外安装 .NET SDK 或 Runtime。</td></tr>
+            <tr><td><code>transactions\</code></td><td>由唯一源码目录 <code>网页启动登录\transactions\</code> 生成。当前包含 11 个可执行卡片 VBS、1 个 ALV 公共助手和 <code>transaction-config.json</code>。打包时按 <code>automation=script</code> 强制校验，缺少任一脚本立即失败。</td></tr>
+            <tr><td><code>tools\schedule-admin\</code></td><td>定时任务集中管理源码、API、测试和本地 EXE 构建/启动脚本；不包含 <code>__pycache__</code>、build 或 dist 临时产物。</td></tr>
+            <tr><td><code>docs\</code></td><td>功能说明书、AI 交接文档、SAP 服务器组与启动模式说明、VBS 清单、反思和其他运维资料。</td></tr>
+            <tr><td><code>PACKAGE_MANIFEST.json</code></td><td>记录包内文件相对路径、大小和 SHA-256；交付前必须逐文件验证，ZIP 内容也必须复核。</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="warning-box"><strong>不得进入普通迁移包：</strong>真实 <code>config.local.json</code>、SQLite、日志、证书/私钥、SAP 登录配置、钉钉密钥、共享目录凭据和导出 Excel。目标电脑解压后必须按本机账号和目标 SAP 系统重新配置。</div>
       <h3 id="handoff-next">后续优先级</h3>
       <div class="grid cols-2">
         <div class="mini-card"><strong>优先级 1</strong>在真实 Windows Server 上按手工安装清单验证：路径、publish/copy、SAP 登录配置、钉钉真实配置、API 启动、网页任务和数据库写回。</div>
